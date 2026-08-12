@@ -665,7 +665,7 @@ def test_t2_search_provider_disconnect(mocked_page):
     expect(mocked_page.locator(".error-notice")).to_be_visible()
     expect(mocked_page.locator(".error-notice strong")).to_have_text("UNEXPECTED_ERROR")
 
-def test_t2_unavailable_provider_can_be_retried_directly(mocked_page):
+def test_t2_unavailable_provider_stays_offline_until_health_recheck_passes(mocked_page):
     mocked_page.evaluate("""() => {
         const state = window.__TAURI_MOCK_STATE__;
         state.sources = (state.sources || []).map((source) => source.name === 'AllAnime'
@@ -677,13 +677,14 @@ def test_t2_unavailable_provider_can_be_retried_directly(mocked_page):
     mocked_page.locator(".hero-search-trigger").click()
     provider = mocked_page.locator(".availability-strip .provider-chip:has-text('AllAnime')")
     expect(provider).to_be_enabled()
-    expect(provider).to_have_attribute("aria-label", "AllAnime: Retry")
+    expect(provider).to_have_attribute("aria-label", "AllAnime: Recheck")
     provider.click()
-    mocked_page.locator(".search-input-shell input").fill("Naruto")
-    mocked_page.wait_for_selector(".search-result")
-
-    expect(mocked_page.locator(".search-results-pane")).to_contain_text("AllAnime Results")
-    expect(provider).to_have_attribute("aria-label", "AllAnime: Results")
+    mocked_page.wait_for_timeout(100)
+    retried = mocked_page.evaluate("""() => window.__TAURI_CALLS__.some(
+        (call) => call.cmd === 'retry_provider_health' && call.args.provider === 'AllAnime'
+    )""")
+    assert retried is True
+    expect(provider).to_have_attribute("aria-label", "AllAnime: Recheck")
 
 def test_t2_search_catalog_rate_limit_keeps_provider_results(mocked_page):
     mocked_page.locator(".hero-search-trigger").click()
@@ -1086,7 +1087,7 @@ def test_t3_search_provider_switch_reloads(mocked_page):
     expect(mocked_page.locator(".search-results-pane")).to_contain_text("OPhim Results")
     expect(mocked_page.locator(".search-preview .eyebrow")).to_contain_text("OPhim")
 
-def test_t3_stale_ophim_health_does_not_block_live_search(mocked_page):
+def test_t3_offline_ophim_requires_health_recheck_before_search(mocked_page):
     mocked_page.evaluate("""() => {
         const state = JSON.parse(localStorage.getItem('__TAURI_MOCK_STATE__') || '{}');
         const sources = state.sources || window.__TAURI_MOCK_STATE__?.sources || [];
@@ -1099,13 +1100,23 @@ def test_t3_stale_ophim_health_does_not_block_live_search(mocked_page):
     mocked_page.locator(".hero-search-trigger").click()
     mocked_page.locator(".language-switch button").nth(1).click()
     mocked_page.wait_for_timeout(500)
-    mocked_page.locator(".availability-strip .provider-chip:has-text('OPhim')").click()
+    provider = mocked_page.locator(".availability-strip .provider-chip:has-text('OPhim')")
+    expect(provider).to_have_attribute("aria-label", "OPhim: Recheck")
+    provider.click()
+    mocked_page.wait_for_timeout(100)
     mocked_page.locator(".search-input-shell input").fill("Naruto")
     mocked_page.wait_for_selector(".search-result")
 
-    expect(mocked_page.locator(".search-results-pane")).to_contain_text("OPhim Results")
-    expect(mocked_page.locator(".search-result").first).to_contain_text("Naruto Shippuden")
-    expect(mocked_page.locator(".availability-strip .provider-chip:has-text('OPhim')")).to_have_attribute("aria-label", "OPhim: Results")
+    retried = mocked_page.evaluate("""() => window.__TAURI_CALLS__.some(
+        (call) => call.cmd === 'retry_provider_health' && call.args.provider === 'OPhim'
+    )""")
+    searched = mocked_page.evaluate("""() => window.__TAURI_CALLS__.some(
+        (call) => call.cmd === 'search_source' && call.args.provider === 'OPhim'
+    )""")
+    assert retried is True
+    assert searched is False
+    expect(mocked_page.locator(".search-results-pane")).to_contain_text("KKPhim Results")
+    expect(provider).to_have_attribute("aria-label", "OPhim: Recheck")
 
 def test_t3_continue_watching_opens_saved_episode_detail(mocked_page):
     # Click continue watching card for One Piece

@@ -363,7 +363,7 @@ async fn resolve_availability(
             let name = provider.name().to_string();
             let language = provider.language();
             let search = async {
-                if matches!(name.as_str(), "AnimeTVN" | "Niniyo") {
+                if name == "AnimeTVN" {
                     Some(Anime {
                         id: catalog_id.to_string(),
                         provider: name.clone(),
@@ -1282,13 +1282,19 @@ async fn refresh_provider_health(
             let name = provider.name().to_string();
             let language = provider.language();
             let capabilities = provider.capabilities();
-            let result = provider.health_check().await;
+            let result =
+                tokio::time::timeout(std::time::Duration::from_secs(30), provider.health_check())
+                    .await;
             let (status, failure_code) = match result {
-                Ok(()) => ("healthy".to_string(), None),
-                Err(error) => {
+                Ok(Ok(())) => ("healthy".to_string(), None),
+                Ok(Err(error)) => {
                     let classified = provider_error("health", &name, error);
                     ("unavailable".to_string(), Some(classified.code))
                 }
+                Err(_) => (
+                    "unavailable".to_string(),
+                    Some("NETWORK_TIMEOUT".to_string()),
+                ),
             };
             ProviderHealthDto {
                 name,

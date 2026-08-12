@@ -252,7 +252,10 @@ impl AnimeProvider for AnimeGgProvider {
         let mut last_error = None;
         for episode in episodes.into_iter().rev().take(24) {
             match self.get_stream_url(&episode.id).await {
-                Ok(_) => return Ok(()),
+                Ok(stream) => match super::probe_stream(&stream).await {
+                    Ok(()) => return Ok(()),
+                    Err(error) => last_error = Some(error),
+                },
                 Err(error) => last_error = Some(error),
             }
         }

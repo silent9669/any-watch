@@ -8,10 +8,11 @@ pub mod niniyo;
 pub mod ophim;
 
 use crate::config::Config;
-use anyhow::Result;
+use anyhow::{Context, Result};
 use async_trait::async_trait;
 use serde::{Deserialize, Serialize};
 use std::sync::Arc;
+use std::time::Duration;
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase")]
@@ -67,6 +68,78 @@ pub struct StreamInfo {
 pub struct Subtitle {
     pub language: String,
     pub url: String,
+}
+
+pub async fn probe_stream(stream: &StreamInfo) -> Result<()> {
+    let client = reqwest::Client::builder()
+        .redirect(reqwest::redirect::Policy::limited(10))
+        .timeout(Duration::from_secs(15))
+        .build()?;
+    let (url, content_type, body) =
+        fetch_health_resource(&client, &stream.video_url, &stream.headers).await?;
+    anyhow::ensure!(
+        !body.is_empty(),
+        "STREAM_UNAVAILABLE: media response was empty"
+    );
+    let is_hls = content_type.contains("mpegurl")
+        || url.path().to_ascii_lowercase().contains(".m3u8")
+        || body.starts_with(b"#EXTM3U");
+    if is_hls {
+        anyhow::ensure!(
+            body.starts_with(b"#EXTM3U"),
+            "STREAM_UNAVAILABLE: HLS response was not a playlist"
+        );
+        let playlist = String::from_utf8(body)?;
+        let resource = playlist
+            .lines()
+            .map(str::trim)
+            .find(|line| !line.is_empty() && !line.starts_with('#'))
+            .and_then(|line| url.join(line).ok())
+            .context("STREAM_UNAVAILABLE: HLS playlist contained no media resource")?;
+        let (_, _, resource_body) =
+            fetch_health_resource(&client, resource.as_str(), &stream.headers).await?;
+        anyhow::ensure!(
+            !resource_body.is_empty(),
+            "STREAM_UNAVAILABLE: HLS media resource was empty"
+        );
+    }
+    Ok(())
+}
+
+async fn fetch_health_resource(
+    client: &reqwest::Client,
+    url: &str,
+    headers: &std::collections::HashMap<String, String>,
+) -> Result<(reqwest::Url, String, Vec<u8>)> {
+    let mut request = client
+        .get(url)
+        .header(reqwest::header::RANGE, "bytes=0-65535")
+        .header(reqwest::header::ACCEPT_ENCODING, "identity");
+    for (name, value) in headers {
+        request = request.header(name, value);
+    }
+    let mut response = request.send().await?;
+    anyhow::ensure!(
+        response.status().is_success() || response.status() == reqwest::StatusCode::PARTIAL_CONTENT,
+        "STREAM_UNAVAILABLE: media request returned HTTP {}",
+        response.status()
+    );
+    let final_url = response.url().clone();
+    let content_type = response
+        .headers()
+        .get(reqwest::header::CONTENT_TYPE)
+        .and_then(|value| value.to_str().ok())
+        .unwrap_or_default()
+        .to_ascii_lowercase();
+    let mut body = Vec::new();
+    while let Some(chunk) = response.chunk().await? {
+        let remaining = 65_536usize.saturating_sub(body.len());
+        if remaining == 0 {
+            break;
+        }
+        body.extend_from_slice(&chunk[..chunk.len().min(remaining)]);
+    }
+    Ok((final_url, content_type, body))
 }
 
 pub fn normalize_title(value: &str) -> String {
@@ -170,10 +243,22 @@ pub trait AnimeProvider: Send + Sync {
     }
 
     async fn health_check(&self) -> Result<()> {
-        if self.search("One Piece").await?.is_empty() {
-            anyhow::bail!("Provider returned no health-check results");
+        let variants = vec!["One Piece".to_string(), "Đảo Hải Tặc".to_string()];
+        let anime = best_title_match(self.search("One Piece").await?, &variants)
+            .context("Provider health check found no matching title")?;
+        let episodes = self.get_episodes(&anime.id).await?;
+        let mut last_error = None;
+        for episode in episodes.into_iter().rev().take(24) {
+            match self.get_stream_url(&episode.id).await {
+                Ok(stream) => match probe_stream(&stream).await {
+                    Ok(()) => return Ok(()),
+                    Err(error) => last_error = Some(error),
+                },
+                Err(error) => last_error = Some(error),
+            }
         }
-        Ok(())
+        Err(last_error
+            .unwrap_or_else(|| anyhow::anyhow!("Provider health check found no playable episodes")))
     }
 
     async fn search(&self, query: &str) -> Result<Vec<Anime>>;

@@ -135,6 +135,7 @@ function App() {
   const catalogSearchGenerationRef = useRef(0);
   const pendingUpdateRef = useRef<Update | null>(null);
   const [appUpdate, setAppUpdate] = useState<AppUpdateState>({ status: "idle" });
+  const [providerHealthPending, setProviderHealthPending] = useState<string | null>(null);
   const [theme, setTheme] = useState<AppTheme>(loadSavedTheme);
   const [appScale, setAppScale] = useState<AppScale>(loadSavedScale);
   const [appFont, setAppFont] = useState<AppFont>(loadSavedFont);
@@ -302,7 +303,10 @@ function App() {
       setDownloads(downloadLibrary);
       void api.listProviderHealth().then((health) => {
         setSources(health);
-        setSelectedSource((current) => health.find((source) => source.name === current?.name) ?? health[0] ?? null);
+        setSelectedSource((current) => {
+          const selected = health.find((source) => source.name === current?.name && source.status === "healthy");
+          return selected ?? firstSearchableSource(health, languageGroup) ?? null;
+        });
       }).catch((err) => setError(toAppError(err, "provider-health")));
       void api.getDiscovery().then((catalog) => {
         setDiscovery(catalog);
@@ -537,17 +541,8 @@ function App() {
   }
 
   async function searchProviderResults(queryText: string, source: Source) {
-    if (!source.capabilities.search) return [];
+    if (!source.capabilities.search || source.status !== "healthy") return [];
     const items = await api.searchSource(source.name, queryText);
-
-    // Health checks are snapshots. A provider may recover between the health
-    // probe and an explicit user search, so a successful search is stronger
-    // evidence than a stale unavailable badge.
-    if (source.status === "unavailable" || source.status === "unknown") {
-      const recovered = { ...source, status: "healthy", failureCode: null };
-      setSources((current) => current.map((item) => item.name === source.name ? recovered : item));
-      setSelectedSource((current) => current?.name === source.name ? recovered : current);
-    }
 
     const seen = new Set<string>();
     return items
@@ -573,6 +568,7 @@ function App() {
   }
 
   function selectProviderSource(source: Source) {
+    if (source.status !== "healthy") return;
     selectSource(source);
     const direct = providerResults.find((anime) => anime.provider === source.name);
     if (direct) {
@@ -588,6 +584,24 @@ function App() {
     setSearchSelection(null);
     setProviderResults([]);
     if (query.trim().length >= 2) void searchCatalog(query, source);
+  }
+
+  async function retryProviderHealth(source: Source) {
+    setProviderHealthPending(source.name);
+    setError(null);
+    try {
+      const updates = await api.retryProviderHealth(source.name);
+      const update = updates.find((item) => item.name === source.name);
+      if (!update) return;
+      setSources((current) => current.map((item) => item.name === update.name ? update : item));
+      if (update.status === "healthy") {
+        selectProviderSource(update);
+      }
+    } catch (err) {
+      setError(toAppError(err, "provider-health"));
+    } finally {
+      setProviderHealthPending(null);
+    }
   }
 
   function selectSearchLanguage(group: "english" | "vietnamese") {
@@ -625,7 +639,11 @@ function App() {
       if (generation !== availabilityGenerationRef.current) return;
       availabilityCacheRef.current.set(cacheKey, { expiresAt: Date.now() + 5 * 60_000, items: options });
       setAvailability(options);
-      const playable = options.find((item) => item.status === "available" && item.anime)?.anime ?? null;
+      const playable = options.find((item) =>
+        item.status === "available"
+        && item.anime
+        && sources.some((source) => source.name === item.provider && source.status === "healthy")
+      )?.anime ?? null;
       setSearchSelection(playable ? catalogToAnime(catalog, playable) : null);
       setSelectedSource(playable ? sources.find((source) => source.name === playable.provider) ?? null : null);
     } catch (err) {
@@ -640,7 +658,9 @@ function App() {
 
   async function selectCatalogProvider(option: ProviderAvailability) {
     if (!catalogSelection || !option.anime) return;
-    setSelectedSource(sources.find((source) => source.name === option.provider) ?? null);
+    const source = sources.find((item) => item.name === option.provider);
+    if (!source || source.status !== "healthy") return;
+    setSelectedSource(source);
     setSearchSelection(catalogToAnime(catalogSelection, option.anime));
   }
 
@@ -695,7 +715,9 @@ function App() {
     try {
       setEpisodes(await api.getEpisodes(anime.provider, anime.id));
     } catch (err) {
-      setError(toAppError(err, "episodes"));
+      const appError = toAppError(err, "episodes");
+      if (providerFailureMakesOffline(appError)) markProviderOffline(anime.provider, appError.code);
+      setError(appError);
     } finally {
       setLoadingEpisodes(false);
     }
@@ -767,8 +789,20 @@ function App() {
       const playback = await api.preparePlayback(anime.provider, episode.id);
       setPlayer({ anime, episode, episodes: episodeList, playback, startTime });
     } catch (err) {
-      setError(toAppError(err, "playback"));
+      const appError = toAppError(err, "playback");
+      if (providerFailureMakesOffline(appError)) markProviderOffline(anime.provider, appError.code);
+      setError(appError);
     }
+  }
+
+  function markProviderOffline(provider: string, failureCode: string) {
+    setSources((current) => current.map((source) =>
+      source.name === provider
+        ? { ...source, status: "unavailable", failureCode }
+        : source
+    ));
+    setSelectedSource((current) => current?.name === provider ? null : current);
+    availabilityCacheRef.current.clear();
   }
 
   async function downloadEpisode(anime: Anime, episode: Episode) {
@@ -1036,6 +1070,8 @@ function App() {
               onLanguageChange={selectSearchLanguage}
               onProviderSelect={(option) => void selectCatalogProvider(option)}
               onProviderSourceSelect={selectProviderSource}
+              onProviderHealthRetry={(source) => void retryProviderHealth(source)}
+              providerHealthPending={providerHealthPending}
               onSelectProviderResult={selectProviderResult}
               onSelectCatalog={selectCatalogResult}
               onOpenAnime={(anime) => void openAnime(anime)}
@@ -1250,7 +1286,7 @@ function SettingsPage({
 }
 
 function providerStatusLabel(source: Source) {
-  if (source.status === "healthy") return "Healthy";
+  if (source.status === "healthy") return "Online";
   if (source.status === "degraded") return "Limited";
   if (source.status === "unavailable") return "Offline";
   return "Checking";
@@ -2009,6 +2045,8 @@ function SearchStage({
   onLanguageChange,
   onProviderSelect,
   onProviderSourceSelect,
+  onProviderHealthRetry,
+  providerHealthPending,
   onSelectProviderResult,
   onSelectCatalog,
   onOpenAnime,
@@ -2033,6 +2071,8 @@ function SearchStage({
   onLanguageChange: (language: "english" | "vietnamese") => void;
   onProviderSelect: (option: ProviderAvailability) => void;
   onProviderSourceSelect: (source: Source) => void;
+  onProviderHealthRetry: (source: Source) => void;
+  providerHealthPending: string | null;
   onSelectProviderResult: (anime: Anime) => void;
   onSelectCatalog: (anime: CatalogAnime) => void;
   onOpenAnime: (anime: Anime) => void;
@@ -2124,12 +2164,15 @@ function SearchStage({
             {languageSources.map((source) => {
               const option = availability.find((item) => item.provider === source.name);
               const hasDirectResult = providerResults.some((anime) => anime.provider === source.name);
-              const enabled = source.capabilities.search;
+              const online = source.status === "healthy" && source.capabilities.search;
+              const checking = source.status === "unknown" || providerHealthPending === source.name;
               const isActive = selectedSource?.name === source.name || selectedAnime?.provider === source.name;
-              const actionLabel = !enabled
+              const actionLabel = !source.capabilities.search
                 ? "Unavailable"
-                : source.status === "unavailable"
-                  ? "Retry"
+                : checking
+                  ? "Checking"
+                  : !online
+                    ? "Recheck"
                   : (hasDirectResult ? "Results" : "Search");
               return (
                 <button
@@ -2137,9 +2180,9 @@ function SearchStage({
                   className={isActive ? "provider-chip active" : "provider-chip"}
                   aria-label={`${source.name}: ${actionLabel}`}
                   aria-pressed={isActive}
-                  disabled={!enabled}
+                  disabled={!source.capabilities.search || checking}
                   title={source.failureCode || option?.failureCode || undefined}
-                  onClick={() => onProviderSourceSelect(source)}
+                  onClick={() => online ? onProviderSourceSelect(source) : onProviderHealthRetry(source)}
                 >
                   <i className={`health-dot ${source.status}`} />
                   <strong>{source.name}</strong>
@@ -3938,11 +3981,9 @@ function catalogOnlyAnime(catalog: CatalogAnime): Anime {
 }
 
 function firstSearchableSource(sources: Source[], group: "english" | "vietnamese") {
-  return (
-    sources.find((source) => source.languageGroup === group && source.status !== "unavailable" && source.capabilities.search) ??
-    sources.find((source) => source.languageGroup === group) ??
-    null
-  );
+  return sources.find(
+    (source) => source.languageGroup === group && source.status === "healthy" && source.capabilities.search,
+  ) ?? null;
 }
 
 function episodeDownloadKey(anime: Anime, episode: Episode) {
@@ -4179,6 +4220,17 @@ function isTauriRuntime() {
 
 function errorMessage(error: unknown) {
   return error instanceof Error ? error.message : String(error);
+}
+
+function providerFailureMakesOffline(error: AppError) {
+  return new Set([
+    "PROVIDER_UNAVAILABLE",
+    "PROVIDER_CAPTCHA",
+    "PROVIDER_RATE_LIMITED",
+    "NETWORK_TIMEOUT",
+    "STREAM_NOT_FOUND",
+    "STREAM_FORBIDDEN",
+  ]).has(error.code);
 }
 
 function toAppError(error: unknown, operation: string): AppError {

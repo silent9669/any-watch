@@ -462,8 +462,7 @@ impl AnimeProvider for MovieBoxProvider {
             .into_iter()
             .next_back()
             .context("MovieBox health check found no episodes")?;
-        self.get_stream_url(&episode.id).await?;
-        Ok(())
+        super::probe_stream(&self.get_stream_url(&episode.id).await?).await
     }
 }
 

@@ -716,13 +716,19 @@ async fn check_provider_health(
         }
         let provider = provider.clone();
         tasks.spawn(async move {
-            let result = provider.health_check().await;
+            let result =
+                tokio::time::timeout(Duration::from_secs(30), provider.health_check()).await;
             match result {
-                Ok(()) => source_dto(provider.as_ref(), "healthy", None),
-                Err(error) => source_dto(
+                Ok(Ok(())) => source_dto(provider.as_ref(), "healthy", None),
+                Ok(Err(error)) => source_dto(
                     provider.as_ref(),
                     "unavailable",
                     Some(classify_provider_error(&error.to_string()).into()),
+                ),
+                Err(_) => source_dto(
+                    provider.as_ref(),
+                    "unavailable",
+                    Some("NETWORK_TIMEOUT".into()),
                 ),
             }
         });
