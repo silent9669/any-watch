@@ -6,6 +6,8 @@ on:
   pull_request:
     branches: [main, master]
   workflow_dispatch:
+  schedule:
+    - cron: "17 4 * * *"
 
 permissions:
   contents: read
@@ -61,7 +63,7 @@ jobs:
           npm run cloudflare:test
           bash -n deploy/homelab/bootstrap-host.sh
           bash -n deploy/homelab/cloudflare-ddns.sh
-          docker compose \
+          ANI_DESK_ENV_FILE=.env.example docker compose \
             --env-file deploy/homelab/.env.example \
             --file deploy/homelab/compose.yml \
             config --quiet
@@ -124,6 +126,20 @@ jobs:
         run: docker build --tag any-watch:provider-verification .
       - name: Verify authenticated providers and opaque media proxy
         run: npm run providers:test:docker
+
+  provider-certification:
+    name: Live AniZone provider certification
+    if: github.event_name == 'schedule' || github.event_name == 'workflow_dispatch'
+    runs-on: ubuntu-latest
+    timeout-minutes: 25
+    steps:
+      - uses: actions/checkout@v7
+        with:
+          persist-credentials: false
+      - name: Build production image
+        run: docker build --tag any-watch:provider-verification .
+      - name: Verify live AniZone playback and English subtitles
+        run: ANY_WATCH_SMOKE_ANIZONE=1 npm run providers:test:docker
 
   audit:
     name: Dependency audit

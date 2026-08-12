@@ -157,6 +157,7 @@ def test_t1_tv_remote_arrows_move_visible_focus(mocked_page):
     mocked_page.set_viewport_size({"width": 1920, "height": 1080})
     mocked_page.evaluate("() => localStorage.setItem('any-watch:scale', 'tv')")
     mocked_page.reload()
+    expect(mocked_page.get_by_role("button", name="Home", exact=True)).to_be_visible()
     mocked_page.evaluate("() => document.activeElement instanceof HTMLElement && document.activeElement.blur()")
 
     mocked_page.keyboard.press("ArrowRight")
