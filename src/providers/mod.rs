@@ -69,6 +69,79 @@ pub struct Subtitle {
     pub url: String,
 }
 
+pub fn normalize_title(value: &str) -> String {
+    value
+        .chars()
+        .filter(|character| character.is_alphanumeric())
+        .flat_map(char::to_lowercase)
+        .collect()
+}
+
+fn title_words(value: &str) -> Vec<String> {
+    value
+        .split(|character: char| !character.is_alphanumeric())
+        .filter(|token| !token.is_empty())
+        .map(|token| token.to_lowercase())
+        .collect()
+}
+
+pub fn title_match_score(title: &str, target: &str) -> i32 {
+    let title_compact = normalize_title(title);
+    let target_compact = normalize_title(target);
+    if title_compact.is_empty() || target_compact.is_empty() {
+        return 0;
+    }
+    if title_compact == target_compact {
+        return 1000;
+    }
+    if title_compact.starts_with(&target_compact) || target_compact.starts_with(&title_compact) {
+        return 760;
+    }
+    if title_compact.contains(&target_compact) || target_compact.contains(&title_compact) {
+        return 620;
+    }
+
+    let words_for_title = title_words(title);
+    let target_words = title_words(target);
+    if words_for_title.is_empty() || target_words.is_empty() {
+        return 0;
+    }
+    let overlap = target_words
+        .iter()
+        .filter(|word| words_for_title.contains(word))
+        .count();
+    let required = target_words.len().min(words_for_title.len());
+    if required > 0 && overlap == required {
+        return 420;
+    }
+    if overlap >= 2 {
+        return 300 + (overlap as i32 * 20);
+    }
+    0
+}
+
+pub fn best_title_match(items: Vec<Anime>, title_variants: &[String]) -> Option<Anime> {
+    let mut scored = items
+        .into_iter()
+        .map(|item| {
+            let score = title_variants
+                .iter()
+                .map(|variant| title_match_score(&item.title, variant))
+                .max()
+                .unwrap_or(0);
+            (score, item)
+        })
+        .filter(|(score, _)| *score >= 300)
+        .collect::<Vec<_>>();
+    scored.sort_by_key(|(score, item)| {
+        (
+            std::cmp::Reverse(*score),
+            std::cmp::Reverse(item.total_episodes.unwrap_or_default()),
+        )
+    });
+    scored.into_iter().map(|(_, item)| item).next()
+}
+
 #[derive(Debug, Clone, Copy, Serialize, Deserialize, PartialEq)]
 pub enum Language {
     English,
@@ -212,7 +285,7 @@ pub fn parse_episode_number(name: &str) -> u32 {
 
 #[cfg(test)]
 mod tests {
-    use super::{parse_episode_number, ProviderRegistry};
+    use super::{best_title_match, parse_episode_number, Anime, Language, ProviderRegistry};
     use crate::config::Config;
 
     #[test]
@@ -244,5 +317,34 @@ mod tests {
         assert!(names.contains(&"AnimeVietSub"));
         assert!(!names.contains(&"AnimeTVN"));
         assert!(names.contains(&"Niniyo"));
+    }
+
+    #[test]
+    fn title_match_rejects_unrelated_results_and_prefers_complete_series() {
+        let anime = |id: &str, title: &str, episodes| Anime {
+            id: id.into(),
+            provider: "test".into(),
+            title: title.into(),
+            cover_url: String::new(),
+            banner_url: None,
+            language: Language::English,
+            total_episodes: episodes,
+            synopsis: None,
+        };
+        let variants = vec!["One Piece".to_string()];
+
+        assert!(best_title_match(vec![anime("x", "Naruto", Some(220))], &variants).is_none());
+        assert_eq!(
+            best_title_match(
+                vec![
+                    anime("short", "One Piece", Some(12)),
+                    anime("complete", "One Piece", Some(1100)),
+                ],
+                &variants,
+            )
+            .map(|item| item.id)
+            .as_deref(),
+            Some("complete")
+        );
     }
 }

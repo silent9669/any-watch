@@ -1,7 +1,7 @@
 use ani_desk_core::providers::{
-    allanime::AllAnimeProvider, animegg::AnimeGgProvider, kkphim::KkphimProvider,
-    moviebox::MovieBoxProvider, niniyo::NiniyoProvider, ophim::OphimProvider, AnimeProvider,
-    StreamInfo,
+    allanime::AllAnimeProvider, animegg::AnimeGgProvider, animevietsub::AnimeVietSubProvider,
+    kkphim::KkphimProvider, moviebox::MovieBoxProvider, niniyo::NiniyoProvider,
+    ophim::OphimProvider, AnimeProvider, StreamInfo,
 };
 use anyhow::{Context, Result};
 use reqwest::{header, Client, Url};
@@ -176,6 +176,12 @@ async fn test_niniyo_live_health() -> Result<()> {
 
 #[tokio::test]
 #[ignore = "requires live provider network access"]
+async fn test_animevietsub_live_health() -> Result<()> {
+    AnimeVietSubProvider::new().health_check().await
+}
+
+#[tokio::test]
+#[ignore = "requires live provider network access"]
 async fn test_allanime_live_playback() -> Result<()> {
     assert_live_playback(&AllAnimeProvider::new(), "One Piece").await
 }
@@ -208,4 +214,10 @@ async fn test_moviebox_live_playback() -> Result<()> {
 #[ignore = "requires live provider network access"]
 async fn test_niniyo_live_playback() -> Result<()> {
     assert_live_playback(&NiniyoProvider::new(), "Solo Leveling").await
+}
+
+#[tokio::test]
+#[ignore = "requires live provider network access"]
+async fn test_animevietsub_live_playback() -> Result<()> {
+    assert_live_playback(&AnimeVietSubProvider::new(), "Đảo Hải Tặc").await
 }

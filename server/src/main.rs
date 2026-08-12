@@ -7,7 +7,10 @@ use ani_desk_core::{
     config::Config,
     db::Database,
     metadata::MetadataCache,
-    providers::{Anime, AnimeProvider, Language, ProviderRegistry, StreamInfo},
+    providers::{
+        best_title_match, normalize_title, Anime, AnimeProvider, Language, ProviderRegistry,
+        StreamInfo,
+    },
     skip_times::{fetch_skip_times, SkipTime},
 };
 use anyhow::{Context, Result};
@@ -878,15 +881,15 @@ async fn availability(
         if input
             .language_group_filter
             .as_deref()
-            .is_some_and(|group| group != language_group(provider.language()))
+            .is_some_and(|group| !group.eq_ignore_ascii_case(language_group(provider.language())))
         {
             continue;
         }
         let result = provider.search(input.title.trim()).await;
         let (status, failure_code, anime) = match result {
             Ok(items) => {
-                let selected =
-                    best_title_match(items, &input.title).map(|anime| map_anime(anime, None));
+                let selected = best_title_match(items, &[input.title.clone()])
+                    .map(|anime| map_anime(anime, Some(input.catalog_id)));
                 if selected.is_some() {
                     ("available".into(), None, selected)
                 } else {
@@ -2169,27 +2172,6 @@ fn map_anime(anime: Anime, catalog_id: Option<i64>) -> AnimeDto {
         synopsis: anime.synopsis,
         is_favorite: false,
     }
-}
-
-fn normalize_title(value: &str) -> String {
-    value
-        .chars()
-        .filter(|value| value.is_alphanumeric())
-        .flat_map(char::to_lowercase)
-        .collect()
-}
-fn best_title_match(items: Vec<Anime>, title: &str) -> Option<Anime> {
-    let target = normalize_title(title);
-    items.into_iter().min_by_key(|anime| {
-        let value = normalize_title(&anime.title);
-        if value == target {
-            0
-        } else if value.contains(&target) || target.contains(&value) {
-            1
-        } else {
-            2
-        }
-    })
 }
 
 fn classify_provider_error(value: &str) -> &'static str {

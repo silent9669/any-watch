@@ -12,7 +12,8 @@ use ani_desk_core::db::{Database, DownloadRecord, WatchHistory};
 use ani_desk_core::metadata::MetadataCache;
 use ani_desk_core::player::Player;
 use ani_desk_core::providers::{
-    Anime, Episode, Language, ProviderCapabilities, ProviderRegistry, StreamInfo, Subtitle,
+    best_title_match, normalize_title, Anime, Episode, Language, ProviderCapabilities,
+    ProviderRegistry, StreamInfo, Subtitle,
 };
 use ani_desk_core::skip_times::{fetch_skip_times, SkipTime};
 use anyhow::Context;
@@ -1043,80 +1044,6 @@ fn language_group(language: Language) -> &'static str {
         Language::English => "english",
         Language::Vietnamese => "vietnamese",
     }
-}
-
-fn best_title_match(items: Vec<Anime>, title_variants: &[String]) -> Option<Anime> {
-    let mut scored = items
-        .into_iter()
-        .map(|item| (best_title_score(&item.title, title_variants), item))
-        .filter(|(score, _)| *score >= 300)
-        .collect::<Vec<_>>();
-    scored.sort_by_key(|(score, item)| {
-        (
-            std::cmp::Reverse(*score),
-            std::cmp::Reverse(item.total_episodes.unwrap_or_default()),
-        )
-    });
-    scored.into_iter().map(|(_, item)| item).next()
-}
-
-fn normalize_title(value: &str) -> String {
-    value
-        .chars()
-        .filter(|character| character.is_alphanumeric())
-        .flat_map(char::to_lowercase)
-        .collect()
-}
-
-fn title_words(value: &str) -> Vec<String> {
-    value
-        .split(|character: char| !character.is_alphanumeric())
-        .filter(|token| !token.is_empty())
-        .map(|token| token.to_lowercase())
-        .collect()
-}
-
-fn best_title_score(title: &str, variants: &[String]) -> i32 {
-    variants
-        .iter()
-        .map(|variant| title_match_score(title, variant))
-        .max()
-        .unwrap_or(0)
-}
-
-fn title_match_score(title: &str, target: &str) -> i32 {
-    let title_compact = normalize_title(title);
-    let target_compact = normalize_title(target);
-    if title_compact.is_empty() || target_compact.is_empty() {
-        return 0;
-    }
-    if title_compact == target_compact {
-        return 1000;
-    }
-    if title_compact.starts_with(&target_compact) || target_compact.starts_with(&title_compact) {
-        return 760;
-    }
-    if title_compact.contains(&target_compact) || target_compact.contains(&title_compact) {
-        return 620;
-    }
-
-    let words_for_title = title_words(title);
-    let target_words = title_words(target);
-    if words_for_title.is_empty() || target_words.is_empty() {
-        return 0;
-    }
-    let overlap = target_words
-        .iter()
-        .filter(|word| words_for_title.contains(word))
-        .count();
-    let required = target_words.len().min(words_for_title.len());
-    if required > 0 && overlap == required {
-        return 420;
-    }
-    if overlap >= 2 {
-        return 300 + (overlap as i32 * 20);
-    }
-    0
 }
 
 fn push_title_variant(variants: &mut Vec<String>, value: &str) {

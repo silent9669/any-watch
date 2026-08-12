@@ -22,10 +22,6 @@ const ALLANIME_CRYPTO_CDN: &str = "https://cdn.allanime.day/all/mk/_app/immutabl
 const MP4UPLOAD_REFERRER: &str = "https://www.mp4upload.com";
 const USER_AGENT: &str = "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/126.0.0.0 Safari/537.36";
 const REQUEST_TIMEOUT: Duration = Duration::from_secs(10);
-const ALLANIME_FALLBACK_EPOCH: u64 = 4128;
-const ALLANIME_FALLBACK_MASK: &str =
-    "b1a9a4d051988f1b1b12dbb747439d9bd64b09ea17835600a7eaa4de87c1ad87";
-const ALLANIME_FALLBACK_PART_B: &str = "k7DLdv5SGiuEyGUtcncl5wQOR7r4aenLfDV3AOBKlAU=";
 const ALLANIME_FALLBACK_QUERY_HASH: &str =
     "d405d0edd690624b66baba3068e0edc3ac90f1597d898a1ec8db4e5c43c00fec";
 
@@ -194,15 +190,6 @@ impl AllAnimeProvider {
         (!query.contains("${")).then(|| format!("{:x}", Sha256::digest(query.as_bytes())))
     }
 
-    fn fallback_crypto() -> Result<AllAnimeCryptoState> {
-        Ok(AllAnimeCryptoState {
-            expires_at_ms: Self::unix_time_ms() + 60 * 60 * 1000,
-            epoch: ALLANIME_FALLBACK_EPOCH,
-            key: Self::derive_crypto_key(ALLANIME_FALLBACK_MASK, ALLANIME_FALLBACK_PART_B)?,
-            query_hash: ALLANIME_FALLBACK_QUERY_HASH.to_string(),
-        })
-    }
-
     async fn fetch_live_crypto(&self) -> Result<AllAnimeCryptoState> {
         let html = self
             .client
@@ -308,20 +295,15 @@ impl AllAnimeProvider {
             return Ok(cached);
         }
 
-        let crypto = match self.fetch_live_crypto().await {
-            Ok(crypto) => {
-                tracing::debug!(
-                    epoch = crypto.epoch,
-                    query_hash = %crypto.query_hash,
-                    "AllAnime runtime crypto refreshed"
-                );
-                crypto
-            }
-            Err(error) => {
-                tracing::warn!(error = %error, "AllAnime runtime crypto unavailable; using fallback");
-                Self::fallback_crypto()?
-            }
-        };
+        let crypto = self
+            .fetch_live_crypto()
+            .await
+            .context("AllAnime runtime crypto is unavailable")?;
+        tracing::debug!(
+            epoch = crypto.epoch,
+            query_hash = %crypto.query_hash,
+            "AllAnime runtime crypto refreshed"
+        );
         *self.crypto.write().await = Some(crypto.clone());
         Ok(crypto)
     }

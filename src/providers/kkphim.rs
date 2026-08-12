@@ -1,4 +1,4 @@
-use super::{Anime, AnimeProvider, Episode, Language, StreamInfo, Subtitle};
+use super::{Anime, AnimeProvider, Episode, Language, ProviderCapabilities, StreamInfo};
 use anyhow::{Context, Result};
 use async_trait::async_trait;
 use reqwest::header::{self, HeaderMap};
@@ -72,6 +72,13 @@ impl AnimeProvider for KkphimProvider {
 
     fn website_url(&self) -> Option<&'static str> {
         Some("https://www.kkphim.com")
+    }
+
+    fn capabilities(&self) -> ProviderCapabilities {
+        ProviderCapabilities {
+            subtitles: false,
+            ..ProviderCapabilities::default()
+        }
     }
 
     async fn search(&self, query: &str) -> Result<Vec<Anime>> {
@@ -333,7 +340,7 @@ impl AnimeProvider for KkphimProvider {
         );
 
         let mut stream_url = String::new();
-        let mut subtitles: Vec<Subtitle> = Vec::new();
+        let subtitles = Vec::new();
         let qualities = vec!["auto".to_string()];
         let mut headers: HashMap<String, String> = HashMap::new();
 
@@ -421,12 +428,6 @@ impl AnimeProvider for KkphimProvider {
                                     } else {
                                         tracing::warn!("No stream URL found in server_ep");
                                     }
-
-                                    // KKPhim provides Vietnamese hardcoded subtitles in the video
-                                    subtitles.push(Subtitle {
-                                        language: "vi".to_string(),
-                                        url: String::new(),
-                                    });
 
                                     break 'outer;
                                 }

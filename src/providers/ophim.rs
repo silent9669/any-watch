@@ -1,4 +1,4 @@
-use super::{Anime, AnimeProvider, Episode, Language, StreamInfo, Subtitle};
+use super::{Anime, AnimeProvider, Episode, Language, ProviderCapabilities, StreamInfo};
 use anyhow::{Context, Result};
 use async_trait::async_trait;
 use reqwest::header::{self, HeaderMap};
@@ -68,6 +68,13 @@ impl AnimeProvider for OphimProvider {
 
     fn website_url(&self) -> Option<&'static str> {
         Some("https://ophim19.cc")
+    }
+
+    fn capabilities(&self) -> ProviderCapabilities {
+        ProviderCapabilities {
+            subtitles: false,
+            ..ProviderCapabilities::default()
+        }
     }
 
     async fn search(&self, query: &str) -> Result<Vec<Anime>> {
@@ -261,7 +268,7 @@ impl AnimeProvider for OphimProvider {
             .context("Failed to parse OPhim stream response")?;
 
         let mut stream_url = String::new();
-        let mut subtitles: Vec<Subtitle> = Vec::new();
+        let subtitles = Vec::new();
 
         if let Some(data) = response.get("data") {
             if let Some(item) = data.get("item") {
@@ -313,11 +320,6 @@ impl AnimeProvider for OphimProvider {
                                             }
                                         }
                                     }
-
-                                    subtitles.push(Subtitle {
-                                        language: "vi".to_string(),
-                                        url: String::new(),
-                                    });
 
                                     break 'outer;
                                 }
