@@ -115,7 +115,7 @@ jobs:
         run: pytest tests/e2e/test_maintenance.py -q
 
   web-container:
-    name: Production container and providers
+    name: Production container smoke
     runs-on: ubuntu-latest
     timeout-minutes: 25
     steps:
@@ -124,7 +124,7 @@ jobs:
           persist-credentials: false
       - name: Build production image
         run: docker build --tag any-watch:provider-verification .
-      - name: Verify authenticated providers and opaque media proxy
+      - name: Verify authentication and configured provider catalog
         run: npm run providers:test:docker
 
   provider-certification:
@@ -138,8 +138,8 @@ jobs:
           persist-credentials: false
       - name: Build production image
         run: docker build --tag any-watch:provider-verification .
-      - name: Verify live AniZone playback and English subtitles
-        run: ANY_WATCH_SMOKE_ANIZONE=1 npm run providers:test:docker
+      - name: Verify live provider playback and AniZone English subtitles
+        run: ANY_WATCH_SMOKE_LIVE_PROVIDERS=1 npm run providers:test:docker
 
   audit:
     name: Dependency audit
