@@ -6,7 +6,7 @@ services:
     image: ani-desk-homelab:local
     restart: unless-stopped
     env_file:
-      - ${ANI_DESK_ENV_FILE:-.env}
+      - ${ANI_DESK_ENV_FILE:-/srv/ani-desk/config/ani-desk.env}
     environment:
       ANI_DESK_DATA_DIR: /data
       ANI_DESK_WEB_DIR: /app/web/dist
