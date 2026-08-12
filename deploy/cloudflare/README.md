@@ -1,4 +1,8 @@
-# Cloudflare automatic maintenance fallback
+# Legacy ani-web Cloudflare automatic maintenance fallback
+
+> This configuration serves the current production application. Keep it intact
+> for rollback during migration; any-watch needs a separate reviewed Cloudflare
+> deployment before these names, routes, or artifacts change.
 
 `failover-worker.js` runs as a Worker Route on `ani.dangphuc.me/*`. The DNS
 record remains an orange-clouded `A` record pointing at the homelab. Calling

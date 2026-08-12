@@ -8,7 +8,7 @@ This is a snapshot of the current checkout, not a promise that every provider is
 Browser
   -> HTTPS :443
   -> Caddy container
-  -> ani-desk-server :3000 on private Compose network
+  -> legacy ani-web server :3000 on private Compose network
        -> React/Vite static files
        -> /api Axum routes
        -> web.db (users, sessions, favorites, history)
@@ -31,7 +31,7 @@ Only Caddy publishes host ports. The application container is addressable only o
 | Playback | Server-mediated HLS/DASH/resource proxy with signed media sessions | `server/src/main.rs` |
 | Container image | Multi-stage Node + Rust build, non-login runtime user | `Dockerfile`, `scripts/docker-entrypoint.sh` |
 | Edge/TLS | Caddy automatic HTTPS and security headers | `deploy/homelab/Caddyfile` |
-| Deployment | Docker Compose plus CI-approved pull agent | `deploy/homelab/` |
+| Deployment | Docker Compose; current runbook documents manual deployment | `deploy/homelab/` |
 
 ## Hosted data
 
@@ -54,8 +54,6 @@ The current database connection enables foreign keys but does not explicitly con
 
 - `deploy/homelab/bootstrap-host.sh` installs Docker on Debian, configures unattended upgrades and UFW, and restricts SSH to `192.168.1.0/24`.
 - `deploy/homelab/compose.yml` runs the service and Caddy.
-- `deploy/homelab/pull-deploy.sh` only accepts the latest successful GitHub `CI` push SHA on `main`, backs up stopped data, health-checks, and rolls back on failure.
-- `ani-desk-deploy.timer` checks every three minutes.
 - Optional Namecheap DDNS scripts and timer refresh the public address.
 
 ## Known context gaps
@@ -63,5 +61,7 @@ The current database connection enables foreign keys but does not explicitly con
 - The health endpoint only proves the process responds; it does not prove SQLite is writable, AniList is reachable, or any provider can play.
 - Provider health is volatile and must not block sign-in or access to saved library data.
 - The deployment scripts assume a specific Linux user, LAN subnet, domain, paths, repository, and `main` branch. Parameterize or consciously retain these values for the target homelab.
-- SQLite backup is consistent because the pull agent stops the application first. Any future online backup must use SQLite's backup mechanism rather than copying live database files.
+- The checked-in runbook uses stopped-data backups. Any future online SQLite
+  backup must use SQLite's backup mechanism rather than copying live database
+  files.
 - In-memory login limits and media sessions disappear after a restart and do not work across multiple application replicas.

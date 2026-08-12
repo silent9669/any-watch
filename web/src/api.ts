@@ -105,13 +105,6 @@ export const api = {
   retryProviderHealth: (provider?: string) => isNativeRuntime()
     ? invoke<Source[]>("retry_provider_health", { provider })
     : webPost<Source[]>("/providers/health", { provider }),
-  openProviderAccess: async (provider: string) => {
-    if (isNativeRuntime()) return invoke<void>("open_provider_access", { provider });
-    window.open(`/api/providers/access?provider=${encodeURIComponent(provider)}`, "_blank", "noopener,noreferrer");
-  },
-  completeProviderVerification: (provider: string) => isNativeRuntime()
-    ? invoke<Source[]>("complete_provider_verification", { provider })
-    : webPost<Source[]>("/providers/health", { provider }),
   getDiscovery: () => isNativeRuntime() ? invoke<DiscoveryCatalog>("get_discovery") : webRequest<DiscoveryCatalog>("/discovery"),
   getGenreCatalog: (genre: string) => isNativeRuntime()
     ? invoke<CatalogAnime[]>("get_genre_catalog", { genre })

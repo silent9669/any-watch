@@ -48,7 +48,6 @@ struct SourceDto {
     failure_code: Option<String>,
     capabilities: ProviderCapabilities,
     website_url: Option<String>,
-    verification_url: Option<String>,
 }
 
 #[derive(Debug, Clone, Serialize)]
@@ -62,7 +61,6 @@ struct ProviderHealthDto {
     checked_at: Option<String>,
     capabilities: ProviderCapabilities,
     website_url: Option<String>,
-    verification_url: Option<String>,
 }
 
 #[derive(Debug, Clone, Serialize)]
@@ -169,7 +167,6 @@ struct DownloadRecordDto {
 struct PlaybackDto {
     session_id: String,
     playback_url: String,
-    original_url: String,
     stream_kind: String,
     subtitles: Vec<SubtitleDto>,
     qualities: Vec<String>,
@@ -226,7 +223,6 @@ async fn list_sources(state: State<'_, AppState>) -> Result<Vec<SourceDto>, AppE
                 failure_code: current.and_then(|item| item.failure_code.clone()),
                 capabilities: provider.capabilities(),
                 website_url: provider.website_url().map(str::to_string),
-                verification_url: provider.verification_url().map(str::to_string),
             }
         })
         .collect())
@@ -259,168 +255,6 @@ fn provider_health_in_registry_order(
         .iter()
         .filter_map(|provider| health.get(provider.name()).cloned())
         .collect()
-}
-
-const PROVIDER_ACCESS_WINDOW: &str = "provider-access";
-const PROVIDER_BROWSER_USER_AGENT: &str = "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36";
-
-#[tauri::command]
-async fn open_provider_access(
-    app: tauri::AppHandle,
-    state: State<'_, AppState>,
-    provider: String,
-) -> Result<(), AppErrorDto> {
-    let provider_ref = state.providers.get_provider(&provider).ok_or_else(|| {
-        app_error_message(
-            "PROVIDER_UNAVAILABLE",
-            "provider-access",
-            Some(&provider),
-            "This provider is no longer available in ani-desk.",
-            false,
-        )
-    })?;
-    let access_url = provider_ref
-        .verification_url()
-        .or_else(|| provider_ref.website_url())
-        .ok_or_else(|| {
-            app_error_message(
-                "PROVIDER_UNAVAILABLE",
-                "provider-access",
-                Some(&provider),
-                "This provider does not offer a browser recovery page.",
-                false,
-            )
-        })?;
-    let url = url::Url::parse(access_url).map_err(|error| {
-        app_error(
-            "PROVIDER_UNAVAILABLE",
-            "provider-access",
-            Some(&provider),
-            error,
-            false,
-        )
-    })?;
-
-    if let Some(existing) = app.get_webview_window(PROVIDER_ACCESS_WINDOW) {
-        let _ = existing.close();
-    }
-
-    let allowed_host = url.host_str().map(str::to_string);
-    tauri::WebviewWindowBuilder::new(
-        &app,
-        PROVIDER_ACCESS_WINDOW,
-        tauri::WebviewUrl::External(url),
-    )
-    .title(format!("Verify {provider} - ani-desk"))
-    .inner_size(1040.0, 760.0)
-    .min_inner_size(720.0, 560.0)
-    .center()
-    .user_agent(PROVIDER_BROWSER_USER_AGENT)
-    .on_navigation(move |candidate| {
-        candidate.scheme() == "https"
-            && candidate.host_str().is_some_and(|host| {
-                Some(host) == allowed_host.as_deref()
-                    || host == "cloudflare.com"
-                    || host.ends_with(".cloudflare.com")
-            })
-    })
-    .build()
-    .map_err(|error| {
-        app_error(
-            "PROVIDER_UNAVAILABLE",
-            "provider-access",
-            Some(&provider),
-            error,
-            true,
-        )
-    })?;
-    Ok(())
-}
-
-#[tauri::command]
-async fn complete_provider_verification(
-    app: tauri::AppHandle,
-    state: State<'_, AppState>,
-    provider: String,
-) -> Result<Vec<ProviderHealthDto>, AppErrorDto> {
-    let provider_ref = state
-        .providers
-        .get_provider(&provider)
-        .cloned()
-        .ok_or_else(|| {
-            app_error_message(
-                "PROVIDER_UNAVAILABLE",
-                "provider-verification",
-                Some(&provider),
-                "This provider is no longer available in ani-desk.",
-                false,
-            )
-        })?;
-    let verification_url = provider_ref.verification_url().ok_or_else(|| {
-        app_error_message(
-            "PROVIDER_UNAVAILABLE",
-            "provider-verification",
-            Some(&provider),
-            "This provider does not require browser verification.",
-            false,
-        )
-    })?;
-    let window = app
-        .get_webview_window(PROVIDER_ACCESS_WINDOW)
-        .ok_or_else(|| {
-            app_error_message(
-                "PROVIDER_CAPTCHA",
-                "provider-verification",
-                Some(&provider),
-                "Open the verification window first, complete the provider check, then retry.",
-                true,
-            )
-        })?;
-    let url = url::Url::parse(verification_url).map_err(|error| {
-        app_error(
-            "PROVIDER_CAPTCHA",
-            "provider-verification",
-            Some(&provider),
-            error,
-            true,
-        )
-    })?;
-    let cookie_header = window
-        .cookies_for_url(url)
-        .map_err(|error| {
-            app_error(
-                "PROVIDER_CAPTCHA",
-                "provider-verification",
-                Some(&provider),
-                error,
-                true,
-            )
-        })?
-        .into_iter()
-        .map(|cookie| format!("{}={}", cookie.name(), cookie.value()))
-        .collect::<Vec<_>>()
-        .join("; ");
-    provider_ref
-        .apply_verification_cookies(cookie_header)
-        .await
-        .map_err(|error| {
-            app_error(
-                "PROVIDER_CAPTCHA",
-                "provider-verification",
-                Some(&provider),
-                error,
-                true,
-            )
-        })?;
-
-    let health = refresh_provider_health(&state, Some(&provider)).await;
-    if health
-        .get(&provider)
-        .is_some_and(|item| item.status == "healthy")
-    {
-        let _ = window.close();
-    }
-    Ok(provider_health_in_registry_order(&state, &health))
 }
 
 #[tauri::command]
@@ -528,7 +362,7 @@ async fn resolve_availability(
             let name = provider.name().to_string();
             let language = provider.language();
             let search = async {
-                if matches!(name.as_str(), "AnimeVietSub" | "AnimeTVN" | "Niniyo") {
+                if matches!(name.as_str(), "AnimeTVN" | "Niniyo") {
                     Some(Anime {
                         id: catalog_id.to_string(),
                         provider: name.clone(),
@@ -783,7 +617,6 @@ async fn prepare_playback(
     Ok(PlaybackDto {
         session_id: session.session_id,
         playback_url: session.playback_url,
-        original_url: stream.video_url,
         stream_kind,
         subtitles: stream.subtitles.into_iter().map(map_subtitle).collect(),
         qualities: stream.qualities,
@@ -1539,7 +1372,6 @@ async fn refresh_provider_health(
                 checked_at: Some(Utc::now().to_rfc3339()),
                 capabilities,
                 website_url: provider.website_url().map(str::to_string),
-                verification_url: provider.verification_url().map(str::to_string),
             }
         });
     }
@@ -1593,8 +1425,6 @@ fn main() {
             list_sources,
             list_provider_health,
             retry_provider_health,
-            open_provider_access,
-            complete_provider_verification,
             get_discovery,
             get_genre_catalog,
             get_catalog,

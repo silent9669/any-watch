@@ -54,11 +54,13 @@ Keep the production alert threshold one stage below the first failing stage. Sav
 
 ## Cheapest safe growth path
 
-### Tier 0 — private single node
+### Tier 0 — any-watch single node
 
-- One Axum process, SQLite WAL, Caddy, local persistent storage, and encrypted off-host backups.
-- Cache AniList metadata and coalesce provider lookups.
-- Avoid transcoding. Prefer safe direct media delivery when provider headers/security allow it; otherwise use a bounded proxy.
+- One Go application, PostgreSQL, Valkey, Caddy, local persistent storage, and
+  encrypted off-host backups.
+- Cache metadata and coalesce provider lookups.
+- Avoid transcoding. Use a bounded media path and do not make the VM a general
+  third-party media relay.
 
 ### Tier 1 — larger single node and cleaner media path
 
@@ -66,11 +68,13 @@ Keep the production alert threshold one stage below the first failing stage. Sav
 - Add storage quotas, download retention, connection limits, and per-user/per-provider rate limits.
 - Put downloads in S3-compatible object storage only for content the operator is authorized to retain; use short-lived signed links.
 
-### Tier 2 — external durable state
+### Tier 2 — larger or external durable state
 
-- Move SQLite to PostgreSQL when write contention, remote recovery, or replicas require it.
-- Add Redis only for genuinely shared ephemeral sessions, request coalescing, or rate counters.
-- Keep provider adapters in one worker boundary until independent failure or scaling is demonstrated.
+- Increase PostgreSQL capacity or move it to a managed/private host only after
+  backup, connection, and recovery needs justify it.
+- Keep Valkey limited to expiring sessions, request coalescing, and rate counters.
+- Keep provider adapters in one worker boundary until independent failure or
+  scaling is demonstrated.
 
 ### Tier 3 — multiple application replicas
 
@@ -87,17 +91,12 @@ Split identity/library, provider resolution, and media delivery only when at lea
 - deployments are blocked by independent ownership/release needs;
 - profiling shows a stable boundary with a measurable operational benefit.
 
-## Rewrite decision
+## Replacement decision
 
-Do not rewrite merely for anticipated growth. Re-evaluate the Rust/Axum + React stack when one of these is documented:
-
-- the shared native/provider core is no longer used;
-- hiring or maintenance data shows the stack is the dominant reliability risk;
-- a required platform feature cannot be implemented safely;
-- measured performance requires a boundary the current architecture cannot provide;
-- total migration cost is lower than two years of incremental maintenance.
-
-Any proposal must compare: provider-core reuse, migration of accounts/history, playback proxy security, operational tooling, rollback, performance evidence, and two-year hosting/maintenance cost. A framework preference is not sufficient evidence.
+The Nuxt/Go/PostgreSQL/Valkey replacement is approved. The remaining decisions
+are evidence-based: provider ports, media limits, replica count, and the timing
+of retiring legacy assets. Each requires migration, rollback, performance, and
+operational evidence rather than framework preference.
 
 ## Cost ledger
 

@@ -15,7 +15,7 @@ use axum::{
     body::Body,
     extract::{DefaultBodyLimit, Path, Query, State},
     http::{header, HeaderMap, HeaderName, HeaderValue, StatusCode},
-    response::{IntoResponse, Redirect, Response},
+    response::{IntoResponse, Response},
     routing::{get, post, put},
     Json, Router,
 };
@@ -267,11 +267,6 @@ struct RemoveInput {
 }
 
 #[derive(Debug, Deserialize)]
-struct ProviderQuery {
-    provider: String,
-}
-
-#[derive(Debug, Deserialize)]
 struct ResourceQuery {
     url: String,
     sig: String,
@@ -287,7 +282,6 @@ struct SourceDto {
     failure_code: Option<String>,
     capabilities: ani_desk_core::providers::ProviderCapabilities,
     website_url: Option<String>,
-    verification_url: Option<String>,
 }
 
 #[derive(Debug, Clone, Serialize)]
@@ -329,7 +323,6 @@ struct AvailabilityDto {
 struct PlaybackDto {
     session_id: String,
     playback_url: String,
-    original_url: String,
     stream_kind: String,
     subtitles: Vec<SubtitleDto>,
     qualities: Vec<String>,
@@ -389,7 +382,6 @@ async fn main() -> Result<()> {
             "/providers/health",
             get(list_provider_health).post(retry_provider_health),
         )
-        .route("/providers/access", get(provider_access))
         .route("/discovery", get(discovery))
         .route("/catalog/search", get(search_catalog))
         .route("/catalog/genre/:genre", get(genre_catalog))
@@ -659,7 +651,6 @@ async fn list_sources(
                 failure_code: None,
                 capabilities: provider.capabilities(),
                 website_url: provider.website_url().map(str::to_string),
-                verification_url: provider.verification_url().map(str::to_string),
             })
             .collect(),
     ))
@@ -678,7 +669,6 @@ fn source_dto(
         failure_code,
         capabilities: provider.capabilities(),
         website_url: provider.website_url().map(str::to_string),
-        verification_url: provider.verification_url().map(str::to_string),
     }
 }
 
@@ -748,39 +738,6 @@ async fn check_provider_health(
             .unwrap_or(usize::MAX)
     });
     Ok(health)
-}
-
-async fn provider_access(
-    State(state): State<AppState>,
-    headers: HeaderMap,
-    Query(query): Query<ProviderQuery>,
-) -> ApiResult<Redirect> {
-    require_user(&state, &headers).await?;
-    let provider = state
-        .providers
-        .get_provider(&query.provider)
-        .ok_or_else(|| {
-            ApiError::new(
-                StatusCode::NOT_FOUND,
-                "PROVIDER_UNAVAILABLE",
-                "provider-access",
-                "Provider is not available.",
-                false,
-            )
-        })?;
-    let url = provider
-        .verification_url()
-        .or_else(|| provider.website_url())
-        .ok_or_else(|| {
-            ApiError::new(
-                StatusCode::NOT_FOUND,
-                "PROVIDER_UNAVAILABLE",
-                "provider-access",
-                "Provider does not have a verification page.",
-                false,
-            )
-        })?;
-    Ok(Redirect::temporary(url))
 }
 
 async fn discovery(State(state): State<AppState>, headers: HeaderMap) -> ApiResult<Json<Value>> {
@@ -1102,7 +1059,6 @@ async fn playback(
     Ok(Json(PlaybackDto {
         session_id: id.clone(),
         playback_url: format!("/api/media/{id}"),
-        original_url: stream.video_url.clone(),
         stream_kind: if stream.video_url.to_ascii_lowercase().contains(".m3u8") {
             "hls"
         } else if stream.video_url.to_ascii_lowercase().contains(".mpd") {

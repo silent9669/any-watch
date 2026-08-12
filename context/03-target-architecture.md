@@ -1,83 +1,45 @@
-# Target homelab architecture
+# Target any-watch architecture
 
-## Recommendation
+## Decision
 
-Keep the existing stack and turn it into a well-bounded modular monolith:
+Replace the legacy React/Vite, Rust/Axum, SQLite, and Tauri stack with a
+web-first modular monolith:
 
-- React + TypeScript + Vite for the responsive browser client.
-- One Rust/Axum process for authentication, catalog coordination, provider adapters, playback proxying, and static delivery.
-- SQLite in WAL mode for family accounts, sessions, favorites, history, and cached metadata.
-- Docker Compose for the application and Caddy.
-- Caddy for TLS, HTTP/2/3, reverse proxying, access logs, and edge security headers.
-- systemd timers for CI-gated updates, DDNS, and scheduled backup verification.
+- Nuxt 4 and Vue 3 for the responsive PWA and TV browser interface.
+- Go for HTTP APIs, provider orchestration, scheduled work, and media grants.
+- PostgreSQL for durable account, catalog mapping, library, and audit data.
+- Valkey for rate limits, short-lived sessions, cache coordination, and bounded
+  background job state.
+- Docker Compose and Caddy on the existing VM, with Cloudflare handling DNS/TLS
+  edge configuration.
 
-This preserves the working native/web transport abstraction and provider code. A rewrite to Next.js, Node, Go, or separate frontend/backend repositories is not the starting recommendation because it would duplicate the hardest asset—the provider core—without resolving the likely bottlenecks of upstream reliability and media bandwidth. The decision is evidence-based, not permanent; measurable rewrite triggers live in `08-capacity-cost-evolution.md`.
+The Nuxt output is embedded or served alongside the Go application so production
+does not require a separately managed frontend process.
 
-## Internal modules
-
-Keep one deployable process, but separate code ownership by module:
-
-```text
-HTTP shell
-├── identity: login, sessions, admin users
-├── library: favorites and watch history
-├── discovery: AniList queries, cache, personal-match calculation
-├── providers: explicit provider registry and adapters
-├── playback: stream resolution, media sessions, manifest/resource proxy
-├── downloads: short-lived authorized download tickets
-└── operations: health, readiness, diagnostics, structured logging
-```
-
-Modules communicate through typed Rust interfaces, not HTTP calls to localhost. Provider adapters remain behind the existing `AnimeProvider` contract.
-
-## Network shape
-
-Recommended public shape:
+## Boundaries
 
 ```text
-Internet or trusted overlay
-  -> router 80/443 (or overlay ingress only)
-  -> Debian VM
-  -> Caddy container
-  -> ani-desk container on private Compose network
-  -> outbound HTTPS to AniList/providers
+browser/PWA/TV -> Caddy -> Go API -> PostgreSQL
+                              -> Valkey
+                              -> provider adapters and metadata services
 ```
 
-Choose one exposure mode:
+- Providers run behind a versioned adapter contract and cannot return secrets to
+  the browser.
+- Durable data lives only in PostgreSQL; rebuildable caches have explicit TTLs.
+- Valkey holds only expiring or reconstructable data.
+- Media preparation is bounded separately from ordinary API work.
+- Caddy is the only public listener; PostgreSQL and Valkey are private.
 
-- **Private overlay preferred:** Tailscale/WireGuard access only. Lowest exposure and simplest family security.
-- **Public HTTPS acceptable:** Caddy on 80/443, strong accounts, automatic TLS, DDNS, router port-forwarding, and monitoring. Never expose port 3000.
-- **Outbound tunnel alternative:** a managed tunnel avoids inbound router ports but adds an external dependency. Confirm that its terms and bandwidth support media proxy traffic.
+## Scale path
 
-## Storage
+Start with one application replica. Move to additional replicas only after
+PostgreSQL, Valkey, readiness checks, connection limits, and media-plane
+boundaries are measured. The initial 100-user target applies to browsing and
+account activity, not unlimited proxied video streams.
 
-Stay on SQLite while there is one application replica and low write contention. Configure WAL, foreign keys, and a busy timeout on every connection. Keep database and download storage on persistent local disks, not the container filesystem.
+## Coexistence rule
 
-Move to PostgreSQL only if one of these becomes true:
-
-- Multiple application replicas need concurrent writes.
-- Lock contention remains measurable after WAL and short transactions.
-- The database must live on another host.
-- Operational requirements demand point-in-time recovery.
-
-Do not add Redis while sessions and rate limits fit one process. If horizontal scaling becomes necessary, Redis can hold rate-limit counters and ephemeral playback sessions, while PostgreSQL holds durable data.
-
-## Discovery and personalization
-
-- Query AniList for trending/discovery pages only when the cache is stale.
-- Cache normalized AniList responses with a timestamp and serve stale data during temporary upstream failure.
-- Calculate personal-match scores locally from cached genres/tags plus per-user favorites/history.
-- Changing sort/filter on already-loaded results must not call AniList again.
-- Use explicit refresh or a conservative TTL; coalesce concurrent refreshes.
-
-## Reliability boundaries
-
-- Sign-in, My List, and Continue Watching should continue working when AniList or providers are down.
-- AniList failure degrades discovery, not account/library routes.
-- One provider failure must not mark every provider unhealthy.
-- Playback resolution and media proxy errors need provider name, stable error code, correlation ID, and retryability without logging secrets or stream URLs.
-- Deployment success requires readiness plus a smoke test, not only process liveness.
-
-## Resource starting point
-
-Start with 2 vCPU, 2–4 GB RAM, 20 GB system disk, and separate persistent space for databases/backups/downloads. Measure bandwidth and disk use before resizing. The application itself is small; concurrent proxied media determines network capacity. Never promise a user-count limit from these numbers alone—publish a tested concurrent-stream envelope for the actual connection and hardware.
+The legacy provider core is valuable migration inventory, not a reason to keep
+the old stack. Port it adapter-by-adapter with certification and retain the old
+service/data snapshot until the new system passes cutover acceptance.

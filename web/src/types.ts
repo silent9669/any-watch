@@ -6,7 +6,6 @@ export type Source = {
   failureCode?: string | null;
   capabilities: ProviderCapabilities;
   websiteUrl?: string | null;
-  verificationUrl?: string | null;
 };
 
 export type ProviderCapabilities = {
@@ -141,7 +140,6 @@ export type Favorite = {
 export type Playback = {
   sessionId: string;
   playbackUrl: string;
-  originalUrl: string;
   streamKind: "hls" | "native" | string;
   subtitles: Array<{ language: string; url: string }>;
   qualities: string[];

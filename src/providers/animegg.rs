@@ -1,4 +1,4 @@
-use super::{Anime, AnimeProvider, Episode, Language, StreamInfo};
+use super::{Anime, AnimeProvider, Episode, Language, ProviderCapabilities, StreamInfo};
 use anyhow::{Context, Result};
 use async_trait::async_trait;
 use regex::Regex;
@@ -180,6 +180,13 @@ impl AnimeProvider for AnimeGgProvider {
 
     fn website_url(&self) -> Option<&'static str> {
         Some(BASE_URL)
+    }
+
+    fn capabilities(&self) -> ProviderCapabilities {
+        ProviderCapabilities {
+            subtitles: false,
+            ..ProviderCapabilities::default()
+        }
     }
 
     async fn search(&self, query: &str) -> Result<Vec<Anime>> {

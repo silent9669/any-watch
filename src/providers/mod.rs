@@ -92,12 +92,6 @@ pub trait AnimeProvider: Send + Sync {
     fn website_url(&self) -> Option<&'static str> {
         None
     }
-    fn verification_url(&self) -> Option<&'static str> {
-        None
-    }
-    async fn apply_verification_cookies(&self, _cookie_header: String) -> Result<()> {
-        Ok(())
-    }
     fn capabilities(&self) -> ProviderCapabilities {
         ProviderCapabilities::default()
     }
@@ -151,6 +145,12 @@ impl ProviderRegistry {
         // 3. OPhim
         if config.sources.ophim {
             providers.push(Arc::new(ophim::OphimProvider::new()));
+        }
+
+        // This adapter currently resolves through the same public OPhim API.
+        // Keep it opt-in until a distinct AnimeVietSub integration is certified.
+        if config.sources.animevietsub {
+            providers.push(Arc::new(animevietsub::AnimeVietSubProvider::new()));
         }
 
         if config.sources.niniyo {
@@ -241,7 +241,7 @@ mod tests {
         assert!(names.contains(&"MovieBox"));
         assert!(names.contains(&"AnimeGG"));
         assert!(!names.contains(&"HiAnime"));
-        assert!(!names.contains(&"AnimeVietSub"));
+        assert!(names.contains(&"AnimeVietSub"));
         assert!(!names.contains(&"AnimeTVN"));
         assert!(names.contains(&"Niniyo"));
     }

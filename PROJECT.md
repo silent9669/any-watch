@@ -1,25 +1,43 @@
-# Project: ani-desk DMG Installer & Homebrew CD Automation
+# any-watch project brief
 
-## Architecture
-- React Frontend: Web application using React, TypeScript, Vite, Lucide-React, and Framer Motion.
-- Tauri / Rust Backend: Multi-platform wrapper using Tauri v2.
-- GitHub Actions CI/CD: Workflows to automate release compilation for macOS, Windows, and Linux, and automatically update the homebrew-ani-desk cask.
+## Purpose
 
-## Milestones
-| # | Name | Scope | Dependencies | Status |
-|---|------|-------|-------------|--------|
-| 1 | Installer Aesthetics & DMG Config | Generate a custom DMG background image incorporating the app's logo, place it in packaging/macos/, and configure tauri.conf.json. | None | DONE |
-| 2 | Modern README & Demo Images | Redesign README.md, move screenshots to docs/images/, update screenshot links, and add Homebrew cask installation instructions. | None | DONE |
-| 3 | Homebrew Tap CD Automation | Update release workflow to fix macOS Intel runner label to macos-13, download artifacts, and run generate-homebrew-cask.rb with local hashing support to update Casks/ani-desk.rb. Use gh CLI to set up repository secrets. | None | DONE |
-| 4 | Cross-Platform Build & Verification | Verify Tauri build matrix outputs (macOS DMG, Windows MSI/EXE, Linux AppImage/DEB) and run local checks/tests. | M1, M2, M3 | DONE |
+`any-watch` is a private, account-only media-viewing application for family use.
+It is a web-first PWA for desktop, mobile, and TV browsers. The project will
+replace the legacy `ani-web` implementation through a reversible migration, not
+through an in-place rewrite of the live service.
 
-## Interface Contracts
-- Tauri Configuration: bundle.macOS.dmg.background pointing to the custom DMG background.
-- Homebrew Cask format: Casks/ani-desk.rb template in packaging/homebrew/Casks/ani-desk.rb.template.
+## Target architecture
 
-## Code Layout
-- Frontend code: web/src/
-- Rust code: src-tauri/
-- Workflows: .github/workflows/
-- Packaging config: packaging/
-- Scripts: scripts/
+| Concern | Target |
+| --- | --- |
+| Client | Nuxt 4, Vue 3, TypeScript, installable PWA |
+| API and workers | Go |
+| Durable data | PostgreSQL |
+| Sessions, rate limits, ephemeral jobs | Valkey |
+| Edge | Caddy behind Cloudflare |
+| Deployment | Docker Compose on the existing VM |
+
+## Product invariants
+
+- The login page is the only unauthenticated surface.
+- Administrators create and manage accounts in a protected Settings section.
+- Account data is server-side and isolated by user.
+- English and Vietnamese are first-class language preferences.
+- Provider, title, and episode identities remain opaque and source-scoped.
+- Providers never silently replace one another during search or playback.
+- Secrets and media authorization stay on the server.
+
+## Delivery status
+
+| Milestone | Scope | Status |
+| --- | --- | --- |
+| 1 | Product, architecture, provider, and design documentation | In progress |
+| 2 | Nuxt/Go/PostgreSQL/Valkey foundation | Planned |
+| 3 | Identity and SQLite-to-PostgreSQL migration | Planned |
+| 4 | Provider contract ports and certification | Planned |
+| 5 | PWA, TV interaction, player, and account library | Planned |
+| 6 | Side-by-side deployment, load tests, and cutover | Planned |
+
+The existing React, Rust, Tauri, desktop packaging, and homelab assets are legacy
+inventory. They remain intact until the migration acceptance gates pass.

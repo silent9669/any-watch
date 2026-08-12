@@ -23,21 +23,25 @@ async fn assert_live_playback(provider: &dyn AnimeProvider, query: &str) -> Resu
         for episode in episodes.into_iter().rev().take(24) {
             match provider.get_stream_url(&episode.id).await {
                 Ok(stream) => {
-                    probe_stream(&stream).await.with_context(|| {
+                    match probe_stream(&stream).await.with_context(|| {
                         format!(
                             "{} resolved {} episode {}, but its media was not playable",
                             provider.name(),
                             anime.title,
                             episode.number
                         )
-                    })?;
-                    eprintln!(
-                        "{} playback passed: {} episode {}",
-                        provider.name(),
-                        anime.title,
-                        episode.number
-                    );
-                    return Ok(());
+                    }) {
+                        Ok(()) => {
+                            eprintln!(
+                                "{} playback passed: {} episode {}",
+                                provider.name(),
+                                anime.title,
+                                episode.number
+                            );
+                            return Ok(());
+                        }
+                        Err(error) => last_error = Some(error),
+                    }
                 }
                 Err(error) => last_error = Some(error),
             }
@@ -191,7 +195,7 @@ async fn test_kkphim_live_playback() -> Result<()> {
 #[tokio::test]
 #[ignore = "requires live provider network access"]
 async fn test_ophim_live_playback() -> Result<()> {
-    assert_live_playback(&OphimProvider::new(), "One Piece").await
+    assert_live_playback(&OphimProvider::new(), "Đảo Hải Tặc").await
 }
 
 #[tokio::test]

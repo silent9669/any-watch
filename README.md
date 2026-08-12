@@ -1,29 +1,48 @@
-# ani-web
+# any-watch
 
-Private family anime streaming for desktop, mobile, and TV browsers.
+Private, account-only viewing for family members across desktop, mobile, and TV
+browsers. `any-watch` is the planned successor to `ani-web`; the current Rust,
+React, and Tauri implementation remains the live system until a staged migration
+is accepted.
 
-**Open the web app:** [ani.dangphuc.me](https://ani.dangphuc.me)
+**Current service:** [ani.dangphuc.me](https://ani.dangphuc.me)
 
-![ani-web desktop home](docs/images/web-home-desktop.png)
+## Product direction
 
-## Use ani-web
+- Accounts are created, disabled, and reset only by an administrator.
+- Unauthenticated visitors see the login screen only. There is no guest mode.
+- Watch history, progress, My List, language, and playback preferences belong to
+  the signed-in account and work across browsers.
+- The replacement is a Nuxt PWA with a Go API, PostgreSQL, Valkey, Caddy, and
+  Cloudflare. It targets modern browsers and remote-controlled TV browsers.
+- Discovery is title-first: a title can expose multiple independently identified
+  viewing options without silently merging or switching providers.
 
-1. Open the web app and sign in with an account created by the administrator.
-2. Search for a title from Home.
-3. Choose English or Vietnamese, then select a provider. Your search stays in place when you switch providers.
-4. Open a result, choose an episode, and press **Watch**.
-5. Use **My List** to save titles. Watch progress follows your account across signed-in browsers.
+## Current providers and migration
 
-## Mobile browser
+The current implementation contains MovieBox, KKPhim, OPhim, Niniyo, AllAnime,
+and AnimeGG adapters, plus unregistered or stub integrations. They are migration
+inventory, not a guarantee of availability. Each adapter must be ported behind a
+versioned provider contract, retain opaque source and episode IDs, and pass
+search, episode, playback, subtitle, and failure-path certification before it is
+enabled in `any-watch`.
 
-Search results, title details, episode selection, and playback adapt to a phone-sized screen.
+Provider protocol constants, credentials, cookies, raw media URLs, and required
+upstream headers remain server-side. New source integrations require a documented
+authorization or platform-supported integration method. See
+[docs/PROVIDER_INVENTORY.md](docs/PROVIDER_INVENTORY.md).
 
-<p align="center">
-  <img src="docs/images/web-search-mobile.png" alt="ani-web provider search on a mobile browser" width="390">
-</p>
+## Migration documents
 
-## TV browser
+- [Architecture](docs/ARCHITECTURE.md)
+- [Migration plan](docs/ANY_WATCH_MIGRATION.md)
+- [Provider inventory](docs/PROVIDER_INVENTORY.md)
+- [Design system](design.md)
+- [Current-system inventory](context/02-current-system.md)
 
-Choose **Settings → Interface size → TV / remote**. Use the arrow keys on a remote or keyboard to move focus and press **OK/Enter** to select.
+## Repository status
 
-![ani-web TV and remote layout](docs/images/web-home-tv.png)
+This repository currently contains the legacy application and its operational
+assets. Documentation defines the replacement; no runtime migration has started.
+Do not remove the legacy code, databases, or deployment configuration until the
+side-by-side cutover and rollback gates in the migration plan pass.

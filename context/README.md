@@ -1,48 +1,38 @@
-# ani-web build context
+# any-watch context
 
-This folder is the handoff contract for building and operating the hosted ani-desk service on a small private homelab. It records product intent, current implementation facts, target architecture, security boundaries, deployment commands, and acceptance criteria without duplicating the entire repository.
+This folder separates the observed legacy `ani-web` system from the planned
+`any-watch` replacement. It is a planning contract, not an authorization to
+modify production.
 
 ## Read order
 
-1. [01-product-brief.md](01-product-brief.md) — users, goals, non-goals, and immutable behavior.
-2. [02-current-system.md](02-current-system.md) — what already exists and where its source of truth lives.
-3. [03-target-architecture.md](03-target-architecture.md) — recommended stack and boundaries.
-4. [04-api-data-provider-contracts.md](04-api-data-provider-contracts.md) — contracts future work must preserve.
-5. [05-network-security.md](05-network-security.md) — exposure model, identity, secrets, and hardening.
-6. [06-deploy-operate-monitor.md](06-deploy-operate-monitor.md) — command-line deployment and operations runbook.
-7. [07-migration-acceptance.md](07-migration-acceptance.md) — delivery phases and release gates.
-8. [08-capacity-cost-evolution.md](08-capacity-cost-evolution.md) — sustainable growth, cost controls, load gates, and rewrite triggers.
-9. [09-build-handoff.md](09-build-handoff.md) — practical implementation order and evidence expected from a future builder.
-10. [decisions/README.md](decisions/README.md) — architecture decisions and reconsideration triggers.
+1. [01-product-brief.md](01-product-brief.md) - product decisions and invariants.
+2. [02-current-system.md](02-current-system.md) - legacy inventory to preserve.
+3. [03-target-architecture.md](03-target-architecture.md) - approved replacement.
+4. [04-api-data-provider-contracts.md](04-api-data-provider-contracts.md) - compatibility and provider rules.
+5. [05-network-security.md](05-network-security.md) - security and deployment controls.
+6. [07-migration-acceptance.md](07-migration-acceptance.md) - acceptance gates.
+7. [08-capacity-cost-evolution.md](08-capacity-cost-evolution.md) - limits and growth plan.
+8. [09-build-handoff.md](09-build-handoff.md) - implementation evidence.
 
-## Source-of-truth order
+## Source of truth
 
-When documents disagree, prefer:
+When documents disagree, use this order:
 
-1. Executable code and configuration in the current checkout.
-2. This context pack for product intent and target-state decisions.
-3. Existing project documentation such as `README.md`, `docs/ARCHITECTURE.md`, and `deploy/homelab/README.md`.
-4. Historical plans and status files.
+1. Executable code and configuration for current `ani-web` behavior.
+2. `docs/ANY_WATCH_MIGRATION.md`, `docs/ARCHITECTURE.md`, and `design.md` for
+   the approved target state.
+3. This context pack for migration constraints and acceptance criteria.
+4. Historical release notes and legacy desktop documentation.
 
-Before implementation, inspect the actual versions in `Cargo.lock` and `package-lock.json`; do not select dependency versions from this documentation.
+## Guardrails
 
-## Guardrails for a future builder
-
-- Preserve ani-desk branding and the provider-first search model.
-- AniList supplies discovery metadata; playback providers supply search results, episodes, and streams.
-- Keep English and Vietnamese provider behavior independently testable.
-- Do not silently merge provider results or silently fall back to a different provider.
-- Keep AllAnime visible when blocked and offer a clear manual-verification path.
-- Never expose provider stream URLs or required provider headers directly to the browser.
-- Do not deploy automatically while redesign or provider behavior is still awaiting owner validation.
-- Treat the first family cohort as a starting load, not an architectural ceiling; scale from measured bottlenecks.
-- Do not commit `.env`, databases, certificates, download files, or backup archives.
-
-## Existing references
-
-- `docs/ARCHITECTURE.md` — desktop-oriented code map and IPC surface.
-- `deploy/homelab/README.md` — existing Compose and CI-gated pull deployment.
-- `deploy/homelab/compose.yml` — current production topology.
-- `server/src/main.rs` and `server/src/db.rs` — hosted API and identity/data implementation.
-- `web/src/api.ts` and `web/src/types.ts` — browser/native transport abstraction and shared DTOs.
-- `src/providers/mod.rs` — provider adapter interface and registry.
+- Preserve account isolation, source-scoped IDs, progress, My List, and stable
+  safe errors during migration.
+- Do not silently merge provider results or silently change a user's source.
+- Do not expose credentials, cookies, required headers, signed URLs, or raw
+  provider protocol data to browsers or logs.
+- Keep enabled providers independently certified by language and region.
+- Do not overwrite current production data, deployment assets, or the legacy
+  application until side-by-side cutover approval.
+- Do not commit secrets, databases, certificates, downloads, or backups.

@@ -32,7 +32,7 @@ pub struct SourcesConfig {
     #[serde(default = "default_true")]
     pub ophim: bool,
 
-    #[serde(default = "default_true")]
+    #[serde(default)]
     pub animevietsub: bool,
 
     #[serde(default)]
@@ -43,6 +43,28 @@ pub struct SourcesConfig {
 
     #[serde(default)]
     pub hianime: bool,
+}
+
+#[cfg(test)]
+mod tests {
+    use super::Config;
+
+    #[test]
+    fn omitted_opt_in_sources_remain_disabled() {
+        let config: Config = toml::from_str(
+            r#"
+                [sources]
+                moviebox = true
+            "#,
+        )
+        .expect("config should parse");
+
+        assert!(!config.sources.allanime);
+        assert!(!config.sources.animegg);
+        assert!(!config.sources.animevietsub);
+        assert!(!config.sources.animetvn);
+        assert!(!config.sources.hianime);
+    }
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]

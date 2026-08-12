@@ -121,14 +121,6 @@ def mocked_page(page, vite_server):
                 return state.sources;
             } else if (cmd === "list_provider_health" || cmd === "retry_provider_health") {
                 return state.sources;
-            } else if (cmd === "open_provider_access") {
-                return null;
-            } else if (cmd === "complete_provider_verification") {
-                state.sources = state.sources.map((source) => source.name === args.provider
-                    ? { ...source, status: "healthy", failureCode: null }
-                    : source);
-                saveMockState(state);
-                return state.sources;
             } else if (cmd === "get_discovery") {
                 const makeCatalog = (index) => ({
                     catalogId: 1000 + index,
@@ -360,7 +352,6 @@ def mocked_page(page, vite_server):
                 return {
                     sessionId: "session-123",
                     playbackUrl: "https://example.com/stream.m3u8",
-                    originalUrl: "https://example.com/original",
                     streamKind: "hls",
                     subtitles: [],
                     qualities: ["360p", "720p", "1080p"],

@@ -665,7 +665,7 @@ def test_t2_search_provider_disconnect(mocked_page):
     expect(mocked_page.locator(".error-notice")).to_be_visible()
     expect(mocked_page.locator(".error-notice strong")).to_have_text("UNEXPECTED_ERROR")
 
-def test_t2_allanime_manual_verification_recovery(mocked_page):
+def test_t2_unavailable_provider_can_be_retried_directly(mocked_page):
     mocked_page.evaluate("""() => {
         const state = window.__TAURI_MOCK_STATE__;
         state.sources = (state.sources || []).map((source) => source.name === 'AllAnime'
@@ -675,21 +675,15 @@ def test_t2_allanime_manual_verification_recovery(mocked_page):
     }""")
     mocked_page.reload()
     mocked_page.locator(".hero-search-trigger").click()
-    mocked_page.locator(".availability-strip .provider-chip:has-text('AllAnime')").click()
+    provider = mocked_page.locator(".availability-strip .provider-chip:has-text('AllAnime')")
+    expect(provider).to_be_enabled()
+    expect(provider).to_have_attribute("aria-label", "AllAnime: Retry")
+    provider.click()
+    mocked_page.locator(".search-input-shell input").fill("Naruto")
+    mocked_page.wait_for_selector(".search-result")
 
-    recovery = mocked_page.locator(".provider-recovery")
-    expect(recovery).to_be_visible()
-    expect(recovery).to_contain_text("Provider verification / Xác minh nguồn")
-    expect(recovery).to_contain_text("tự hoàn tất Cloudflare")
-
-    recovery.get_by_role("button", name="Open site / Mở trang").click()
-    opened = mocked_page.evaluate("""() => window.__TAURI_CALLS__.some(
-        (call) => call.cmd === 'open_provider_access' && call.args.provider === 'AllAnime'
-    )""")
-    assert opened is True
-
-    recovery.get_by_role("button", name="I finished — retry / Đã xong — thử lại").click()
-    expect(mocked_page.locator(".provider-recovery")).to_have_count(0)
+    expect(mocked_page.locator(".search-results-pane")).to_contain_text("AllAnime Results")
+    expect(provider).to_have_attribute("aria-label", "AllAnime: Results")
 
 def test_t2_search_catalog_rate_limit_keeps_provider_results(mocked_page):
     mocked_page.locator(".hero-search-trigger").click()

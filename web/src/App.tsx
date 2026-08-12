@@ -135,7 +135,6 @@ function App() {
   const catalogSearchGenerationRef = useRef(0);
   const pendingUpdateRef = useRef<Update | null>(null);
   const [appUpdate, setAppUpdate] = useState<AppUpdateState>({ status: "idle" });
-  const [providerAccessPending, setProviderAccessPending] = useState<string | null>(null);
   const [theme, setTheme] = useState<AppTheme>(loadSavedTheme);
   const [appScale, setAppScale] = useState<AppScale>(loadSavedScale);
   const [appFont, setAppFont] = useState<AppFont>(loadSavedFont);
@@ -564,34 +563,6 @@ function App() {
         return true;
       })
       .slice(0, 36);
-  }
-
-  async function openProviderAccess(source: Source) {
-    setProviderAccessPending(`open:${source.name}`);
-    try {
-      await api.openProviderAccess(source.name);
-    } catch (err) {
-      setError(toAppError(err, "provider-access"));
-    } finally {
-      setProviderAccessPending(null);
-    }
-  }
-
-  async function completeProviderVerification(source: Source) {
-    setProviderAccessPending(`retry:${source.name}`);
-    try {
-      const health = await api.completeProviderVerification(source.name);
-      const verified = health.find((item) => item.name === source.name);
-      setSources((current) => current.map((item) => health.find((update) => update.name === item.name) ?? item));
-      if (verified) setSelectedSource(verified);
-      if (verified?.status === "healthy" && query.trim().length >= 2) {
-        await searchCatalog(query, verified);
-      }
-    } catch (err) {
-      setError(toAppError(err, "provider-verification"));
-    } finally {
-      setProviderAccessPending(null);
-    }
   }
 
   function selectProviderResult(anime: Anime) {
@@ -1065,9 +1036,6 @@ function App() {
               onLanguageChange={selectSearchLanguage}
               onProviderSelect={(option) => void selectCatalogProvider(option)}
               onProviderSourceSelect={selectProviderSource}
-              onOpenProviderAccess={(source) => void openProviderAccess(source)}
-              onCompleteProviderVerification={(source) => void completeProviderVerification(source)}
-              providerAccessPending={providerAccessPending}
               onSelectProviderResult={selectProviderResult}
               onSelectCatalog={selectCatalogResult}
               onOpenAnime={(anime) => void openAnime(anime)}
@@ -1284,7 +1252,6 @@ function SettingsPage({
 function providerStatusLabel(source: Source) {
   if (source.status === "healthy") return "Healthy";
   if (source.status === "degraded") return "Limited";
-  if (source.status === "unavailable" && source.verificationUrl) return "Verify";
   if (source.status === "unavailable") return "Offline";
   return "Checking";
 }
@@ -2042,9 +2009,6 @@ function SearchStage({
   onLanguageChange,
   onProviderSelect,
   onProviderSourceSelect,
-  onOpenProviderAccess,
-  onCompleteProviderVerification,
-  providerAccessPending,
   onSelectProviderResult,
   onSelectCatalog,
   onOpenAnime,
@@ -2069,9 +2033,6 @@ function SearchStage({
   onLanguageChange: (language: "english" | "vietnamese") => void;
   onProviderSelect: (option: ProviderAvailability) => void;
   onProviderSourceSelect: (source: Source) => void;
-  onOpenProviderAccess: (source: Source) => void;
-  onCompleteProviderVerification: (source: Source) => void;
-  providerAccessPending: string | null;
   onSelectProviderResult: (anime: Anime) => void;
   onSelectCatalog: (anime: CatalogAnime) => void;
   onOpenAnime: (anime: Anime) => void;
@@ -2100,9 +2061,6 @@ function SearchStage({
         episodes: selectedAnime?.totalEpisodes,
         category: selectedAnime?.provider ?? "Provider result",
       };
-  const recoverySource = selectedSource?.status === "unavailable" && (selectedSource.verificationUrl || selectedSource.websiteUrl)
-    ? selectedSource
-    : null;
 
   function setMobileSearchStep(previewOpen: boolean) {
     setMobilePreviewOpen(previewOpen);
@@ -2166,14 +2124,13 @@ function SearchStage({
             {languageSources.map((source) => {
               const option = availability.find((item) => item.provider === source.name);
               const hasDirectResult = providerResults.some((anime) => anime.provider === source.name);
-              const recoverable = Boolean(source.verificationUrl || source.websiteUrl);
-              const enabled = source.capabilities.search && (source.status !== "unavailable" || recoverable);
+              const enabled = source.capabilities.search;
               const isActive = selectedSource?.name === source.name || selectedAnime?.provider === source.name;
-              const actionLabel = source.status === "unavailable" && source.verificationUrl
-                ? "Verify / Xác minh"
-                : enabled
-                  ? (hasDirectResult ? "Results" : "Search")
-                  : "Unavailable";
+              const actionLabel = !enabled
+                ? "Unavailable"
+                : source.status === "unavailable"
+                  ? "Retry"
+                  : (hasDirectResult ? "Results" : "Search");
               return (
                 <button
                   key={source.name}
@@ -2194,40 +2151,7 @@ function SearchStage({
         </div>
       </div>
 
-      {recoverySource && (
-        <aside className="provider-recovery" aria-live="polite">
-          <div className="provider-recovery-icon"><AlertTriangle size={20} /></div>
-          <div>
-            <strong>{recoverySource.verificationUrl ? "Provider verification / Xác minh nguồn" : "Provider website / Trang nguồn"}</strong>
-            <p>
-              {recoverySource.verificationUrl
-                ? `Open ${recoverySource.name}, complete Cloudflare manually, then return here and retry. Mở ${recoverySource.name}, tự hoàn tất Cloudflare, sau đó quay lại và thử lại.`
-                : `${recoverySource.name} cannot play inside ani-desk right now. Open its website as a fallback. Hiện chưa thể phát ${recoverySource.name} trong ani-desk; hãy mở trang nguồn để xem thủ công.`}
-            </p>
-          </div>
-          <div className="provider-recovery-actions">
-            <button
-              onClick={() => onOpenProviderAccess(recoverySource)}
-              disabled={providerAccessPending !== null}
-            >
-              {providerAccessPending === `open:${recoverySource.name}` ? <Loader2 className="spin" size={16} /> : null}
-              Open site / Mở trang
-            </button>
-            {recoverySource.verificationUrl && (
-              <button
-                className="primary"
-                onClick={() => onCompleteProviderVerification(recoverySource)}
-                disabled={providerAccessPending !== null}
-              >
-                {providerAccessPending === `retry:${recoverySource.name}` ? <Loader2 className="spin" size={16} /> : null}
-                I finished — retry / Đã xong — thử lại
-              </button>
-            )}
-          </div>
-        </aside>
-      )}
-
-      {query.trim().length < 2 && !recoverySource && (
+      {query.trim().length < 2 && (
         <motion.section
           className="search-welcome"
           initial={{ opacity: 0 }}
@@ -3351,8 +3275,8 @@ function VideoPlayer({
   const [skipFeedback, setSkipFeedback] = useState<{ amount?: number; label?: string; id: number } | null>(null);
   const [skipTimes, setSkipTimes] = useState<SkipTime[]>([]);
   const [switchingEpisode, setSwitchingEpisode] = useState(false);
-  const streamIsHls = context.playback.streamKind === "hls" || context.playback.originalUrl.toLowerCase().includes(".m3u8");
-  const streamIsDash = context.playback.streamKind === "dash" || context.playback.originalUrl.toLowerCase().includes(".mpd");
+  const streamIsHls = context.playback.streamKind === "hls";
+  const streamIsDash = context.playback.streamKind === "dash";
   const subtitleTracks = context.playback.subtitles.filter((item) => item.url);
   const [subtitle, setSubtitle] = useState(subtitleTracks.length ? "0" : "off");
   const orderedEpisodes = useMemo(
@@ -3517,7 +3441,7 @@ function VideoPlayer({
       video.removeAttribute("src");
       video.load();
     };
-  }, [context.playback.playbackUrl, context.playback.originalUrl, context.playback.streamKind, context.startTime, streamIsDash, streamIsHls]);
+  }, [context.playback.playbackUrl, context.playback.streamKind, context.startTime, streamIsDash, streamIsHls]);
 
   useEffect(() => {
     const video = videoRef.current;

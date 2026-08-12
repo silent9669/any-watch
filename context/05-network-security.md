@@ -1,4 +1,4 @@
-# Network and security baseline
+# any-watch network and security baseline
 
 ## Trust boundaries
 
@@ -13,8 +13,10 @@
 - Expose only TCP 80/443 and UDP 443 when public HTTPS is used. Restrict SSH to the management LAN or overlay network.
 - Keep application port 3000 unpublished.
 - Use a unique administrator password of at least 16 characters and separate named user accounts.
-- Store production environment values in `/srv/ani-desk/config/ani-desk.env` with owner-only read permission.
-- Run the application as its non-root image user and retain systemd sandboxing for the deploy agent.
+- Store production environment values in an owner-readable `any-watch` config
+  directory with product-neutral file names.
+- Run all application containers as non-root users and apply Compose resource,
+  PID, and log-retention limits.
 - Enable automatic OS security updates and keep Docker/Caddy patched.
 - Keep HTTPS-only cookies and HSTS only when the selected hostname is always reachable over HTTPS.
 - Rate-limit login at Caddy as well as the application if the service is public; application memory limits reset on restart.
@@ -35,15 +37,18 @@ Secrets include admin password, DDNS token, provider verification cookies, sessi
 Recommended permissions:
 
 ```sh
-sudo install -o root -g docker -m 0640 ani-desk.env /srv/ani-desk/config/ani-desk.env
-sudo install -o root -g root -m 0600 ani-desk-ddns.env /etc/ani-desk-ddns.env
+sudo install -o root -g docker -m 0640 any-watch.env /srv/any-watch/config/any-watch.env
+sudo install -o root -g root -m 0600 any-watch-ddns.env /etc/any-watch-ddns.env
 ```
 
 If a secret is ever committed or pasted into a public system, rotate it; deleting the file from the latest commit is not sufficient.
 
 ## Backups
 
-Back up stopped or transactionally snapshotted SQLite data. Encrypt off-host backups and test restore quarterly. Keep at least one backup outside the VM. A useful baseline is seven deployment backups plus daily/weekly retention sized to available storage.
+During coexistence, back up stopped or transactionally snapshotted SQLite data.
+For any-watch, use PostgreSQL `pg_dump` custom-format backups, encrypted off-host
+copies, retention, automated verification, and restore drills. Keep at least one
+backup outside the VM.
 
 Downloads are replaceable and large; back them up only if the family values offline retention more than storage cost. Databases and configuration are the primary recovery set.
 

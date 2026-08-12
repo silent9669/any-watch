@@ -73,7 +73,6 @@ impl StreamCandidate {
 pub struct AllAnimeProvider {
     client: reqwest::Client,
     insecure_client: reqwest::Client,
-    verification_cookie: RwLock<Option<String>>,
     crypto: RwLock<Option<AllAnimeCryptoState>>,
 }
 
@@ -111,18 +110,7 @@ impl AllAnimeProvider {
         Self {
             client,
             insecure_client,
-            verification_cookie: RwLock::new(None),
             crypto: RwLock::new(None),
-        }
-    }
-
-    async fn with_verification_cookie(
-        &self,
-        request: reqwest::RequestBuilder,
-    ) -> reqwest::RequestBuilder {
-        match self.verification_cookie.read().await.clone() {
-            Some(cookie) if !cookie.is_empty() => request.header(header::COOKIE, cookie),
-            _ => request,
         }
     }
 
@@ -432,10 +420,9 @@ impl AllAnimeProvider {
         query: &str,
         variables: serde_json::Value,
     ) -> Result<serde_json::Value> {
-        let request = self
-            .with_verification_cookie(self.client.post(ALLANIME_API))
-            .await;
-        let response: serde_json::Value = request
+        let response: serde_json::Value = self
+            .client
+            .post(ALLANIME_API)
             .header("Content-Type", "application/json")
             .json(&serde_json::json!({
                 "variables": variables,
@@ -1204,16 +1191,6 @@ impl AnimeProvider for AllAnimeProvider {
         vec!["🇺🇸".to_string()]
     }
 
-    fn verification_url(&self) -> Option<&'static str> {
-        Some(ALLANIME_API)
-    }
-
-    async fn apply_verification_cookies(&self, cookie_header: String) -> Result<()> {
-        let mut cookie = self.verification_cookie.write().await;
-        *cookie = (!cookie_header.trim().is_empty()).then_some(cookie_header);
-        Ok(())
-    }
-
     async fn search(&self, query: &str) -> Result<Vec<Anime>> {
         let search_gql = r#"query($search: SearchInput $limit: Int $page: Int $translationType: VaildTranslationTypeEnumType $countryOrigin: VaildCountryOriginEnumType) { shows(search: $search limit: $limit page: $page translationType: $translationType countryOrigin: $countryOrigin) { edges { _id name availableEpisodes thumbnail __typename } }}"#;
 
@@ -1395,10 +1372,9 @@ impl AnimeProvider for AllAnimeProvider {
                 "{}?variables={}&extensions={}",
                 ALLANIME_API, encoded_vars, encoded_ext
             );
-            let request = self
-                .with_verification_cookie(self.client.get(&api_url))
-                .await;
-            let response: serde_json::Value = request
+            let response: serde_json::Value = self
+                .client
+                .get(&api_url)
                 .header("Origin", ALLANIME_REFERRER)
                 .send()
                 .await
@@ -1437,7 +1413,8 @@ impl AnimeProvider for AllAnimeProvider {
         {
             Some(tobeparsed) => {
                 let decrypted = Self::decrypt_source_payload(tobeparsed, &response_key)?;
-                serde_json::from_str(&decrypted).context("Failed to parse decrypted JSON")?
+                serde_json::from_str::<serde_json::Value>(&decrypted)
+                    .context("Failed to parse decrypted JSON")?
             }
             None => response,
         };
