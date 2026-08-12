@@ -779,6 +779,7 @@ impl AllAnimeProvider {
                         subtitles.push(Subtitle {
                             language,
                             url: src.to_string(),
+                            format: super::SubtitleFormat::Unknown,
                         });
                     }
                 }
@@ -1732,7 +1733,7 @@ https://cdn.example/720/index.m3u8
     }
 
     #[test]
-    fn test_mp4upload_referrer_matches_upstream_mpv_flag() {
+    fn test_mp4upload_referrer_matches_upstream_flag() {
         assert_eq!(
             AllAnimeProvider::referrer_for_source(
                 "https://www.mp4upload.com/embed-example.html",
@@ -1865,37 +1866,5 @@ https://cdn.example/720/index.m3u8
             .expect("stream should resolve");
 
         assert!(stream.video_url.starts_with("http"));
-    }
-
-    #[tokio::test]
-    #[ignore = "opens mpv; run with ANI_DESK_LIVE_PLAYBACK=1"]
-    async fn live_allanime_mpv_playback_smoke() {
-        if std::env::var("ANI_DESK_LIVE_PLAYBACK").ok().as_deref() != Some("1") {
-            return;
-        }
-
-        let provider = AllAnimeProvider::new();
-        let anime = provider
-            .search("one piece")
-            .await
-            .expect("search should work")
-            .into_iter()
-            .next()
-            .expect("search should return at least one anime");
-        let episode = provider
-            .get_episodes(&anime.id)
-            .await
-            .expect("episodes should load")
-            .into_iter()
-            .next()
-            .expect("at least one episode should exist");
-        let stream = provider
-            .get_stream_url(&episode.id)
-            .await
-            .expect("stream should resolve");
-
-        crate::player::Player::new()
-            .start_detached(&stream.video_url, &stream.subtitles, &stream.headers, None)
-            .expect("mpv should launch and stay alive long enough to begin playback");
     }
 }

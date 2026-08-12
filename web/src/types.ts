@@ -77,7 +77,6 @@ export type SessionUser = {
   id: string;
   username: string;
   role: "admin" | "user";
-  hosted: boolean;
 };
 
 export type ManagedUser = {
@@ -143,7 +142,6 @@ export type Playback = {
   streamKind: "hls" | "native" | string;
   subtitles: Array<{ language: string; url: string }>;
   qualities: string[];
-  canFallbackToMpv: boolean;
 };
 
 export type SkipTime = {
@@ -164,27 +162,7 @@ export type DownloadEvent = {
 
 export type DownloadResult = {
   id: string;
-  filePath: string;
   fileName: string;
-  bytesDownloaded: number;
-  mediaKind: "direct" | "hls-ts" | string;
-};
-
-export type DownloadRecord = {
-  id: string;
-  provider: string;
-  animeId: string;
-  animeTitle: string;
-  coverUrl: string;
-  episodeId: string;
-  episodeNumber: number;
-  episodeTitle?: string | null;
-  filePath: string;
-  fileName: string;
-  bytesDownloaded: number;
-  mediaKind: "direct" | "hls-ts" | string;
-  completedAt: string;
-  fileExists: boolean;
 };
 
 export type EpisodeDownloadState = {
@@ -199,7 +177,6 @@ export type EpisodeDownloadState = {
   episodeNumber?: number;
   episodeTitle?: string | null;
   message?: string;
-  filePath?: string;
   fileName?: string;
 };
 

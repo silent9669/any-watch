@@ -6,8 +6,8 @@ from playwright.sync_api import expect
 # Dashboard Features (5 tests)
 def test_t1_dashboard_page_title(mocked_page):
     title = mocked_page.title()
-    assert "ani-desk" in title.lower() or title != ""
-    expect(mocked_page.locator(".app-navigation-brand span")).to_have_text("ani-desk")
+    assert "any-watch" in title.lower()
+    expect(mocked_page.locator(".app-navigation-brand span")).to_have_text("any-watch")
 
 def test_t1_mobile_dashboard_has_no_horizontal_overflow(mobile_mocked_page):
     expect(mobile_mocked_page.locator(".home-command-center")).to_be_visible()
@@ -39,6 +39,33 @@ def test_t1_dashboard_switching_chips(mocked_page):
     languages.nth(1).click()
     expect(languages.nth(1)).to_have_class("active")
     expect(languages.nth(1)).to_have_attribute("aria-pressed", "true")
+
+def test_t1_unavailable_language_does_not_reuse_another_languages_provider(mocked_page):
+    mocked_page.evaluate("""() => {
+        const state = JSON.parse(localStorage.getItem('__API_MOCK_STATE__') || '{}');
+        const sources = state.sources || window.__API_MOCK_STATE__?.sources || [];
+        state.sources = sources.filter((source) => source.languageGroup === 'vietnamese');
+        localStorage.setItem('__API_MOCK_STATE__', JSON.stringify(state));
+    }""")
+    mocked_page.reload()
+    mocked_page.locator(".hero-search-trigger").click()
+
+    expect(mocked_page.locator(".language-switch button").nth(0)).to_have_attribute("aria-pressed", "true")
+    expect(mocked_page.locator(".availability-strip .provider-chip")).to_have_count(0)
+    expect(mocked_page.locator(".availability-strip .source-empty")).to_have_text("No English providers available")
+
+    mocked_page.locator(".search-input-shell input").fill("Naruto")
+    mocked_page.wait_for_timeout(500)
+    provider_searches = mocked_page.evaluate("""() => window.__API_CALLS__.filter(
+        (call) => call.cmd === 'search_source'
+    )""")
+    assert provider_searches == []
+    expect(mocked_page.locator(".search-results-pane .pane-title")).to_contain_text("No English provider available")
+    expect(mocked_page.locator(".search-results-pane")).not_to_contain_text("KKPhim Results")
+
+    mocked_page.locator(".language-switch button").nth(1).click()
+    expect(mocked_page.locator(".availability-strip .provider-chip")).to_have_count(2)
+    expect(mocked_page.locator(".search-results-pane .pane-title")).to_contain_text("KKPhim Results")
 
 def test_t1_dashboard_continue_watching_shelf(mocked_page):
     shelf = mocked_page.locator(".content-row:has-text('Continue Watching')")
@@ -101,7 +128,7 @@ def test_t1_dashboard_shelves_hide_scrollbars(mocked_page):
 
 def test_t1_tv_mode_has_safe_layout_and_large_targets(mocked_page):
     mocked_page.set_viewport_size({"width": 1920, "height": 1080})
-    mocked_page.evaluate("() => localStorage.setItem('ani-desk:scale', 'tv')")
+    mocked_page.evaluate("() => localStorage.setItem('any-watch:scale', 'tv')")
     mocked_page.reload()
     expect(mocked_page.locator(".home-command-center")).to_be_visible()
 
@@ -128,7 +155,7 @@ def test_t1_tv_mode_has_safe_layout_and_large_targets(mocked_page):
 
 def test_t1_tv_remote_arrows_move_visible_focus(mocked_page):
     mocked_page.set_viewport_size({"width": 1920, "height": 1080})
-    mocked_page.evaluate("() => localStorage.setItem('ani-desk:scale', 'tv')")
+    mocked_page.evaluate("() => localStorage.setItem('any-watch:scale', 'tv')")
     mocked_page.reload()
     mocked_page.evaluate("() => document.activeElement instanceof HTMLElement && document.activeElement.blur()")
 
@@ -188,7 +215,7 @@ def test_t1_search_idle_banner_and_suggestion(mocked_page):
     welcome = mocked_page.locator(".search-welcome")
     expect(welcome).to_be_visible()
     expect(welcome.locator(".search-welcome-provider")).to_be_visible()
-    expect(welcome).to_contain_text("Search AllAnime")
+    expect(welcome).to_contain_text("Search AniZone")
     welcome.get_by_role("button", name="One Piece").click()
     expect(mocked_page.locator(".search-input-shell input")).to_have_value("One Piece")
     mocked_page.wait_for_selector(".search-result")
@@ -198,9 +225,9 @@ def test_t1_search_provider_chips(mocked_page):
     expect(mocked_page.locator(".search-stage .search-command-panel")).to_be_visible()
     chips = mocked_page.locator(".search-stage .provider-chip")
     expect(chips.first).to_be_visible()
-    expect(chips).to_have_count(2)
+    expect(chips).to_have_count(3)
     expect(chips.first).to_have_attribute("aria-pressed", "true")
-    expect(chips.first).to_have_attribute("aria-label", "AllAnime: Search")
+    expect(chips.first).to_have_attribute("aria-label", "AniZone: Search")
     spacing_ok = mocked_page.evaluate("""() => {
         const input = document.querySelector('.search-stage .search-input-shell');
         const source = document.querySelector('.search-stage .search-source-row');
@@ -441,23 +468,13 @@ def test_t1_episode_download_completes_without_opening_player(mocked_page):
     expect(download).to_have_class("episode-download-button complete")
     expect(mocked_page.locator("video")).to_have_count(0)
     stored = mocked_page.evaluate("""() => {
-        const state = JSON.parse(localStorage.getItem('__TAURI_MOCK_STATE__') || '{}');
+        const state = JSON.parse(localStorage.getItem('__API_MOCK_STATE__') || '{}');
         return state.last_download;
     }""")
     assert stored["episodeNumber"] == 1
     assert stored["animeTitle"] == "Naruto Shippuden"
 
-    mocked_page.locator(".detail-back-button").click()
-    mocked_page.locator(".search-command-panel button[aria-label='Back']").click()
-    mocked_page.get_by_role("button", name="Downloads 1").click()
-    expect(mocked_page.locator(".downloads-page")).to_be_visible()
-    expect(mocked_page.locator(".download-library-row")).to_have_count(1)
-    expect(mocked_page.locator(".download-library-row")).to_contain_text("Naruto Shippuden")
-
-    mocked_page.locator(".download-library-actions button.danger").click()
-    expect(mocked_page.locator(".download-library-actions button.danger")).to_contain_text("Delete?")
-    mocked_page.locator(".download-library-actions button.danger").click()
-    expect(mocked_page.locator(".download-library-row")).to_have_count(0)
+    expect(download).to_have_attribute("title", "Browser download started")
 
 def test_t1_episode_download_keyboard_does_not_start_playback(mocked_page):
     mocked_page.locator(".hero-search-trigger").click()
@@ -527,9 +544,9 @@ def test_t1_cli_launch_port_conflict(mocked_page):
     port_status = mocked_page.evaluate("() => 'free'")
     assert port_status == "free"
 
-def test_t1_cli_launch_tauri_event(mocked_page):
-    event_loop = mocked_page.evaluate("() => true")
-    assert event_loop is True
+def test_t1_cli_launch_api_transport(mocked_page):
+    api_calls = mocked_page.evaluate("() => window.__API_CALLS__.length")
+    assert api_calls > 0
 
 def test_t1_cli_launch_sys_environment(mocked_page):
     env_mock = mocked_page.evaluate("() => ({ HOME: '/Users/mock' })")
@@ -565,9 +582,9 @@ def test_t1_platform_unsupported_browser(mocked_page):
 def test_t2_dashboard_no_providers(mocked_page):
     # Setup state to simulate empty sources
     mocked_page.evaluate("""() => {
-        const state = window.__TAURI_MOCK_STATE__;
+        const state = window.__API_MOCK_STATE__;
         state.sources = [];
-        localStorage.setItem('__TAURI_MOCK_STATE__', JSON.stringify(state));
+        localStorage.setItem('__API_MOCK_STATE__', JSON.stringify(state));
     }""")
     mocked_page.reload()
     mocked_page.wait_for_selector(".app-container, #root")
@@ -579,9 +596,9 @@ def test_t2_dashboard_no_providers(mocked_page):
 
 def test_t2_dashboard_empty_continue_watching(mocked_page):
     mocked_page.evaluate("""() => {
-        const state = JSON.parse(localStorage.getItem('__TAURI_MOCK_STATE__') || '{}');
+        const state = JSON.parse(localStorage.getItem('__API_MOCK_STATE__') || '{}');
         state.continue_watching = [];
-        localStorage.setItem('__TAURI_MOCK_STATE__', JSON.stringify(state));
+        localStorage.setItem('__API_MOCK_STATE__', JSON.stringify(state));
     }""")
     mocked_page.reload()
     mocked_page.wait_for_selector(".app-container, #root")
@@ -591,9 +608,9 @@ def test_t2_dashboard_empty_continue_watching(mocked_page):
 
 def test_t2_dashboard_empty_my_list(mocked_page):
     mocked_page.evaluate("""() => {
-        const state = JSON.parse(localStorage.getItem('__TAURI_MOCK_STATE__') || '{}');
+        const state = JSON.parse(localStorage.getItem('__API_MOCK_STATE__') || '{}');
         state.my_list = [];
-        localStorage.setItem('__TAURI_MOCK_STATE__', JSON.stringify(state));
+        localStorage.setItem('__API_MOCK_STATE__', JSON.stringify(state));
     }""")
     mocked_page.reload()
     mocked_page.wait_for_selector(".app-container, #root")
@@ -604,14 +621,14 @@ def test_t2_dashboard_empty_my_list(mocked_page):
 
 def test_t2_dashboard_long_anime_title(mocked_page):
     mocked_page.evaluate("""() => {
-        const state = JSON.parse(localStorage.getItem('__TAURI_MOCK_STATE__') || '{}');
+        const state = JSON.parse(localStorage.getItem('__API_MOCK_STATE__') || '{}');
         state.continue_watching = [{
             animeId: 'AllAnime:long', provider: 'AllAnime', title: 'A'.repeat(200),
             coverUrl: 'https://example.com/long.jpg', episodeNumber: 1,
             episodeTitle: 'Episode 1', positionSeconds: 1, totalSeconds: 100,
             updatedAt: '2026-06-13T10:00:00Z'
         }];
-        localStorage.setItem('__TAURI_MOCK_STATE__', JSON.stringify(state));
+        localStorage.setItem('__API_MOCK_STATE__', JSON.stringify(state));
     }""")
     mocked_page.reload()
     mocked_page.wait_for_selector(".app-container, #root")
@@ -657,9 +674,9 @@ def test_t2_search_rapid_input_change(mocked_page):
 def test_t2_search_provider_disconnect(mocked_page):
     mocked_page.locator(".hero-search-trigger").click()
     mocked_page.evaluate("""() => {
-        const state = JSON.parse(localStorage.getItem('__TAURI_MOCK_STATE__') || '{}');
+        const state = JSON.parse(localStorage.getItem('__API_MOCK_STATE__') || '{}');
         state.search_error = "Connection Timeout";
-        localStorage.setItem('__TAURI_MOCK_STATE__', JSON.stringify(state));
+        localStorage.setItem('__API_MOCK_STATE__', JSON.stringify(state));
     }""")
     mocked_page.locator(".search-input-shell input").fill("Naruto")
     expect(mocked_page.locator(".error-notice")).to_be_visible()
@@ -667,11 +684,11 @@ def test_t2_search_provider_disconnect(mocked_page):
 
 def test_t2_unavailable_provider_stays_offline_until_health_recheck_passes(mocked_page):
     mocked_page.evaluate("""() => {
-        const state = window.__TAURI_MOCK_STATE__;
+        const state = window.__API_MOCK_STATE__;
         state.sources = (state.sources || []).map((source) => source.name === 'AllAnime'
             ? { ...source, status: 'unavailable', failureCode: 'PROVIDER_CAPTCHA' }
             : source);
-        localStorage.setItem('__TAURI_MOCK_STATE__', JSON.stringify(state));
+        localStorage.setItem('__API_MOCK_STATE__', JSON.stringify(state));
     }""")
     mocked_page.reload()
     mocked_page.locator(".hero-search-trigger").click()
@@ -680,7 +697,7 @@ def test_t2_unavailable_provider_stays_offline_until_health_recheck_passes(mocke
     expect(provider).to_have_attribute("aria-label", "AllAnime: Recheck")
     provider.click()
     mocked_page.wait_for_timeout(100)
-    retried = mocked_page.evaluate("""() => window.__TAURI_CALLS__.some(
+    retried = mocked_page.evaluate("""() => window.__API_CALLS__.some(
         (call) => call.cmd === 'retry_provider_health' && call.args.provider === 'AllAnime'
     )""")
     assert retried is True
@@ -689,7 +706,7 @@ def test_t2_unavailable_provider_stays_offline_until_health_recheck_passes(mocke
 def test_t2_search_catalog_rate_limit_keeps_provider_results(mocked_page):
     mocked_page.locator(".hero-search-trigger").click()
     mocked_page.evaluate("""() => {
-        const state = JSON.parse(localStorage.getItem('__TAURI_MOCK_STATE__') || '{}');
+        const state = JSON.parse(localStorage.getItem('__API_MOCK_STATE__') || '{}');
         state.catalog_search_error = {
             code: "CATALOG_UNAVAILABLE",
             message: "Anime discovery is temporarily unavailable.",
@@ -698,12 +715,12 @@ def test_t2_search_catalog_rate_limit_keeps_provider_results(mocked_page):
             correlationId: "mock-429",
             technical: "AniList catalog error (429 Too Many Requests)"
         };
-        localStorage.setItem('__TAURI_MOCK_STATE__', JSON.stringify(state));
+        localStorage.setItem('__API_MOCK_STATE__', JSON.stringify(state));
     }""")
     mocked_page.locator(".search-input-shell input").fill("mushoku")
     mocked_page.wait_for_selector(".search-result")
     expect(mocked_page.locator(".error-notice")).to_have_count(0)
-    expect(mocked_page.locator(".search-results-pane")).to_contain_text("AllAnime Results")
+    expect(mocked_page.locator(".search-results-pane")).to_contain_text("AniZone Results")
     expect(mocked_page.locator(".search-preview h1")).to_have_text("Naruto Shippuden")
 
 def test_t2_provider_only_film_search_does_not_need_anilist(mocked_page):
@@ -724,11 +741,9 @@ def test_t2_episode_page_no_episodes(mocked_page):
     mocked_page.wait_for_selector(".search-result")
     mocked_page.locator(".search-result").first.click()
     mocked_page.evaluate("""() => {
-        window.__TAURI_INTERNALS__.invoke = async (cmd) => {
-            if (cmd === 'get_episodes') return [];
-            if (cmd === 'get_anime_details') return { totalEpisodes: 0 };
-            return null;
-        };
+        const state = JSON.parse(localStorage.getItem('__API_MOCK_STATE__') || '{}');
+        state.episode_count = 0;
+        localStorage.setItem('__API_MOCK_STATE__', JSON.stringify(state));
     }""")
     mocked_page.locator(".detail-actions button.primary").click()
     mocked_page.wait_for_timeout(500)
@@ -778,35 +793,6 @@ def test_t2_episode_stress_range_jump_and_filter(mocked_page):
     }""")
     assert scrollbars_hidden is True
 
-def test_t2_updater_available_prompt_and_install(mocked_page):
-    mocked_page.evaluate("""() => {
-        const state = JSON.parse(localStorage.getItem('__TAURI_MOCK_STATE__') || '{}');
-        state.update_available = true;
-        localStorage.setItem('__TAURI_MOCK_STATE__', JSON.stringify(state));
-    }""")
-    mocked_page.reload()
-    mocked_page.wait_for_selector(".update-prompt")
-    expect(mocked_page.locator(".update-prompt")).to_contain_text("ani-desk 1.0.2 is available")
-    mocked_page.locator(".update-prompt .primary").click()
-    expect(mocked_page.locator(".update-prompt")).to_contain_text("Update installed")
-    relaunched = mocked_page.evaluate("""() => {
-        const state = JSON.parse(localStorage.getItem('__TAURI_MOCK_STATE__') || '{}');
-        return state.relaunched === true && state.update_installed === true;
-    }""")
-    assert relaunched is True
-
-def test_t2_updater_error_fallback(mocked_page):
-    mocked_page.evaluate("""() => {
-        const state = JSON.parse(localStorage.getItem('__TAURI_MOCK_STATE__') || '{}');
-        state.update_available = true;
-        state.update_install_error = "signature rejected";
-        localStorage.setItem('__TAURI_MOCK_STATE__', JSON.stringify(state));
-    }""")
-    mocked_page.reload()
-    mocked_page.wait_for_selector(".update-prompt")
-    mocked_page.locator(".update-prompt .primary").click()
-    expect(mocked_page.locator(".update-prompt")).to_contain_text("Update failed")
-
 def test_t2_episode_jump_out_of_bounds(mocked_page):
     mocked_page.locator(".hero-search-trigger").click()
     mocked_page.locator(".search-input-shell input").fill("Naruto")
@@ -837,9 +823,9 @@ def test_t2_episode_prepare_playback_failure(mocked_page):
     mocked_page.wait_for_selector(".episode-list-row")
 
     mocked_page.evaluate("""() => {
-        const state = JSON.parse(localStorage.getItem('__TAURI_MOCK_STATE__') || '{}');
+        const state = JSON.parse(localStorage.getItem('__API_MOCK_STATE__') || '{}');
         state.playback_error = "Playback stream resolving failed";
-        localStorage.setItem('__TAURI_MOCK_STATE__', JSON.stringify(state));
+        localStorage.setItem('__API_MOCK_STATE__', JSON.stringify(state));
     }""")
     mocked_page.locator(".episode-list-row").first.click()
     expect(mocked_page.locator(".error-notice")).to_be_visible()
@@ -934,7 +920,7 @@ def test_t3_search_to_favorite_flow(mocked_page):
     mocked_page.locator(".search-preview .detail-actions button").nth(1).click()
 
     stored = mocked_page.evaluate("""() => {
-        const state = JSON.parse(localStorage.getItem('__TAURI_MOCK_STATE__') || '{}');
+        const state = JSON.parse(localStorage.getItem('__API_MOCK_STATE__') || '{}');
         return state.my_list.some((item) => item.title === 'Naruto Shippuden');
     }""")
     assert stored is True
@@ -973,6 +959,18 @@ def test_t3_player_matches_apple_style_control_composition(mocked_page):
     expect(mocked_page.locator(".player-now-playing small")).not_to_contain_text("Episode 1 · Episode 1")
     expect(mocked_page.locator(".player-timeline")).to_be_visible()
     expect(mocked_page.locator(".player-utility-pill")).to_be_visible()
+    auto_skip = mocked_page.get_by_role("switch", name="Toggle automatic opening and ending skip")
+    expect(auto_skip).to_be_visible()
+    expect(auto_skip).to_have_attribute("aria-checked", "true")
+    assert auto_skip.evaluate("node => node.getBoundingClientRect().width") >= 108
+    expect(mocked_page.locator(".player-skip-marker.op")).to_have_count(1)
+    expect(mocked_page.locator(".player-skip-marker.ed")).to_have_count(1)
+    subtitles = mocked_page.get_by_title("Subtitles").locator("select")
+    expect(subtitles).to_have_value("0")
+    expect(subtitles.locator("option")).to_have_count(2)
+    auto_skip.click()
+    expect(auto_skip).to_have_attribute("aria-checked", "false")
+    expect(mocked_page.locator(".player-skip-marker.op")).to_have_count(1)
     expect(mocked_page.locator(".player-leading-controls").get_by_role("button", name="Previous episode")).to_have_count(0)
     center_controls = mocked_page.get_by_label("Playback controls")
     expect(center_controls).to_be_visible()
@@ -1012,6 +1010,14 @@ def test_t3_player_matches_apple_style_control_composition(mocked_page):
         assert transport_bounds["left"] >= 0
         assert transport_bounds["right"] <= width
         assert all(button["width"] >= 44 and button["height"] >= 44 for button in transport_bounds["buttons"])
+        skip_toggle_bounds = auto_skip.evaluate("""node => {
+            const rect = node.getBoundingClientRect();
+            return { left: rect.left, right: rect.right, width: rect.width, height: rect.height };
+        }""")
+        assert skip_toggle_bounds["left"] >= 0
+        assert skip_toggle_bounds["right"] <= width
+        assert skip_toggle_bounds["width"] >= 44
+        assert skip_toggle_bounds["height"] >= 44
 
     mocked_page.set_viewport_size({"width": 1440, "height": 900})
     safe_zone = mocked_page.locator(".player-now-playing").evaluate("""node => {
@@ -1069,7 +1075,7 @@ def test_t3_my_list_nav_and_remove(mocked_page):
     expect(favorite).to_have_text("In My List")
     favorite.click()
     stored = mocked_page.evaluate("""() => {
-        const state = JSON.parse(localStorage.getItem('__TAURI_MOCK_STATE__') || '{}');
+        const state = JSON.parse(localStorage.getItem('__API_MOCK_STATE__') || '{}');
         return state.my_list.some((item) => item.title === 'Naruto Shippuden');
     }""")
     assert stored is False
@@ -1089,12 +1095,12 @@ def test_t3_search_provider_switch_reloads(mocked_page):
 
 def test_t3_offline_ophim_requires_health_recheck_before_search(mocked_page):
     mocked_page.evaluate("""() => {
-        const state = JSON.parse(localStorage.getItem('__TAURI_MOCK_STATE__') || '{}');
-        const sources = state.sources || window.__TAURI_MOCK_STATE__?.sources || [];
+        const state = JSON.parse(localStorage.getItem('__API_MOCK_STATE__') || '{}');
+        const sources = state.sources || window.__API_MOCK_STATE__?.sources || [];
         state.sources = sources.map((source) => source.name === 'OPhim'
             ? { ...source, status: 'unavailable', failureCode: 'NETWORK_TIMEOUT' }
             : source);
-        localStorage.setItem('__TAURI_MOCK_STATE__', JSON.stringify(state));
+        localStorage.setItem('__API_MOCK_STATE__', JSON.stringify(state));
     }""")
     mocked_page.reload()
     mocked_page.locator(".hero-search-trigger").click()
@@ -1107,10 +1113,10 @@ def test_t3_offline_ophim_requires_health_recheck_before_search(mocked_page):
     mocked_page.locator(".search-input-shell input").fill("Naruto")
     mocked_page.wait_for_selector(".search-result")
 
-    retried = mocked_page.evaluate("""() => window.__TAURI_CALLS__.some(
+    retried = mocked_page.evaluate("""() => window.__API_CALLS__.some(
         (call) => call.cmd === 'retry_provider_health' && call.args.provider === 'OPhim'
     )""")
-    searched = mocked_page.evaluate("""() => window.__TAURI_CALLS__.some(
+    searched = mocked_page.evaluate("""() => window.__API_CALLS__.some(
         (call) => call.cmd === 'search_source' && call.args.provider === 'OPhim'
     )""")
     assert retried is True
@@ -1183,7 +1189,7 @@ def test_t4_watchlist_management_scenario(mocked_page):
     expect(mocked_page.locator(".search-preview .detail-actions button").nth(1)).to_have_text("In My List")
 
     stored = mocked_page.evaluate("""() => {
-        const state = JSON.parse(localStorage.getItem('__TAURI_MOCK_STATE__') || '{}');
+        const state = JSON.parse(localStorage.getItem('__API_MOCK_STATE__') || '{}');
         return state.my_list.some((item) => item.title === 'Naruto Shippuden');
     }""")
     assert stored is True

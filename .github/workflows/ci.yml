@@ -2,9 +2,9 @@ name: CI
 
 on:
   push:
-    branches: [master]
+    branches: [main, master]
   pull_request:
-    branches: [master]
+    branches: [main, master]
   workflow_dispatch:
 
 permissions:
@@ -20,7 +20,7 @@ env:
 
 jobs:
   quality:
-    name: Quality, Rust, and hosted API
+    name: Quality and server API
     runs-on: ubuntu-latest
     timeout-minutes: 28
     steps:
@@ -49,36 +49,31 @@ jobs:
 
       - run: npm ci
 
-      - name: Validate assets and release metadata
-        run: |
-          npm run check:icons
-          npm run check:release-version -- "v$(node -p "require('./package.json').version")"
+      - name: Validate release metadata
+        run: npm run check:release-version -- "v$(node -p "require('./package.json').version")"
 
       - name: Build responsive web client
         run: npm run build
 
-      - name: Validate homelab deployment assets
-        env:
-          ANI_DESK_ENV_FILE: .env.example
+      - name: Validate maintenance and Cloudflare failover assets
         run: |
+          npm run maintenance:validate
+          npm run cloudflare:test
           bash -n deploy/homelab/bootstrap-host.sh
-          bash -n deploy/homelab/namecheap-ddns.sh
           bash -n deploy/homelab/cloudflare-ddns.sh
-          python tests/test_data_guard.py -v
           docker compose \
             --env-file deploy/homelab/.env.example \
             --file deploy/homelab/compose.yml \
             config --quiet
-          npm run cloudflare:test
 
       - name: Check formatting
         run: cargo fmt --all -- --check
 
-      - name: Lint web server and shared core
-        run: cargo clippy -p ani-desk-core -p ani-desk-server --all-targets -- -D warnings
+      - name: Lint Rust workspace
+        run: cargo clippy --workspace --all-targets --all-features -- -D warnings
 
-      - name: Run web server and shared-core tests
-        run: cargo test -p ani-desk-core -p ani-desk-server
+      - name: Run Rust workspace tests
+        run: cargo test --workspace
 
       - name: Smoke-test hosted authentication and My List
         run: |
@@ -86,7 +81,7 @@ jobs:
           scripts/smoke-web-server.sh
 
   browser-e2e:
-    name: Browser E2E (desktop + mobile + TV)
+    name: Browser E2E
     runs-on: ubuntu-latest
     timeout-minutes: 20
     steps:
@@ -112,19 +107,23 @@ jobs:
           npm ci
           python -m pip install -r tests/e2e/requirements.txt
           python -m playwright install --with-deps chromium
-      - name: Run UI behavior and responsive tests
+      - name: Run application behavior and responsive tests
         run: pytest tests/e2e/test_app.py -q
+      - name: Run independent maintenance-page tests
+        run: pytest tests/e2e/test_maintenance.py -q
 
   web-container:
-    name: Railway container
+    name: Production container and providers
     runs-on: ubuntu-latest
     timeout-minutes: 25
     steps:
       - uses: actions/checkout@v7
         with:
           persist-credentials: false
-      - name: Build production web image
-        run: docker build --tag ani-desk-web:ci .
+      - name: Build production image
+        run: docker build --tag any-watch:provider-verification .
+      - name: Verify authenticated providers and opaque media proxy
+        run: npm run providers:test:docker
 
   audit:
     name: Dependency audit

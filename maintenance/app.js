@@ -6,7 +6,7 @@
     mode: "maintenance",
     headline: "The theatre is taking a short break.",
     message:
-      "ani-desk is temporarily offline for maintenance. Your watch history, family accounts, and library remain stored safely on the home server.",
+      "any-watch is temporarily offline for maintenance. Your watch history, family accounts, and library remain stored safely on the home server.",
     statusLabel: "Maintenance in progress",
     expectedReturn: "Shortly",
     lastUpdated: "22 Jul · 19:30 ICT",

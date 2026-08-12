@@ -15,8 +15,6 @@ deploy/homelab/.env
 deploy/homelab/.ddns.env
 dist/
 web/dist/
-src-tauri/gen/
-release-artifacts/
 
 # OS
 .DS_Store

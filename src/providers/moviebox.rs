@@ -422,6 +422,7 @@ impl AnimeProvider for MovieBoxProvider {
                                 .unwrap_or("English")
                                 .to_string(),
                             url: caption["url"].as_str()?.to_string(),
+                            format: super::SubtitleFormat::Unknown,
                         })
                     }));
                 }

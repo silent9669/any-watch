@@ -1,6 +1,6 @@
 {
-  "name": "ani-desk",
-  "short_name": "ani-desk",
+  "name": "any-watch",
+  "short_name": "any-watch",
   "description": "Discover, choose a source, and watch anime.",
   "start_url": "/",
   "display": "standalone",

@@ -125,6 +125,9 @@ numbers.
 The player is distraction-free. Provider, quality, subtitles, speed, playback
 settings, and fallback choices live in one contextual sheet. Progress, resume,
 intro/ending skips, and next episode remain keyboard, touch, and remote usable.
+Opening and ending ranges use distinct semantic timeline bands. A compact
+lower-right Theatre Controls card exposes the persistent auto-skip switch; the
+markers remain visible when auto-skip is off so the viewer retains context.
 
 ### Settings
 

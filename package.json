@@ -1,5 +1,5 @@
 {
-  "name": "ani-desk",
+  "name": "any-watch",
   "version": "1.0.9",
   "private": true,
   "type": "module",
@@ -11,22 +11,16 @@
     "maintenance:validate": "node scripts/validate-maintenance.mjs",
     "maintenance:test": "pytest tests/e2e/test_maintenance.py -q",
     "cloudflare:test": "node scripts/test-cloudflare-worker.mjs",
+    "providers:test:docker": "bash scripts/smoke-docker-providers.sh",
     "serve:web": "cargo run -p ani-desk-server",
     "check:web-server": "cargo check -p ani-desk-server",
-    "icons": "node scripts/prepare-icon-source.mjs && tauri icon src-tauri/icons/icon-source.png",
-    "check:icons": "node scripts/check-generated-icons.mjs",
-    "check:release-version": "node scripts/verify-release-version.mjs",
-    "release:manifest": "node scripts/generate-updater-manifest.mjs",
-    "tauri": "tauri"
+    "check:release-version": "node scripts/verify-release-version.mjs"
   },
   "dependencies": {
     "@fontsource/barlow-condensed": "^5.2.8",
     "@fontsource/ibm-plex-mono": "^5.2.7",
     "@fontsource/manrope": "^5.2.8",
     "@fontsource/noto-sans": "^5.2.10",
-    "@tauri-apps/api": "^2.0.0",
-    "@tauri-apps/plugin-process": "^2.3.1",
-    "@tauri-apps/plugin-updater": "^2.10.1",
     "dashjs": "^5.2.0",
     "framer-motion": "^11.0.0",
     "hls.js": "^1.5.0",
@@ -35,7 +29,6 @@
     "react-dom": "^18.2.0"
   },
   "devDependencies": {
-    "@tauri-apps/cli": "^2.0.0",
     "@types/react": "^18.2.66",
     "@types/react-dom": "^18.2.22",
     "@vitejs/plugin-react": "^6.0.2",

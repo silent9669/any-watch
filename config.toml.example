@@ -5,6 +5,9 @@
 #   Linux: ~/.config/ani-desk/config.toml
 
 [sources]
+# English soft-sub HLS source. ASS tracks are converted to WebVTT by the web server.
+anizone = true
+
 # Optional AllAnime source. Search and episode metadata are available, but its
 # current stream sources fail playback certification.
 allanime = false

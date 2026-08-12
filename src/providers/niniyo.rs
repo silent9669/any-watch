@@ -38,23 +38,42 @@ impl NiniyoProvider {
     }
 
     async fn json(&self, request: reqwest::RequestBuilder, operation: &str) -> Result<Value> {
-        let response = request
-            .send()
-            .await
-            .with_context(|| format!("{operation} request failed"))?;
-        let status = response.status();
-        let body = response
-            .text()
-            .await
-            .with_context(|| format!("{operation} returned an unreadable response"))?;
-        if !status.is_success() {
+        for attempt in 0..3 {
+            let response = request
+                .try_clone()
+                .context("Niniyo request could not be retried")?
+                .send()
+                .await
+                .with_context(|| format!("{operation} request failed"))?;
+            let status = response.status();
+            let retry_after = response
+                .headers()
+                .get(reqwest::header::RETRY_AFTER)
+                .and_then(|value| value.to_str().ok())
+                .and_then(|value| value.parse::<u64>().ok())
+                .unwrap_or((attempt + 1) as u64)
+                .min(5);
+            let body = response
+                .text()
+                .await
+                .with_context(|| format!("{operation} returned an unreadable response"))?;
+            if status.is_success() {
+                return serde_json::from_str(&body)
+                    .with_context(|| format!("{operation} returned invalid JSON"));
+            }
+            if attempt < 2
+                && (status == reqwest::StatusCode::TOO_MANY_REQUESTS || status.is_server_error())
+            {
+                tokio::time::sleep(Duration::from_secs(retry_after)).await;
+                continue;
+            }
             let message = serde_json::from_str::<Value>(&body)
                 .ok()
                 .and_then(|value| value["message"].as_str().map(str::to_string))
                 .unwrap_or_else(|| format!("HTTP {status}"));
             anyhow::bail!("PROVIDER_UNAVAILABLE: {operation} failed: {message}");
         }
-        serde_json::from_str(&body).with_context(|| format!("{operation} returned invalid JSON"))
+        unreachable!("Niniyo retry loop always returns")
     }
 
     async fn metadata(&self, anime_id: &str) -> Result<Value> {

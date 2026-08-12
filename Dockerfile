@@ -14,7 +14,6 @@ RUN apt-get update \
 WORKDIR /app
 COPY Cargo.toml Cargo.lock ./
 COPY src ./src
-COPY src-tauri ./src-tauri
 COPY server ./server
 RUN cargo build --locked --release -p ani-desk-server
 

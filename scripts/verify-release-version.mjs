@@ -2,7 +2,6 @@ import { readFileSync } from 'node:fs';
 
 const releaseTag = process.argv[2] ?? process.env.RELEASE_TAG ?? '';
 const packageJson = JSON.parse(readFileSync('package.json', 'utf8'));
-const tauriConfig = JSON.parse(readFileSync('src-tauri/tauri.conf.json', 'utf8'));
 
 function cargoVersion(path) {
   const toml = readFileSync(path, 'utf8');
@@ -15,9 +14,8 @@ function cargoVersion(path) {
 
 const versions = new Map([
   ['package.json', packageJson.version],
-  ['src-tauri/tauri.conf.json', tauriConfig.version],
   ['Cargo.toml', cargoVersion('Cargo.toml')],
-  ['src-tauri/Cargo.toml', cargoVersion('src-tauri/Cargo.toml')]
+  ['server/Cargo.toml', cargoVersion('server/Cargo.toml')]
 ]);
 
 const uniqueVersions = new Set(versions.values());

@@ -9,7 +9,7 @@ use ani_desk_core::{
     metadata::MetadataCache,
     providers::{
         best_title_match, normalize_title, Anime, AnimeProvider, Language, ProviderRegistry,
-        StreamInfo,
+        StreamInfo, SubtitleFormat,
     },
     skip_times::{fetch_skip_times, SkipTime},
 };
@@ -22,7 +22,6 @@ use axum::{
     routing::{get, post, put},
     Json, Router,
 };
-use base64::{engine::general_purpose::URL_SAFE_NO_PAD, Engine};
 use bytes::Bytes;
 use db::{NewFavorite, NewHistory, SessionUser, WebDatabase};
 use futures_util::TryStreamExt;
@@ -37,7 +36,7 @@ use std::{
     env,
     net::SocketAddr,
     path::PathBuf,
-    sync::Arc,
+    sync::{Arc, Mutex as StdMutex},
     time::{Duration, Instant},
 };
 use tokio::sync::Mutex;
@@ -82,6 +81,20 @@ struct MediaSession {
     expires_at: Instant,
     stream: StreamInfo,
     secret: [u8; 32],
+    resources: Arc<StdMutex<HashMap<String, MediaResource>>>,
+}
+
+#[derive(Clone)]
+struct MediaResource {
+    url: Url,
+    allow_relative_paths: bool,
+    transform: MediaTransform,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+enum MediaTransform {
+    None,
+    AssToWebVtt,
 }
 
 #[derive(Debug, Serialize)]
@@ -123,7 +136,7 @@ impl ApiError {
             StatusCode::INTERNAL_SERVER_ERROR,
             "SERVER_ERROR",
             operation,
-            "ani-desk could not complete this request.",
+            "any-watch could not complete this request.",
             true,
         )
     }
@@ -269,12 +282,6 @@ struct RemoveInput {
     anime_id: String,
 }
 
-#[derive(Debug, Deserialize)]
-struct ResourceQuery {
-    url: String,
-    sig: String,
-}
-
 #[derive(Debug, Serialize)]
 #[serde(rename_all = "camelCase")]
 struct SourceDto {
@@ -329,7 +336,6 @@ struct PlaybackDto {
     stream_kind: String,
     subtitles: Vec<SubtitleDto>,
     qualities: Vec<String>,
-    can_fallback_to_mpv: bool,
 }
 
 #[derive(Debug, Serialize)]
@@ -396,8 +402,11 @@ async fn main() -> Result<()> {
         .route("/playback", post(playback))
         .route("/skip-times", post(skip_times))
         .route("/media/:id", get(media_main))
-        .route("/media/:id/resource", get(media_resource))
-        .route("/media/:id/dash/*path", get(media_dash_resource))
+        .route("/media/:id/resource/:resource_id", get(media_resource))
+        .route(
+            "/media/:id/resource/:resource_id/*path",
+            get(media_resource_path),
+        )
         .route("/history", get(history).post(save_progress))
         .route("/history/remove", post(remove_history))
         .route("/my-list", get(my_list).post(add_favorite))
@@ -428,7 +437,7 @@ async fn main() -> Result<()> {
         .unwrap_or(3000);
     let address = SocketAddr::from(([0, 0, 0, 0], port));
     let listener = tokio::net::TcpListener::bind(address).await?;
-    tracing::info!(%address, "ani-desk web server listening");
+    tracing::info!(%address, "any-watch web server listening");
     axum::serve(
         listener,
         app.into_make_service_with_connect_info::<SocketAddr>(),
@@ -438,7 +447,7 @@ async fn main() -> Result<()> {
 }
 
 async fn health() -> Json<Value> {
-    Json(json!({"status": "ok", "service": "ani-desk"}))
+    Json(json!({"status": "ok", "service": "any-watch"}))
 }
 
 async fn login(
@@ -717,7 +726,7 @@ async fn check_provider_health(
         let provider = provider.clone();
         tasks.spawn(async move {
             let result =
-                tokio::time::timeout(Duration::from_secs(30), provider.health_check()).await;
+                tokio::time::timeout(Duration::from_secs(90), provider.health_check()).await;
             match result {
                 Ok(Ok(())) => source_dto(provider.as_ref(), "healthy", None),
                 Ok(Err(error)) => source_dto(
@@ -894,7 +903,7 @@ async fn availability(
         let result = provider.search(input.title.trim()).await;
         let (status, failure_code, anime) = match result {
             Ok(items) => {
-                let selected = best_title_match(items, &[input.title.clone()])
+                let selected = best_title_match(items, std::slice::from_ref(&input.title))
                     .map(|anime| map_anime(anime, Some(input.catalog_id)));
                 if selected.is_some() {
                     ("available".into(), None, selected)
@@ -1033,17 +1042,15 @@ async fn playback(
     let id = Uuid::new_v4().to_string();
     let mut secret = [0_u8; 32];
     OsRng.fill_bytes(&mut secret);
-    let subtitles = stream
-        .subtitles
-        .iter()
-        .filter_map(|subtitle| {
-            Url::parse(&subtitle.url).ok().map(|url| SubtitleDto {
-                language: subtitle.language.clone(),
-                url: signed_resource_url(&id, &secret, &url),
-            })
-        })
-        .collect();
     let now = Instant::now();
+    let session = MediaSession {
+        user_id: user.id,
+        expires_at: now + Duration::from_secs(6 * 60 * 60),
+        stream: stream.clone(),
+        secret,
+        resources: Arc::new(StdMutex::new(HashMap::new())),
+    };
+    let response = playback_dto(&id, &session);
     let mut sessions = state.media_sessions.lock().await;
     sessions.retain(|_, session| session.expires_at > now);
     while sessions.len() >= MAX_MEDIA_SESSIONS {
@@ -1056,30 +1063,46 @@ async fn playback(
         };
         sessions.remove(&oldest_id);
     }
-    sessions.insert(
-        id.clone(),
-        MediaSession {
-            user_id: user.id,
-            expires_at: now + Duration::from_secs(6 * 60 * 60),
-            stream: stream.clone(),
-            secret,
-        },
-    );
-    Ok(Json(PlaybackDto {
-        session_id: id.clone(),
+    sessions.insert(id, session);
+    Ok(Json(response))
+}
+
+fn playback_dto(id: &str, session: &MediaSession) -> PlaybackDto {
+    let subtitles = session
+        .stream
+        .subtitles
+        .iter()
+        .filter_map(|subtitle| {
+            Url::parse(&subtitle.url).ok().map(|url| SubtitleDto {
+                language: subtitle.language.clone(),
+                url: opaque_subtitle_url(id, session, url, subtitle.format),
+            })
+        })
+        .collect();
+    PlaybackDto {
+        session_id: id.into(),
         playback_url: format!("/api/media/{id}"),
-        stream_kind: if stream.video_url.to_ascii_lowercase().contains(".m3u8") {
+        stream_kind: if session
+            .stream
+            .video_url
+            .to_ascii_lowercase()
+            .contains(".m3u8")
+        {
             "hls"
-        } else if stream.video_url.to_ascii_lowercase().contains(".mpd") {
+        } else if session
+            .stream
+            .video_url
+            .to_ascii_lowercase()
+            .contains(".mpd")
+        {
             "dash"
         } else {
             "native"
         }
         .into(),
         subtitles,
-        qualities: stream.qualities,
-        can_fallback_to_mpv: false,
-    }))
+        qualities: session.stream.qualities.clone(),
+    }
 }
 
 async fn skip_times(
@@ -1130,80 +1153,54 @@ async fn media_main(
 async fn media_resource(
     State(state): State<AppState>,
     headers: HeaderMap,
-    Path(id): Path<String>,
-    Query(query): Query<ResourceQuery>,
+    Path((id, resource_id)): Path<(String, String)>,
 ) -> ApiResult<Response> {
     let user = require_user(&state, &headers).await?;
     let session = get_media_session(&state, &id, &user.id).await?;
-    verify_resource_signature(&session.secret, &query.url, &query.sig)?;
-    let url = Url::parse(&query.url).map_err(|error| {
-        ApiError::new(
-            StatusCode::BAD_REQUEST,
-            "INVALID_MEDIA_RESOURCE",
-            "playback",
-            error.to_string(),
-            false,
-        )
-    })?;
-    if !matches!(url.scheme(), "http" | "https") {
-        return Err(ApiError::new(
-            StatusCode::BAD_REQUEST,
-            "INVALID_MEDIA_RESOURCE",
-            "playback",
-            "Only HTTP media resources are supported.",
-            false,
-        ));
+    let resource = resolve_media_resource(&session, &resource_id)?;
+    if resource.transform == MediaTransform::AssToWebVtt {
+        return proxy_ass_subtitle(&state, &session, resource.url).await;
     }
-    proxy_media_url(&state, &id, &session, url, &headers).await
+    proxy_media_url(&state, &id, &session, resource.url, &headers).await
 }
 
-async fn media_dash_resource(
+async fn media_resource_path(
     State(state): State<AppState>,
     headers: HeaderMap,
-    Path((id, path)): Path<(String, String)>,
+    Path((id, resource_id, path)): Path<(String, String, String)>,
 ) -> ApiResult<Response> {
     let user = require_user(&state, &headers).await?;
     let session = get_media_session(&state, &id, &user.id).await?;
-    let Some(value) = path.strip_prefix("base/") else {
-        return Err(invalid_dash_resource());
-    };
-    let mut parts = value.splitn(3, '/');
-    let encoded_base = parts.next().unwrap_or_default();
-    let signature = parts.next().unwrap_or_default();
-    let relative_path = parts.next().unwrap_or_default();
-    let base_bytes = URL_SAFE_NO_PAD
-        .decode(encoded_base)
-        .map_err(|_| invalid_dash_resource())?;
-    let base_value = String::from_utf8(base_bytes).map_err(|_| invalid_dash_resource())?;
-    verify_resource_signature(&session.secret, &base_value, signature)?;
-    let base = Url::parse(&base_value).map_err(|_| invalid_dash_resource())?;
-    if !matches!(base.scheme(), "http" | "https") {
-        return Err(invalid_dash_resource());
-    }
-    let upstream = resolve_dash_upstream(base, relative_path)?;
+    let upstream = resolve_opaque_resource(&session, &resource_id, Some(&path))?;
     proxy_media_url(&state, &id, &session, upstream, &headers).await
 }
 
 fn resolve_dash_upstream(base: Url, relative_path: &str) -> ApiResult<Url> {
     let origin = base.origin();
+    let base_query = base.query().map(str::to_owned);
     let upstream = if relative_path.is_empty() {
         base
     } else {
-        base.join(relative_path)
-            .map_err(|_| invalid_dash_resource())?
+        let mut upstream = base
+            .join(relative_path)
+            .map_err(|_| invalid_media_resource())?;
+        if upstream.query().is_none() {
+            upstream.set_query(base_query.as_deref());
+        }
+        upstream
     };
     if upstream.origin() != origin {
-        return Err(invalid_dash_resource());
+        return Err(invalid_media_resource());
     }
     Ok(upstream)
 }
 
-fn invalid_dash_resource() -> ApiError {
+fn invalid_media_resource() -> ApiError {
     ApiError::new(
-        StatusCode::BAD_REQUEST,
+        StatusCode::NOT_FOUND,
         "INVALID_MEDIA_RESOURCE",
         "playback",
-        "The DASH media resource is invalid.",
+        "The media resource is invalid or expired.",
         false,
     )
 }
@@ -1293,7 +1290,7 @@ async fn proxy_media_url(
                     true,
                 )
             })?;
-        let rewritten = rewrite_hls_manifest(session_id, &session.secret, &url, &text);
+        let rewritten = rewrite_hls_manifest(session_id, session, &url, &text);
         return Response::builder()
             .status(StatusCode::OK)
             .header(header::CONTENT_TYPE, "application/vnd.apple.mpegurl")
@@ -1329,7 +1326,7 @@ async fn proxy_media_url(
                     true,
                 )
             })?;
-        let rewritten = rewrite_dash_manifest(session_id, &session.secret, &url, &text);
+        let rewritten = rewrite_dash_manifest(session_id, session, &url, &text);
         return Response::builder()
             .status(StatusCode::OK)
             .header(header::CONTENT_TYPE, "application/dash+xml; charset=utf-8")
@@ -1364,7 +1361,197 @@ async fn proxy_media_url(
         .map_err(|error| ApiError::internal("playback", error))
 }
 
-fn rewrite_hls_manifest(session_id: &str, secret: &[u8; 32], base: &Url, manifest: &str) -> String {
+async fn proxy_ass_subtitle(
+    state: &AppState,
+    session: &MediaSession,
+    url: Url,
+) -> ApiResult<Response> {
+    let response = state
+        .media_client
+        .get(url)
+        .headers(stream_headers(&session.stream)?)
+        .send()
+        .await
+        .map_err(|error| {
+            ApiError::new(
+                StatusCode::BAD_GATEWAY,
+                "PROXY_FAILED",
+                "playback",
+                error.to_string(),
+                true,
+            )
+        })?
+        .error_for_status()
+        .map_err(|error| {
+            ApiError::new(
+                StatusCode::BAD_GATEWAY,
+                "PROXY_FAILED",
+                "playback",
+                error.to_string(),
+                true,
+            )
+        })?;
+    if response
+        .content_length()
+        .is_some_and(|length| length > 4 * 1024 * 1024)
+    {
+        return Err(ApiError::new(
+            StatusCode::BAD_GATEWAY,
+            "INVALID_SUBTITLE",
+            "playback",
+            "The subtitle track is too large.",
+            false,
+        ));
+    }
+    let bytes = response.bytes().await.map_err(|error| {
+        ApiError::new(
+            StatusCode::BAD_GATEWAY,
+            "PROXY_FAILED",
+            "playback",
+            error.to_string(),
+            true,
+        )
+    })?;
+    if bytes.len() > 4 * 1024 * 1024 {
+        return Err(ApiError::new(
+            StatusCode::BAD_GATEWAY,
+            "INVALID_SUBTITLE",
+            "playback",
+            "The subtitle track is too large.",
+            false,
+        ));
+    }
+    let ass = String::from_utf8(bytes.to_vec()).map_err(|_| {
+        ApiError::new(
+            StatusCode::BAD_GATEWAY,
+            "INVALID_SUBTITLE",
+            "playback",
+            "The subtitle track is not valid UTF-8.",
+            false,
+        )
+    })?;
+    let webvtt = ass_to_webvtt(&ass).map_err(|error| {
+        ApiError::new(
+            StatusCode::BAD_GATEWAY,
+            "INVALID_SUBTITLE",
+            "playback",
+            error.to_string(),
+            false,
+        )
+    })?;
+    Response::builder()
+        .status(StatusCode::OK)
+        .header(header::CONTENT_TYPE, "text/vtt; charset=utf-8")
+        .header(header::CACHE_CONTROL, "private, no-store")
+        .body(Body::from(webvtt))
+        .map_err(|error| ApiError::internal("playback", error))
+}
+
+fn ass_to_webvtt(ass: &str) -> Result<String> {
+    let mut in_events = false;
+    let mut columns = Vec::new();
+    let mut cues = Vec::new();
+    for raw_line in ass.trim_start_matches('\u{feff}').lines() {
+        let line = raw_line.trim_end_matches('\r').trim();
+        if line.starts_with('[') && line.ends_with(']') {
+            in_events = line.eq_ignore_ascii_case("[Events]");
+            continue;
+        }
+        if !in_events {
+            continue;
+        }
+        if let Some(format) = line.strip_prefix("Format:") {
+            columns = format
+                .split(',')
+                .map(|column| column.trim().to_ascii_lowercase())
+                .collect();
+            continue;
+        }
+        let Some(dialogue) = line.strip_prefix("Dialogue:") else {
+            continue;
+        };
+        if columns.is_empty() {
+            continue;
+        }
+        let values = dialogue
+            .splitn(columns.len(), ',')
+            .map(str::trim)
+            .collect::<Vec<_>>();
+        if values.len() != columns.len() {
+            continue;
+        }
+        let value = |name: &str| {
+            columns
+                .iter()
+                .position(|column| column == name)
+                .and_then(|index| values.get(index).copied())
+        };
+        let (Some(start), Some(end), Some(text)) = (value("start"), value("end"), value("text"))
+        else {
+            continue;
+        };
+        let (Some(start), Some(end)) =
+            (ass_timestamp_to_webvtt(start), ass_timestamp_to_webvtt(end))
+        else {
+            continue;
+        };
+        let text = ass_text_to_webvtt(text);
+        if !text.trim().is_empty() {
+            cues.push(format!("{start} --> {end}\n{text}"));
+        }
+    }
+    anyhow::ensure!(
+        !cues.is_empty(),
+        "The ASS subtitle contained no usable dialogue cues."
+    );
+    Ok(format!("WEBVTT\n\n{}\n", cues.join("\n\n")))
+}
+
+fn ass_timestamp_to_webvtt(value: &str) -> Option<String> {
+    let mut parts = value.trim().split(':');
+    let hours = parts.next()?.parse::<u32>().ok()?;
+    let minutes = parts.next()?.parse::<u32>().ok()?;
+    let seconds = parts.next()?.parse::<f64>().ok()?;
+    if parts.next().is_some() || minutes >= 60 || !(0.0..60.0).contains(&seconds) {
+        return None;
+    }
+    let total_milliseconds =
+        ((hours * 3_600 + minutes * 60) as f64 * 1_000.0 + seconds * 1_000.0).round() as u64;
+    Some(format!(
+        "{:02}:{:02}:{:02}.{:03}",
+        total_milliseconds / 3_600_000,
+        total_milliseconds / 60_000 % 60,
+        total_milliseconds / 1_000 % 60,
+        total_milliseconds % 1_000
+    ))
+}
+
+fn ass_text_to_webvtt(value: &str) -> String {
+    let mut plain = String::with_capacity(value.len());
+    let mut in_override = false;
+    for character in value.chars() {
+        match character {
+            '{' => in_override = true,
+            '}' if in_override => in_override = false,
+            _ if !in_override => plain.push(character),
+            _ => {}
+        }
+    }
+    plain
+        .replace("\\N", "\n")
+        .replace("\\n", "\n")
+        .replace("\\h", " ")
+        .replace('&', "&amp;")
+        .replace('<', "&lt;")
+        .replace('>', "&gt;")
+}
+
+fn rewrite_hls_manifest(
+    session_id: &str,
+    session: &MediaSession,
+    base: &Url,
+    manifest: &str,
+) -> String {
     manifest
         .lines()
         .map(|line| {
@@ -1375,14 +1562,23 @@ fn rewrite_hls_manifest(session_id: &str, secret: &[u8; 32], base: &Url, manifes
             if !trimmed.starts_with('#') {
                 return base
                     .join(trimmed)
-                    .map(|url| signed_resource_url(session_id, secret, &url))
+                    .map(|mut url| {
+                        if url.query().is_none() {
+                            url.set_query(base.query());
+                        }
+                        url
+                    })
+                    .map(|url| opaque_resource_url(session_id, session, url, false))
                     .unwrap_or_else(|_| line.to_string());
             }
             if let Some(uri) = quoted_attribute(trimmed, "URI") {
-                if let Ok(url) = base.join(&uri) {
+                if let Some(url) = join_preserving_query(base, &uri) {
                     return line.replacen(
                         &format!("URI=\"{uri}\""),
-                        &format!("URI=\"{}\"", signed_resource_url(session_id, secret, &url)),
+                        &format!(
+                            "URI=\"{}\"",
+                            opaque_resource_url(session_id, session, url, false)
+                        ),
                         1,
                     );
                 }
@@ -1395,13 +1591,14 @@ fn rewrite_hls_manifest(session_id: &str, secret: &[u8; 32], base: &Url, manifes
 
 fn rewrite_dash_manifest(
     session_id: &str,
-    secret: &[u8; 32],
+    session: &MediaSession,
     manifest_url: &Url,
     manifest: &str,
 ) -> String {
     let mut output = String::with_capacity(manifest.len() + 128);
     let mut remaining = manifest;
     let mut found_base = false;
+    let mut resource_base = manifest_url.clone();
     while let Some(start) = remaining.find("<BaseURL") {
         let Some(open_end_relative) = remaining[start..].find('>') else {
             break;
@@ -1413,77 +1610,222 @@ fn rewrite_dash_manifest(
         let close = open_end + close_relative;
         output.push_str(&remaining[..open_end]);
         let original = remaining[open_end..close].trim();
-        let absolute = manifest_url
-            .join(original)
-            .unwrap_or_else(|_| manifest_url.clone());
-        output.push_str(&signed_dash_base(session_id, secret, &absolute));
+        let absolute =
+            join_preserving_query(manifest_url, original).unwrap_or_else(|| manifest_url.clone());
+        if !found_base {
+            resource_base = absolute.clone();
+        }
+        output.push_str(&opaque_resource_url(session_id, session, absolute, true));
+        output.push('/');
         output.push_str("</BaseURL>");
         remaining = &remaining[close + "</BaseURL>".len()..];
         found_base = true;
     }
     output.push_str(remaining);
     if found_base {
-        return output;
-    }
-    if let Some(mpd_start) = output.find("<MPD") {
+        return rewrite_dash_resource_attributes(session_id, session, &resource_base, &output);
+    } else if let Some(mpd_start) = output.find("<MPD") {
         if let Some(relative_end) = output[mpd_start..].find('>') {
             let insert_at = mpd_start + relative_end + 1;
-            let parent = manifest_url
-                .join(".")
-                .unwrap_or_else(|_| manifest_url.clone());
+            let parent =
+                join_preserving_query(manifest_url, ".").unwrap_or_else(|| manifest_url.clone());
             output.insert_str(
                 insert_at,
                 &format!(
-                    "<BaseURL>{}</BaseURL>",
-                    signed_dash_base(session_id, secret, &parent)
+                    "<BaseURL>{}/</BaseURL>",
+                    opaque_resource_url(session_id, session, parent, true)
                 ),
             );
         }
     }
+    rewrite_dash_resource_attributes(session_id, session, manifest_url, &output)
+}
+
+fn rewrite_dash_resource_attributes(
+    session_id: &str,
+    session: &MediaSession,
+    manifest_url: &Url,
+    manifest: &str,
+) -> String {
+    ["media", "initialization", "sourceURL", "index", "href"]
+        .into_iter()
+        .fold(manifest.to_string(), |manifest, attribute| {
+            rewrite_dash_resource_attribute(session_id, session, manifest_url, &manifest, attribute)
+        })
+}
+
+fn rewrite_dash_resource_attribute(
+    session_id: &str,
+    session: &MediaSession,
+    manifest_url: &Url,
+    manifest: &str,
+    attribute: &str,
+) -> String {
+    let marker = format!("{attribute}=\"");
+    let mut output = String::with_capacity(manifest.len());
+    let mut remaining = manifest;
+    while let Some(start) = remaining.find(&marker) {
+        let value_start = start + marker.len();
+        let Some(value_length) = remaining[value_start..].find('"') else {
+            break;
+        };
+        let value_end = value_start + value_length;
+        let value = &remaining[value_start..value_end];
+        output.push_str(&remaining[..value_start]);
+        output.push_str(
+            &opaque_dash_attribute_url(session_id, session, manifest_url, value)
+                .unwrap_or_else(|| value.to_string()),
+        );
+        remaining = &remaining[value_end..];
+    }
+    output.push_str(remaining);
     output
 }
 
-fn signed_dash_base(session_id: &str, secret: &[u8; 32], base: &Url) -> String {
-    let encoded = URL_SAFE_NO_PAD.encode(base.as_str());
-    let signature = resource_signature(secret, base.as_str());
-    format!("/api/media/{session_id}/dash/base/{encoded}/{signature}/")
+fn opaque_dash_attribute_url(
+    session_id: &str,
+    session: &MediaSession,
+    manifest_url: &Url,
+    value: &str,
+) -> Option<String> {
+    if value.is_empty()
+        || value.starts_with('#')
+        || value.starts_with("data:")
+        || value.starts_with("urn:")
+        || value.starts_with("/api/media/")
+    {
+        return None;
+    }
+    let absolute = join_preserving_query(manifest_url, value)?;
+    let Some(template_start) = absolute.path().find('$') else {
+        return Some(opaque_resource_url(session_id, session, absolute, false));
+    };
+    let base_end = absolute.path()[..template_start]
+        .rfind('/')
+        .map(|index| index + 1)
+        .unwrap_or(1);
+    let template = absolute.path()[base_end..].to_string();
+    let mut base = absolute;
+    let base_path = base.path()[..base_end].to_owned();
+    base.set_path(&base_path);
+    Some(format!(
+        "{}/{}",
+        opaque_resource_url(session_id, session, base, true),
+        template
+    ))
 }
 
-fn signed_resource_url(session_id: &str, secret: &[u8; 32], url: &Url) -> String {
-    let encoded = url::form_urlencoded::byte_serialize(url.as_str().as_bytes()).collect::<String>();
-    format!(
-        "/api/media/{session_id}/resource?url={encoded}&sig={}",
-        resource_signature(secret, url.as_str())
+fn join_preserving_query(base: &Url, value: &str) -> Option<Url> {
+    let mut joined = base.join(value).ok()?;
+    if joined.query().is_none() {
+        joined.set_query(base.query());
+    }
+    Some(joined)
+}
+
+fn opaque_resource_url(
+    session_id: &str,
+    session: &MediaSession,
+    url: Url,
+    allow_relative_paths: bool,
+) -> String {
+    opaque_resource_url_with_transform(
+        session_id,
+        session,
+        url,
+        allow_relative_paths,
+        MediaTransform::None,
     )
 }
 
-fn resource_signature(secret: &[u8; 32], value: &str) -> String {
-    let mut mac = Hmac::<Sha256>::new_from_slice(secret).expect("fixed-size HMAC key");
-    mac.update(value.as_bytes());
-    URL_SAFE_NO_PAD.encode(mac.finalize().into_bytes())
+fn opaque_subtitle_url(
+    session_id: &str,
+    session: &MediaSession,
+    url: Url,
+    format: SubtitleFormat,
+) -> String {
+    let transform = if format == SubtitleFormat::Ass {
+        MediaTransform::AssToWebVtt
+    } else {
+        MediaTransform::None
+    };
+    opaque_resource_url_with_transform(session_id, session, url, false, transform)
 }
 
-fn verify_resource_signature(secret: &[u8; 32], value: &str, signature: &str) -> ApiResult<()> {
-    let signature = URL_SAFE_NO_PAD.decode(signature).map_err(|_| {
-        ApiError::new(
-            StatusCode::FORBIDDEN,
-            "INVALID_MEDIA_RESOURCE",
-            "playback",
-            "The media resource signature is invalid.",
-            false,
-        )
-    })?;
+fn opaque_resource_url_with_transform(
+    session_id: &str,
+    session: &MediaSession,
+    url: Url,
+    allow_relative_paths: bool,
+    transform: MediaTransform,
+) -> String {
+    let resource_id =
+        opaque_resource_id_with_transform(&session.secret, &url, allow_relative_paths, transform);
+    session
+        .resources
+        .lock()
+        .expect("media resource map lock poisoned")
+        .insert(
+            resource_id.clone(),
+            MediaResource {
+                url,
+                allow_relative_paths,
+                transform,
+            },
+        );
+    format!("/api/media/{session_id}/resource/{resource_id}")
+}
+
+#[cfg(test)]
+fn opaque_resource_id(secret: &[u8; 32], url: &Url, allow_relative_paths: bool) -> String {
+    opaque_resource_id_with_transform(secret, url, allow_relative_paths, MediaTransform::None)
+}
+
+fn opaque_resource_id_with_transform(
+    secret: &[u8; 32],
+    url: &Url,
+    allow_relative_paths: bool,
+    transform: MediaTransform,
+) -> String {
     let mut mac = Hmac::<Sha256>::new_from_slice(secret).expect("fixed-size HMAC key");
-    mac.update(value.as_bytes());
-    mac.verify_slice(&signature).map_err(|_| {
-        ApiError::new(
-            StatusCode::FORBIDDEN,
-            "INVALID_MEDIA_RESOURCE",
-            "playback",
-            "The media resource signature is invalid.",
-            false,
-        )
-    })
+    mac.update(&[u8::from(allow_relative_paths)]);
+    mac.update(&[match transform {
+        MediaTransform::None => 0,
+        MediaTransform::AssToWebVtt => 1,
+    }]);
+    mac.update(url.as_str().as_bytes());
+    mac.finalize()
+        .into_bytes()
+        .iter()
+        .map(|byte| format!("{byte:02x}"))
+        .collect()
+}
+
+fn resolve_opaque_resource(
+    session: &MediaSession,
+    resource_id: &str,
+    relative_path: Option<&str>,
+) -> ApiResult<Url> {
+    let resource = resolve_media_resource(session, resource_id)?;
+    match relative_path {
+        Some(path)
+            if resource.allow_relative_paths && resource.transform == MediaTransform::None =>
+        {
+            resolve_dash_upstream(resource.url, path)
+        }
+        Some(_) => Err(invalid_media_resource()),
+        None => Ok(resource.url),
+    }
+}
+
+fn resolve_media_resource(session: &MediaSession, resource_id: &str) -> ApiResult<MediaResource> {
+    session
+        .resources
+        .lock()
+        .expect("media resource map lock poisoned")
+        .get(resource_id)
+        .cloned()
+        .ok_or_else(invalid_media_resource)
 }
 
 async fn my_list(
@@ -2005,7 +2347,7 @@ fn sanitize_file_name(value: &str) -> String {
         .take(100)
         .collect::<String>();
     if clean.is_empty() {
-        "ani-desk".into()
+        "any-watch".into()
     } else {
         clean
     }
@@ -2201,6 +2543,75 @@ fn non_empty(value: String) -> Option<String> {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use base64::Engine;
+
+    const UPSTREAM_HOST: &str = "private-cdn.example";
+    const SIGNED_VALUE: &str = "signed-query-secret";
+    const COOKIE_VALUE: &str = "upstream_session=private-cookie";
+    const REQUIRED_HEADER_VALUE: &str = "required-header-secret";
+
+    fn media_session(video_url: &str) -> MediaSession {
+        let mut stream = stream(video_url);
+        stream.subtitles.push(ani_desk_core::providers::Subtitle {
+            language: "English".into(),
+            url: format!("https://{UPSTREAM_HOST}/subtitles/en.vtt?token={SIGNED_VALUE}"),
+            format: SubtitleFormat::WebVtt,
+        });
+        stream.headers.insert("Cookie".into(), COOKIE_VALUE.into());
+        stream
+            .headers
+            .insert("X-Required-Auth".into(), REQUIRED_HEADER_VALUE.into());
+        MediaSession {
+            user_id: "user".into(),
+            expires_at: Instant::now() + Duration::from_secs(60),
+            stream,
+            secret: [7_u8; 32],
+            resources: Arc::new(StdMutex::new(HashMap::new())),
+        }
+    }
+
+    fn assert_private_material_absent(value: &str, urls: &[&str]) {
+        assert!(
+            !value.contains(UPSTREAM_HOST),
+            "upstream hostname leaked: {value}"
+        );
+        assert!(
+            !value.contains(SIGNED_VALUE),
+            "signed value leaked: {value}"
+        );
+        assert!(!value.contains(COOKIE_VALUE), "cookie leaked: {value}");
+        assert!(
+            !value.contains(REQUIRED_HEADER_VALUE),
+            "required header leaked: {value}"
+        );
+        for url in urls {
+            let percent_encoded =
+                url::form_urlencoded::byte_serialize(url.as_bytes()).collect::<String>();
+            let base64 = base64::engine::general_purpose::STANDARD.encode(url);
+            let url_safe = base64::engine::general_purpose::URL_SAFE_NO_PAD.encode(url);
+            assert!(!value.contains(url), "upstream URL leaked: {value}");
+            assert!(
+                !value.contains(&percent_encoded),
+                "percent-encoded upstream URL leaked: {value}"
+            );
+            assert!(
+                !value.contains(&base64),
+                "base64 upstream URL leaked: {value}"
+            );
+            assert!(
+                !value.contains(&url_safe),
+                "URL-safe base64 upstream URL leaked: {value}"
+            );
+        }
+    }
+
+    fn resource_id(resource_url: &str) -> &str {
+        resource_url
+            .trim_end_matches('/')
+            .rsplit('/')
+            .next()
+            .unwrap()
+    }
 
     fn download_request() -> BrowserDownloadInput {
         BrowserDownloadInput {
@@ -2249,33 +2660,169 @@ mod tests {
     }
 
     #[test]
-    fn dash_rewrite_signs_existing_and_default_base_urls() {
-        let manifest_url = Url::parse("https://cdn.example/show/manifest.mpd").unwrap();
-        let secret = [7_u8; 32];
-        let with_base = rewrite_dash_manifest(
-            "session",
-            &secret,
-            &manifest_url,
-            "<MPD><Period><BaseURL>video/</BaseURL></Period></MPD>",
-        );
-        assert!(with_base.contains("/api/media/session/dash/base/"));
-        assert!(!with_base.contains(">video/</BaseURL>"));
+    fn playback_json_exposes_only_opaque_same_origin_resources() {
+        let video_url = format!("https://{UPSTREAM_HOST}/show/master.m3u8?token={SIGNED_VALUE}");
+        let subtitle_url = format!("https://{UPSTREAM_HOST}/subtitles/en.vtt?token={SIGNED_VALUE}");
+        let session = media_session(&video_url);
+        let json = serde_json::to_string(&playback_dto("session", &session)).unwrap();
 
-        let without_base =
-            rewrite_dash_manifest("session", &secret, &manifest_url, "<MPD><Period /></MPD>");
-        assert!(without_base.starts_with("<MPD><BaseURL>/api/media/session/dash/base/"));
+        assert_private_material_absent(&json, &[&video_url, &subtitle_url]);
+        let value: Value = serde_json::from_str(&json).unwrap();
+        let resource_url = value["subtitles"][0]["url"].as_str().unwrap();
+        assert!(resource_url.starts_with("/api/media/session/resource/"));
+        assert!(!resource_url.contains('?'));
+        assert_eq!(resource_id(resource_url).len(), 64);
+        assert!(resource_id(resource_url)
+            .bytes()
+            .all(|byte| byte.is_ascii_hexdigit()));
+        assert_eq!(
+            resource_id(resource_url),
+            opaque_resource_id(&[7_u8; 32], &Url::parse(&subtitle_url).unwrap(), false)
+        );
+        assert_eq!(
+            resolve_opaque_resource(&session, resource_id(resource_url), None)
+                .unwrap()
+                .as_str(),
+            subtitle_url
+        );
     }
 
     #[test]
-    fn dash_resources_must_remain_on_the_signed_origin() {
-        let base = Url::parse("https://cdn.example/show/manifest.mpd").unwrap();
+    fn hls_rewrite_hides_private_material_and_resolves_opaque_resources() {
+        let manifest_url = Url::parse(&format!(
+            "https://{UPSTREAM_HOST}/show/master.m3u8?token={SIGNED_VALUE}"
+        ))
+        .unwrap();
+        let absolute_segment =
+            format!("https://{UPSTREAM_HOST}/show/absolute.ts?token={SIGNED_VALUE}");
+        let session = media_session(manifest_url.as_str());
+        let manifest = format!(
+            "#EXTM3U\n#EXT-X-KEY:METHOD=AES-128,URI=\"keys/key.bin\"\nsegment.ts\n{absolute_segment}"
+        );
+        let rewritten = rewrite_hls_manifest("session", &session, &manifest_url, &manifest);
+
+        assert_private_material_absent(&rewritten, &[manifest_url.as_str(), &absolute_segment]);
+        let resource_urls = rewritten
+            .split(['\n', '"'])
+            .filter(|value| value.starts_with("/api/media/session/resource/"))
+            .collect::<Vec<_>>();
+        assert_eq!(resource_urls.len(), 3);
+        assert!(resource_urls.iter().all(|url| !url.contains('?')));
         assert_eq!(
-            resolve_dash_upstream(base.clone(), "segments/1.m4s")
+            resolve_opaque_resource(&session, resource_id(resource_urls[1]), None)
                 .unwrap()
                 .as_str(),
-            "https://cdn.example/show/segments/1.m4s"
+            format!("https://{UPSTREAM_HOST}/show/segment.ts?token={SIGNED_VALUE}")
         );
-        assert!(resolve_dash_upstream(base, "https://attacker.example/1.m4s").is_err());
+    }
+
+    #[test]
+    fn dash_rewrite_hides_private_material_and_resolves_opaque_paths() {
+        let manifest_url = Url::parse(&format!(
+            "https://{UPSTREAM_HOST}/show/manifest.mpd?token={SIGNED_VALUE}"
+        ))
+        .unwrap();
+        let upstream_base = format!("https://{UPSTREAM_HOST}/show/video/?token={SIGNED_VALUE}");
+        let session = media_session(manifest_url.as_str());
+        let with_base = rewrite_dash_manifest(
+            "session",
+            &session,
+            &manifest_url,
+            &format!(
+                "<MPD><Period><BaseURL>{upstream_base}</BaseURL><SegmentTemplate media=\"https://{UPSTREAM_HOST}/show/chunks/$Number$.m4s?token={SIGNED_VALUE}\" initialization=\"init.mp4\" /></Period></MPD>"
+            ),
+        );
+        assert_private_material_absent(&with_base, &[manifest_url.as_str(), &upstream_base]);
+        assert!(with_base.contains("<BaseURL>/api/media/session/resource/"));
+        assert!(!with_base.contains('?'));
+        assert!(with_base.contains("media=\"/api/media/session/resource/"));
+        assert!(with_base.contains("/$Number$.m4s\""));
+        assert!(with_base.contains("initialization=\"/api/media/session/resource/"));
+        let media_url = quoted_attribute(&with_base, "media").unwrap();
+        let (media_base, _) = media_url.rsplit_once('/').unwrap();
+        assert_eq!(
+            resolve_opaque_resource(&session, resource_id(media_base), Some("1.m4s"))
+                .unwrap()
+                .as_str(),
+            format!("https://{UPSTREAM_HOST}/show/chunks/1.m4s?token={SIGNED_VALUE}")
+        );
+        let base_url = with_base
+            .split("<BaseURL>")
+            .nth(1)
+            .unwrap()
+            .split("</BaseURL>")
+            .next()
+            .unwrap();
+        assert_eq!(
+            resolve_opaque_resource(&session, resource_id(base_url), Some("segments/1.m4s"))
+                .unwrap()
+                .as_str(),
+            format!("https://{UPSTREAM_HOST}/show/video/segments/1.m4s?token={SIGNED_VALUE}")
+        );
+
+        let without_base =
+            rewrite_dash_manifest("session", &session, &manifest_url, "<MPD><Period /></MPD>");
+        assert_private_material_absent(&without_base, &[manifest_url.as_str()]);
+        assert!(without_base.starts_with("<MPD><BaseURL>/api/media/session/resource/"));
+    }
+
+    #[test]
+    fn opaque_resources_reject_unknown_ids_and_cross_origin_paths() {
+        let base = Url::parse(&format!(
+            "https://{UPSTREAM_HOST}/show/?token={SIGNED_VALUE}"
+        ))
+        .unwrap();
+        let session = media_session(base.as_str());
+        let resource_url = opaque_resource_url("session", &session, base, true);
+
+        assert!(resolve_opaque_resource(&session, "0", None).is_err());
+        assert!(resolve_opaque_resource(
+            &session,
+            resource_id(&resource_url),
+            Some("https://attacker.example/1.m4s")
+        )
+        .is_err());
+    }
+
+    #[test]
+    fn opaque_proxy_resources_retain_required_upstream_headers() {
+        let session = media_session(&format!(
+            "https://{UPSTREAM_HOST}/show/master.m3u8?token={SIGNED_VALUE}"
+        ));
+        let headers = stream_headers(&session.stream).unwrap();
+
+        assert_eq!(headers.get(reqwest::header::COOKIE).unwrap(), COOKIE_VALUE);
+        assert_eq!(
+            headers.get("x-required-auth").unwrap(),
+            REQUIRED_HEADER_VALUE
+        );
+    }
+
+    #[test]
+    fn converts_ass_dialogue_to_browser_native_webvtt() {
+        let ass = "\u{feff}[Script Info]\r\nTitle: Test\r\n[Events]\r\nFormat: Layer, Start, End, Style, Name, MarginL, MarginR, MarginV, Effect, Text\r\nDialogue: 0,0:01:02.34,0:01:05.60,Default,,0,0,0,,{\\an8}Hello, world!\\NSecond <line>\r\nComment: 0,0:00:00.00,0:00:01.00,Default,,0,0,0,,Ignored\r\n";
+        let output = ass_to_webvtt(ass).unwrap();
+
+        assert_eq!(
+            output,
+            "WEBVTT\n\n00:01:02.340 --> 00:01:05.600\nHello, world!\nSecond &lt;line&gt;\n"
+        );
+    }
+
+    #[test]
+    fn transformed_subtitles_use_distinct_opaque_resources() {
+        let session = media_session("https://cdn.example/master.m3u8");
+        let url = Url::parse("https://cdn.example/subtitle.ass").unwrap();
+        let raw = opaque_resource_url("session", &session, url.clone(), false);
+        let converted = opaque_subtitle_url("session", &session, url, SubtitleFormat::Ass);
+
+        assert_ne!(resource_id(&raw), resource_id(&converted));
+        assert_eq!(
+            resolve_media_resource(&session, resource_id(&converted))
+                .unwrap()
+                .transform,
+            MediaTransform::AssToWebVtt
+        );
     }
 
     #[test]

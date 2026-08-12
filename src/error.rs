@@ -14,12 +14,6 @@ pub enum AniDeskError {
     #[error("Provider error: {0}")]
     Provider(String),
 
-    #[error("Player error: {0}")]
-    Player(String),
-
-    #[error("UI error: {0}")]
-    Ui(String),
-
     #[error("IO error: {0}")]
     Io(#[from] std::io::Error),
 
@@ -31,9 +25,6 @@ pub enum AniDeskError {
 
     #[error("Not found: {0}")]
     NotFound(String),
-
-    #[error("Update error: {0}")]
-    Update(String),
 
     #[error("Unknown error: {0}")]
     Unknown(String),

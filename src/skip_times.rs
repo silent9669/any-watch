@@ -59,7 +59,7 @@ pub async fn fetch_skip_times(catalog_id: i64, episode_number: u32) -> Result<Ve
         .timeout(Duration::from_secs(8))
         .use_rustls_tls()
         .http1_only()
-        .user_agent("ani-desk/1.0")
+        .user_agent("any-watch/1.0")
         .build()
         .context("failed to build AniSkip client")?;
     let id_mal = resolve_mal_id(&client, catalog_id).await?;

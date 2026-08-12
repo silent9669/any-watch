@@ -12,8 +12,6 @@ import {
   Eye,
   EyeOff,
   Film,
-  FolderOpen,
-  HardDrive,
   House,
   Loader2,
   LogOut,
@@ -41,7 +39,6 @@ import {
 import { AnimatePresence, LayoutGroup, motion, useReducedMotion } from "framer-motion";
 import { useEffect, useMemo, useRef, useState } from "react";
 import type { FormEvent, ReactNode, SyntheticEvent } from "react";
-import type { Update } from "@tauri-apps/plugin-updater";
 import { animeKey, api, favoriteToAnime } from "./api";
 import { episodeLabel, episodeTitleDetail } from "./episode-label";
 import type {
@@ -51,7 +48,6 @@ import type {
   CatalogAnime,
   CatalogFilters,
   DiscoveryCatalog,
-  DownloadRecord,
   Episode,
   EpisodeDownloadState,
   Favorite,
@@ -63,18 +59,12 @@ import type {
   SkipTime,
   WatchHistory,
 } from "./types";
-import {
-  type AppUpdateState,
-  checkForAppUpdate,
-  downloadAndInstallAppUpdate,
-  relaunchApp,
-} from "./updater";
 
-const SOURCE_STORAGE_KEY = "ani-desk:selected-source";
-const THEME_STORAGE_KEY = "ani-desk:theme";
-const APP_SCALE_STORAGE_KEY = "ani-desk:scale";
-const APP_FONT_STORAGE_KEY = "ani-desk:font";
-const AUTO_SKIP_STORAGE_KEY = "ani-desk:auto-skip";
+const SOURCE_STORAGE_KEY = "any-watch:selected-source";
+const THEME_STORAGE_KEY = "any-watch:theme";
+const APP_SCALE_STORAGE_KEY = "any-watch:scale";
+const APP_FONT_STORAGE_KEY = "any-watch:font";
+const AUTO_SKIP_STORAGE_KEY = "any-watch:auto-skip";
 const EPISODE_RANGE_SIZE = 50;
 const LOGO_SRC = "/logo.png";
 const fadeUpVariant = {
@@ -82,8 +72,8 @@ const fadeUpVariant = {
   show: { opacity: 1, y: 0 },
 };
 
-type Route = "home" | "my-list" | "continue" | "downloads" | "admin" | "search" | "detail" | "catalog" | "settings";
-type AppTheme = "obsidian" | "oled" | "system";
+type Route = "home" | "my-list" | "continue" | "admin" | "search" | "detail" | "catalog" | "settings";
+type AppTheme = "obsidian" | "oled" | "ember" | "crimson" | "system";
 type AppScale = "compact" | "comfortable" | "large" | "tv";
 type AppFont = "manrope" | "noto" | "system";
 type QualityLevel = { index: number; label: string; id?: string };
@@ -120,7 +110,6 @@ function App() {
   const [myList, setMyList] = useState<Favorite[]>([]);
   const [player, setPlayer] = useState<PlayerContext | null>(null);
   const [episodeDownloads, setEpisodeDownloads] = useState<Record<string, EpisodeDownloadState>>({});
-  const [downloads, setDownloads] = useState<DownloadRecord[]>([]);
   const [bootstrapping, setBootstrapping] = useState(true);
   const [loading, setLoading] = useState(false);
   const [loadingEpisodes, setLoadingEpisodes] = useState(false);
@@ -133,8 +122,6 @@ function App() {
   const catalogCooldownUntilRef = useRef(0);
   const availabilityGenerationRef = useRef(0);
   const catalogSearchGenerationRef = useRef(0);
-  const pendingUpdateRef = useRef<Update | null>(null);
-  const [appUpdate, setAppUpdate] = useState<AppUpdateState>({ status: "idle" });
   const [providerHealthPending, setProviderHealthPending] = useState<string | null>(null);
   const [theme, setTheme] = useState<AppTheme>(loadSavedTheme);
   const [appScale, setAppScale] = useState<AppScale>(loadSavedScale);
@@ -163,14 +150,6 @@ function App() {
   useEffect(() => {
     saveAutoSkip(autoSkip);
   }, [autoSkip]);
-
-  useEffect(() => {
-    if (bootstrapping || !isTauriRuntime()) return;
-    const handle = window.setTimeout(() => {
-      void checkAppUpdates();
-    }, 900);
-    return () => window.clearTimeout(handle);
-  }, [bootstrapping]);
 
   useEffect(() => {
     const userAgent = navigator.userAgent.toLowerCase();
@@ -271,9 +250,17 @@ function App() {
   useEffect(() => {
     if (!sources.length) return;
     const current = selectedSource;
-    if (current?.languageGroup === languageGroup) return;
+    if (
+      current?.languageGroup === languageGroup
+      && current.status === "healthy"
+      && current.capabilities.search
+    ) return;
     const nextSource = firstSearchableSource(sources, languageGroup);
-    if (nextSource) selectSource(nextSource);
+    if (nextSource) {
+      selectSource(nextSource);
+    } else {
+      setSelectedSource(null);
+    }
   }, [sources, languageGroup, selectedSource?.name]);
 
   useEffect(() => {
@@ -286,21 +273,25 @@ function App() {
       const currentSession = await api.getSession();
       setSession(currentSession);
       if (!currentSession) return;
-      const [sourceList, history, favorites, downloadLibrary] = await Promise.all([
+      const [sourceList, history, favorites] = await Promise.all([
         api.listSources(),
         api.getContinueWatching(200),
         api.getMyList(300),
-        api.listDownloads(500),
       ]);
       const savedSourceName = loadSavedSourceName();
-      const nextSource = sourceList.find((source) => source.name === savedSourceName) ?? sourceList[0] ?? null;
+      const savedSource = sourceList.find((source) =>
+        source.name === savedSourceName
+        && source.languageGroup === languageGroup
+        && source.status === "healthy"
+        && source.capabilities.search
+      );
+      const nextSource = savedSource ?? firstSearchableSource(sourceList, languageGroup);
 
       setSources(sourceList);
       setSelectedSource(nextSource);
       if (nextSource) saveSourceName(nextSource.name);
       setContinueWatching(history);
       setMyList(favorites);
-      setDownloads(downloadLibrary);
       void api.listProviderHealth().then((health) => {
         setSources(health);
         setSelectedSource((current) => {
@@ -329,10 +320,6 @@ function App() {
     setMyList(favorites);
   }
 
-  async function refreshDownloads() {
-    setDownloads(await api.listDownloads(500));
-  }
-
   async function signIn(username: string, password: string) {
     setAuthError(null);
     setBootstrapping(true);
@@ -355,60 +342,6 @@ function App() {
       setSources([]);
       setContinueWatching([]);
       setMyList([]);
-      setDownloads([]);
-    }
-  }
-
-  async function checkAppUpdates() {
-    setAppUpdate({ status: "checking" });
-    try {
-      const update = await checkForAppUpdate();
-      pendingUpdateRef.current = update;
-
-      if (!update) {
-        setAppUpdate({ status: "idle" });
-        return;
-      }
-
-      setAppUpdate({
-        status: "available",
-        version: update.version,
-        currentVersion: update.currentVersion,
-        notes: update.body,
-      });
-    } catch (err) {
-      setAppUpdate({
-        status: "error",
-        message: `Update check failed: ${errorMessage(err)}`,
-      });
-    }
-  }
-
-  async function installUpdate() {
-    const update = pendingUpdateRef.current;
-    if (!update) return;
-
-    setAppUpdate((current) => ({ ...current, status: "downloading", progress: 0, message: undefined }));
-    try {
-      await downloadAndInstallAppUpdate(update, (progress) => {
-        setAppUpdate((current) => ({
-          ...current,
-          status: "downloading",
-          progress: progress.percent,
-          message: progress.total
-            ? `${formatBytes(progress.downloaded)} / ${formatBytes(progress.total)}`
-            : `${formatBytes(progress.downloaded)} downloaded`,
-        }));
-      });
-
-      setAppUpdate((current) => ({ ...current, status: "ready", progress: 100, message: "Update installed. Relaunching ani-desk..." }));
-      await relaunchApp();
-    } catch (err) {
-      setAppUpdate((current) => ({
-        ...current,
-        status: "error",
-        message: `Update failed: ${errorMessage(err)}`,
-      }));
     }
   }
 
@@ -446,7 +379,7 @@ function App() {
   async function searchCatalog(nextQuery = query, sourceOverride?: Source | null) {
     const cleanQuery = nextQuery.trim();
     const generation = ++catalogSearchGenerationRef.current;
-    const activeSource = sourceOverride ?? selectedSource;
+    const activeSource = sourceOverride === undefined ? selectedSource : sourceOverride;
     if (cleanQuery.length < 2) {
       setCatalogResults([]);
       setProviderResults([]);
@@ -609,8 +542,13 @@ function App() {
     const nextSource = firstSearchableSource(sources, group);
     if (nextSource) {
       selectSource(nextSource);
-      if (query.trim().length >= 2) void searchCatalog(query, nextSource);
+    } else {
+      setSelectedSource(null);
     }
+    setProviderResults([]);
+    setSearchSelection(null);
+    setAvailability([]);
+    if (query.trim().length >= 2) void searchCatalog(query, nextSource);
   }
 
   function selectCatalogResult(anime: CatalogAnime) {
@@ -863,12 +801,10 @@ function App() {
           downloadId: result.id,
           status: "complete",
           progress: 100,
-          message: `Saved to ${result.filePath}`,
-          filePath: result.filePath,
+          message: "Browser download started",
           fileName: result.fileName,
         },
       }));
-      await refreshDownloads();
     } catch (err) {
       const appError = toAppError(err, "download");
       setEpisodeDownloads((items) => ({
@@ -876,36 +812,6 @@ function App() {
         [key]: { ...metadata, status: "error", progress: 0, message: appError.message },
       }));
       setError(appError);
-    }
-  }
-
-  async function openDownloadedFile(id: string) {
-    try {
-      await api.openDownload(id);
-    } catch (err) {
-      setError(toAppError(err, "downloads"));
-      await refreshDownloads().catch(() => undefined);
-    }
-  }
-
-  async function revealDownloadedFile(id: string) {
-    try {
-      await api.revealDownload(id);
-    } catch (err) {
-      setError(toAppError(err, "downloads"));
-      await refreshDownloads().catch(() => undefined);
-    }
-  }
-
-  async function deleteDownloadedFile(id: string) {
-    try {
-      await api.deleteDownload(id);
-      setDownloads((items) => items.filter((item) => item.id !== id));
-      setEpisodeDownloads((items) =>
-        Object.fromEntries(Object.entries(items).filter(([, item]) => item.downloadId !== id)),
-      );
-    } catch (err) {
-      setError(toAppError(err, "downloads"));
     }
   }
 
@@ -933,7 +839,7 @@ function App() {
   }
 
   return (
-    <div className={`app-shell route-${route} ${session.hosted ? "edition-web" : "edition-desktop"}`}>
+    <div className={`app-shell route-${route} edition-web`}>
       <div
         className="ambient-backdrop"
         style={heroImage ? { backgroundImage: `url(${heroImage})` } : undefined}
@@ -941,8 +847,6 @@ function App() {
 
       <AppNavigation
         route={route}
-        hosted={session.hosted}
-        downloadCount={downloads.length}
         onNavigate={navigate}
       />
 
@@ -955,7 +859,7 @@ function App() {
           />
         )}
 
-        <LayoutGroup id="ani-desk-navigation">
+        <LayoutGroup id="any-watch-navigation">
         <AnimatePresence mode="wait" initial={false}>
           {route === "home" && (
             <motion.div key="home" initial={{ opacity: 0 }} animate={{ opacity: 1 }} exit={{ opacity: 0 }}>
@@ -973,12 +877,10 @@ function App() {
                 onResumeHistory={(item) => void openHistoryItem(item)}
                 onShowHistory={continueWatching.length ? () => navigate("continue") : undefined}
                 onShowMyList={() => navigate("my-list")}
-                onShowDownloads={() => navigate("downloads")}
                 onShowSettings={() => navigate("settings")}
-                downloadCount={downloads.length}
                 session={session}
-                onShowAdmin={session.hosted && session.role === "admin" ? () => navigate("admin") : undefined}
-                onSignOut={session.hosted ? () => void signOut() : undefined}
+                onShowAdmin={session.role === "admin" ? () => navigate("admin") : undefined}
+                onSignOut={() => void signOut()}
                 myList={myList}
                 onToggleFavorite={toggleMyList}
                 onRemoveHistory={(item) => void removeHistoryItem(item)}
@@ -1010,20 +912,7 @@ function App() {
             />
           )}
 
-          {route === "downloads" && (
-            <DownloadsPage
-              key="downloads"
-              downloads={downloads}
-              activeDownloads={episodeDownloads}
-              onBack={goBack}
-              onOpen={(id) => void openDownloadedFile(id)}
-              onReveal={(id) => void revealDownloadedFile(id)}
-              onDelete={(id) => void deleteDownloadedFile(id)}
-              onRefresh={() => void refreshDownloads()}
-            />
-          )}
-
-          {route === "admin" && session.hosted && session.role === "admin" && (
+          {route === "admin" && session.role === "admin" && (
             <AdminPage key="admin" currentUser={session} onBack={goBack} />
           )}
 
@@ -1102,19 +991,12 @@ function App() {
       </main>
 
       <AnimatePresence>
-        {appUpdate.status !== "idle" && appUpdate.status !== "checking" && (
-          <UpdatePrompt
-            key="update-prompt"
-            state={appUpdate}
-            onInstall={() => void installUpdate()}
-            onDismiss={() => setAppUpdate({ status: "idle" })}
-          />
-        )}
         {player && (
           <VideoPlayer
             key="video-player"
             context={player}
             autoSkip={autoSkip}
+            onAutoSkipChange={setAutoSkip}
             onPlayEpisode={(episode) => playEpisode(player.anime, episode, 0, player.episodes)}
             onClose={() => {
               setPlayer(null);
@@ -1129,30 +1011,23 @@ function App() {
 
 function AppNavigation({
   route,
-  hosted,
-  downloadCount,
   onNavigate,
 }: {
   route: Route;
-  hosted: boolean;
-  downloadCount: number;
   onNavigate: (route: Route) => void;
 }) {
   const items: Array<{ route: Route; label: string; icon: ReactNode; badge?: number }> = [
     { route: "home", label: "Home", icon: <House size={20} /> },
     { route: "search", label: "Search", icon: <Search size={20} /> },
     { route: "my-list", label: "My List", icon: <Star size={20} /> },
-    ...(!hosted
-      ? [{ route: "downloads" as Route, label: "Downloads", icon: <Download size={20} />, badge: downloadCount }]
-      : []),
     { route: "settings", label: "Settings", icon: <Settings2 size={20} /> },
   ];
 
   return (
     <nav className="app-navigation" aria-label="Primary navigation">
-      <button className="app-navigation-brand" onClick={() => onNavigate("home")} aria-label="ani-desk home">
+      <button className="app-navigation-brand" onClick={() => onNavigate("home")} aria-label="any-watch home">
         <img src={LOGO_SRC} alt="" />
-        <span>ani-desk</span>
+        <span>any-watch</span>
       </button>
       <div className="app-navigation-items">
         {items.map((item) => (
@@ -1196,6 +1071,8 @@ function SettingsPage({
   const themes: Array<{ id: AppTheme; name: string; description: string }> = [
     { id: "obsidian", name: "Obsidian Cinema", description: "Warm black, restrained red, full artwork." },
     { id: "oled", name: "OLED Theatre", description: "Deeper surfaces for dark rooms and phones." },
+    { id: "ember", name: "Ember Room", description: "Warm charcoal with a softer vermilion accent." },
+    { id: "crimson", name: "Crimson Noir", description: "Wine-black surfaces with a richer theatrical red." },
     { id: "system", name: "Device Contrast", description: "Follows the device contrast preference." },
   ];
   const scales: Array<{ id: AppScale; name: string; description: string }> = [
@@ -1307,10 +1184,10 @@ function LoginScreen({
   return (
     <main className="login-screen">
       <div className="login-ambient" />
-      <section className="login-showcase" aria-label="ani-desk family theatre">
+      <section className="login-showcase" aria-label="any-watch family theatre">
         <div className="login-showcase-brand">
           <img src={LOGO_SRC} alt="" />
-          <span>ani-desk</span>
+          <span>any-watch</span>
         </div>
         <div className="login-showcase-copy">
           <p>Private family theatre</p>
@@ -1320,7 +1197,7 @@ function LoginScreen({
         <dl className="login-showcase-facts">
           <div><dt>Catalogs</dt><dd>Provider-first</dd></div>
           <div><dt>Access</dt><dd>Family accounts</dd></div>
-          <div><dt>Playback</dt><dd>Desktop + web</dd></div>
+          <div><dt>Playback</dt><dd>Any browser</dd></div>
         </dl>
       </section>
       <motion.section
@@ -1330,8 +1207,8 @@ function LoginScreen({
         transition={{ duration: 0.22 }}
       >
         <div className="login-brand">
-          <img src={LOGO_SRC} alt="ani-desk" />
-          <div><span>ani-desk</span><small>Signed-in family access</small></div>
+          <img src={LOGO_SRC} alt="any-watch" />
+          <div><span>any-watch</span><small>Signed-in family access</small></div>
         </div>
         <div className="login-copy">
           <p className="eyebrow">Private watch space</p>
@@ -1381,7 +1258,7 @@ function LoginScreen({
             {submitting ? "Signing in…" : "Sign in"}
           </button>
         </form>
-        <small className="login-footnote">Accounts are created by your ani-desk administrator.</small>
+        <small className="login-footnote">Accounts are created by your any-watch administrator.</small>
       </motion.section>
     </main>
   );
@@ -1392,7 +1269,7 @@ function BootSplash() {
     <div className="boot-screen">
       <motion.img
         src={LOGO_SRC}
-        alt="ani-desk"
+        alt="any-watch"
         initial={{ opacity: 0, scale: 0.9, rotate: -2 }}
         animate={{ opacity: 1, scale: [0.9, 1.03, 1], rotate: 0 }}
         transition={{ duration: 1.1, ease: "easeOut" }}
@@ -1449,62 +1326,6 @@ function ErrorNotice({
   );
 }
 
-function UpdatePrompt({
-  state,
-  onInstall,
-  onDismiss,
-}: {
-  state: AppUpdateState;
-  onInstall: () => void;
-  onDismiss: () => void;
-}) {
-  const installing = state.status === "downloading" || state.status === "ready";
-  const isError = state.status === "error";
-
-  return (
-    <motion.aside
-      className={`update-prompt update-prompt-${state.status}`}
-      initial={{ opacity: 0, y: -18, scale: 0.98 }}
-      animate={{ opacity: 1, y: 0, scale: 1 }}
-      exit={{ opacity: 0, y: -12, scale: 0.98 }}
-      transition={{ duration: 0.22, ease: "easeOut" }}
-      role="status"
-      aria-live="polite"
-    >
-      <div className="update-prompt-icon">
-        {state.status === "downloading" ? <Loader2 className="spin" size={20} /> : <Check size={20} />}
-      </div>
-      <div className="update-prompt-copy">
-        <strong>{isError ? "Update could not finish" : state.status === "ready" ? "Update installed" : `ani-desk ${state.version} is available`}</strong>
-        <span>
-          {state.message ||
-            (state.notes
-              ? state.notes
-              : state.currentVersion
-                ? `You are running ${state.currentVersion}.`
-                : "A signed update is ready to install.")}
-        </span>
-        {state.status === "downloading" && (
-          <div className="update-progress" aria-label="Update download progress">
-            <i style={{ width: `${state.progress ?? 8}%` }} />
-          </div>
-        )}
-      </div>
-      <div className="update-prompt-actions">
-        {state.status === "available" && (
-          <button className="primary" onClick={onInstall}>
-            <ChevronRight size={17} />
-            Update
-          </button>
-        )}
-        <button onClick={onDismiss} disabled={installing}>
-          {isError ? "Dismiss" : "Later"}
-        </button>
-      </div>
-    </motion.aside>
-  );
-}
-
 function HomeDashboard({
   query,
   loading,
@@ -1519,9 +1340,7 @@ function HomeDashboard({
   onResumeHistory,
   onShowHistory,
   onShowMyList,
-  onShowDownloads,
   onShowSettings,
-  downloadCount,
   session,
   onShowAdmin,
   onSignOut,
@@ -1542,9 +1361,7 @@ function HomeDashboard({
   onResumeHistory: (item: WatchHistory) => void;
   onShowHistory?: () => void;
   onShowMyList: () => void;
-  onShowDownloads: () => void;
   onShowSettings: () => void;
-  downloadCount: number;
   session: SessionUser;
   onShowAdmin?: () => void;
   onSignOut?: () => void;
@@ -1575,9 +1392,9 @@ function HomeDashboard({
     })),
   ], [personalMatches]);
   const featured = featureSlides[featureIndex] ?? featureSlides[0] ?? {
-    id: "ani-desk",
+    id: "any-watch",
     kind: "personalMatch" as const,
-    title: "ani-desk",
+    title: "any-watch",
     image: LOGO_SRC,
     description: "Choose one provider catalog, find an episode, and settle in.",
     context: "Private family theatre",
@@ -1684,7 +1501,6 @@ function HomeDashboard({
           <p className="home-command-hint">Search stays attached to the provider you choose.</p>
           <div className="home-command-shortcuts">
             <button onClick={onShowMyList}><Star size={16} /> My List</button>
-            {!session.hosted && <button onClick={onShowDownloads}><HardDrive size={16} /> Downloads <span>{downloadCount}</span></button>}
             <button onClick={onShowSettings}><Settings2 size={16} /> Settings</button>
             {onShowAdmin && <button onClick={onShowAdmin}><ShieldCheck size={16} /> Users</button>}
             {onSignOut && <button onClick={onSignOut}><LogOut size={16} /> Sign out {session.username}</button>}
@@ -2190,6 +2006,11 @@ function SearchStage({
                 </button>
               );
             })}
+            {!languageSources.length && (
+              <span className="source-empty" role="status">
+                No {languageGroup === "english" ? "English" : "Vietnamese"} providers available
+              </span>
+            )}
           </div>
         </div>
       </div>
@@ -2235,7 +2056,11 @@ function SearchStage({
         <div className={`search-layout${mobilePreviewOpen ? " mobile-preview-open" : ""}`}>
           <aside className="search-results-pane">
             <div className="pane-title">
-              <span>{selectedSource ? `${selectedSource.name} Results` : "Choose Provider"}</span>
+              <span>
+                {selectedSource
+                  ? `${selectedSource.name} Results`
+                  : `No ${languageGroup === "english" ? "English" : "Vietnamese"} provider available`}
+              </span>
               <strong>{providerResults.length}</strong>
             </div>
             {providerResults.map((anime, index) => {
@@ -2267,7 +2092,14 @@ function SearchStage({
             {loading && !providerResults.length ? (
               Array.from({ length: 9 }).map((_, index) => <div className="result-skeleton" key={index} />)
             ) : (
-              !providerResults.length && <EmptyPanel title={query.trim().length < 2 ? "ani-desk" : "No results"} compact />
+              !providerResults.length && (
+                <EmptyPanel
+                  title={!selectedSource
+                    ? `No ${languageGroup === "english" ? "English" : "Vietnamese"} provider available`
+                    : query.trim().length < 2 ? "any-watch" : "No results"}
+                  compact
+                />
+              )
             )}
 
 
@@ -2334,7 +2166,7 @@ function SearchStage({
                   </div>
                 </>
               ) : (
-                <EmptyPanel title="ani-desk" />
+                <EmptyPanel title="any-watch" />
               )}
             </motion.div>
           </AnimatePresence>
@@ -2401,7 +2233,7 @@ function HistoryPage({
           onToggleFavorite={onToggleFavorite}
         />
       ))}
-      {!filtered.length && <EmptyPanel title={items.length ? "No matches" : "ani-desk"} compact />}
+      {!filtered.length && <EmptyPanel title={items.length ? "No matches" : "any-watch"} compact />}
     </ShelfPageShell>
   );
 }
@@ -2458,142 +2290,8 @@ function MyListPage({
           onToggleFavorite={onRemove}
         />
       ))}
-      {!filtered.length && <EmptyPanel title={items.length ? "No matches" : "ani-desk"} compact />}
+      {!filtered.length && <EmptyPanel title={items.length ? "No matches" : "any-watch"} compact />}
     </ShelfPageShell>
-  );
-}
-
-function DownloadsPage({
-  downloads,
-  activeDownloads,
-  onBack,
-  onOpen,
-  onReveal,
-  onDelete,
-  onRefresh,
-}: {
-  downloads: DownloadRecord[];
-  activeDownloads: Record<string, EpisodeDownloadState>;
-  onBack: () => void;
-  onOpen: (id: string) => void;
-  onReveal: (id: string) => void;
-  onDelete: (id: string) => void;
-  onRefresh: () => void;
-}) {
-  const [deleteConfirmation, setDeleteConfirmation] = useState<string | null>(null);
-  const active = Object.entries(activeDownloads)
-    .filter(([, item]) => item.status !== "complete")
-    .map(([key, item]) => ({ key, ...item }));
-  const totalBytes = downloads.reduce((total, item) => total + item.bytesDownloaded, 0);
-  const availableCount = downloads.filter((item) => item.fileExists).length;
-
-  return (
-    <motion.section
-      className="downloads-page"
-      initial={{ opacity: 0, y: 18 }}
-      animate={{ opacity: 1, y: 0 }}
-      exit={{ opacity: 0, y: -12 }}
-    >
-      <header className="downloads-header">
-        <IconButton label="Back" onClick={onBack}>
-          <ArrowLeft size={21} />
-        </IconButton>
-        <div>
-          <p className="eyebrow">Offline library</p>
-          <h1>Downloads</h1>
-          <p>Episodes saved on this device, ready without opening a provider again.</p>
-        </div>
-        <button className="downloads-refresh" onClick={onRefresh}>
-          <HardDrive size={17} /> Refresh library
-        </button>
-      </header>
-
-      <section className="download-overview">
-        <dl className="download-overview-stats">
-          <div><dt>Available</dt><dd>{availableCount}</dd></div>
-          <div><dt>Storage</dt><dd>{formatBytes(totalBytes)}</dd></div>
-          <div><dt>Transfers</dt><dd>{active.length || "Quiet"}</dd></div>
-        </dl>
-        {downloads.length !== availableCount ? <p className="download-missing-note">{downloads.length - availableCount} local file{downloads.length - availableCount === 1 ? " is" : "s are"} missing.</p> : null}
-      </section>
-
-      {active.length > 0 && (
-        <section className="download-section">
-          <div className="download-section-heading">
-            <div><p className="eyebrow">Transfer center</p><h2>In progress</h2></div>
-            <span>{active.length}</span>
-          </div>
-          <div className="download-active-list">
-            {active.map((item) => (
-              <article className={`download-active-card ${item.status}`} key={item.key}>
-                <div className="download-cover">
-                  <img src={item.coverUrl || LOGO_SRC} alt="" onError={useLogoFallback} />
-                  {item.status === "error" ? <AlertTriangle size={20} /> : <Download size={20} />}
-                </div>
-                <div className="download-copy">
-                  <span>{item.provider || "ani-desk"}</span>
-                  <strong>{item.animeTitle || "Preparing episode"}</strong>
-                  <small>{episodeLabel(item.episodeNumber ?? 0, item.episodeTitle)}</small>
-                  <div className="download-progress-track"><i style={{ width: `${item.progress}%` }} /></div>
-                  <p>{item.message || (item.status === "error" ? "Download needs attention" : "Downloading…")}</p>
-                </div>
-                <b>{Math.round(item.progress)}%</b>
-              </article>
-            ))}
-          </div>
-        </section>
-      )}
-
-      <section className="download-section completed-downloads">
-        <div className="download-section-heading">
-          <div><p className="eyebrow">Local episodes</p><h2>Completed</h2></div>
-          <span>{downloads.length}</span>
-        </div>
-        {downloads.length ? (
-          <div className="download-library-list">
-            {downloads.map((item) => (
-              <motion.article layout className={item.fileExists ? "download-library-row" : "download-library-row missing"} key={item.id}>
-                <img src={item.coverUrl || LOGO_SRC} alt="" onError={useLogoFallback} />
-                <div className="download-library-copy">
-                  <span>{item.provider} · {formatDownloadDate(item.completedAt)}</span>
-                  <strong>{item.animeTitle}</strong>
-                  <small>{episodeLabel(item.episodeNumber, item.episodeTitle)} · {formatBytes(item.bytesDownloaded)}</small>
-                  {!item.fileExists && <em>File moved or removed outside ani-desk</em>}
-                </div>
-                <div className="download-library-actions">
-                  <button className="primary" disabled={!item.fileExists} onClick={() => onOpen(item.id)}>
-                    <Play size={16} fill="currentColor" /> Play
-                  </button>
-                  <button disabled={!item.fileExists} onClick={() => onReveal(item.id)} title="Show in Finder or Explorer">
-                    <FolderOpen size={17} /> <span>Show</span>
-                  </button>
-                  <button
-                    className={deleteConfirmation === item.id ? "danger confirm" : "danger"}
-                    onClick={() => {
-                      if (deleteConfirmation === item.id) {
-                        onDelete(item.id);
-                        setDeleteConfirmation(null);
-                      } else {
-                        setDeleteConfirmation(item.id);
-                      }
-                    }}
-                    title="Delete local file"
-                  >
-                    <Trash2 size={17} /> <span>{deleteConfirmation === item.id ? "Delete?" : "Delete"}</span>
-                  </button>
-                </div>
-              </motion.article>
-            ))}
-          </div>
-        ) : (
-          <div className="downloads-empty">
-            <div><Download size={28} /></div>
-            <h3>No offline episodes yet</h3>
-            <p>Open an anime and use its download button. Finished episodes will collect here automatically.</p>
-          </div>
-        )}
-      </section>
-    </motion.section>
   );
 }
 
@@ -2642,7 +2340,7 @@ function AdminPage({ currentUser, onBack }: { currentUser: SessionUser; onBack: 
     <motion.section className="admin-page" initial={{ opacity: 0, y: 18 }} animate={{ opacity: 1, y: 0 }} exit={{ opacity: 0, y: -12 }}>
       <header className="admin-header">
         <IconButton label="Back" onClick={onBack}><ArrowLeft size={21} /></IconButton>
-        <div><p className="eyebrow">Administrator</p><h1>People & access</h1><p>Create accounts and control who can use this ani-desk web space.</p></div>
+        <div><p className="eyebrow">Administrator</p><h1>People & access</h1><p>Create accounts and control who can use this any-watch web space.</p></div>
         <div className="admin-current-user"><ShieldCheck size={17} /><span>{currentUser.username}</span><small>Administrator</small></div>
       </header>
 
@@ -3251,7 +2949,7 @@ function DetailPage({
                 <button
                   className={bannerDownloadState?.status === "complete" ? "download-complete" : ""}
                   disabled={!bannerDownloadEpisode || bannerDownloadState?.status === "preparing" || bannerDownloadState?.status === "downloading"}
-                  title={bannerDownloadState?.message || "Save this episode to Downloads/ani-desk"}
+                  title={bannerDownloadState?.message || "Save this episode to Downloads/any-watch"}
                   onClick={() => bannerDownloadEpisode && onDownload(bannerDownloadEpisode)}
                 >
                   {bannerDownloadState?.status === "preparing" || bannerDownloadState?.status === "downloading"
@@ -3290,17 +2988,20 @@ function DetailPage({
 function VideoPlayer({
   context,
   autoSkip,
+  onAutoSkipChange,
   onPlayEpisode,
   onClose,
 }: {
   context: PlayerContext;
   autoSkip: boolean;
+  onAutoSkipChange: (enabled: boolean) => void;
   onPlayEpisode: (episode: Episode) => Promise<void>;
   onClose: () => void;
 }) {
   const videoRef = useRef<HTMLVideoElement | null>(null);
   const hlsRef = useRef<Hls | null>(null);
   const dashRef = useRef<MediaPlayerClass | null>(null);
+  const subtitleTrackRefs = useRef<Array<HTMLTrackElement | null>>([]);
   const qualityRef = useRef("auto");
   const savingAtRef = useRef(0);
   const controlsTimerRef = useRef<number | null>(null);
@@ -3317,6 +3018,7 @@ function VideoPlayer({
   const [muted, setMuted] = useState(false);
   const [skipFeedback, setSkipFeedback] = useState<{ amount?: number; label?: string; id: number } | null>(null);
   const [skipTimes, setSkipTimes] = useState<SkipTime[]>([]);
+  const [skipTimingStatus, setSkipTimingStatus] = useState<"loading" | "ready" | "unavailable" | "error">("loading");
   const [switchingEpisode, setSwitchingEpisode] = useState(false);
   const streamIsHls = context.playback.streamKind === "hls";
   const streamIsDash = context.playback.streamKind === "dash";
@@ -3333,19 +3035,36 @@ function VideoPlayer({
     : null;
 
   useEffect(() => {
+    const nextSubtitle = subtitleTracks.length ? "0" : "off";
+    setSubtitle(nextSubtitle);
+    const frame = window.requestAnimationFrame(() => applySubtitleSelection(nextSubtitle));
+    return () => window.cancelAnimationFrame(frame);
+  }, [context.playback.sessionId]);
+
+  useEffect(() => {
     let cancelled = false;
     skippedRangesRef.current.clear();
     setSkipTimes([]);
-    if (!autoSkip || !context.anime.catalogId) return () => { cancelled = true; };
+    if (!context.anime.catalogId) {
+      setSkipTimingStatus("unavailable");
+      return () => { cancelled = true; };
+    }
+    setSkipTimingStatus("loading");
     void api.getSkipTimes(context.anime.catalogId, context.episode.number)
       .then((times) => {
-        if (!cancelled) setSkipTimes(times);
+        if (!cancelled) {
+          setSkipTimes(times);
+          setSkipTimingStatus("ready");
+        }
       })
       .catch(() => {
-        if (!cancelled) setSkipTimes([]);
+        if (!cancelled) {
+          setSkipTimes([]);
+          setSkipTimingStatus("error");
+        }
       });
     return () => { cancelled = true; };
-  }, [autoSkip, context.anime.catalogId, context.episode.id, context.episode.number]);
+  }, [context.anime.catalogId, context.episode.id, context.episode.number]);
 
   useEffect(() => {
     const video = videoRef.current;
@@ -3380,7 +3099,7 @@ function VideoPlayer({
 
     const handleNativeError = () => {
       if (!disposed && !hlsRef.current && !dashRef.current) {
-        setError("The browser player could not decode this stream. Try mpv fallback.");
+        setError("The browser could not decode this stream.");
       }
     };
 
@@ -3416,7 +3135,7 @@ function VideoPlayer({
     } else if (streamIsHls) {
       const startNativeHls = () => {
         if (!video.canPlayType("application/vnd.apple.mpegurl")) {
-          setError("This system WebView cannot play HLS streams. Use mpv fallback.");
+          setError("This browser cannot play HLS streams.");
           return;
         }
         video.src = context.playback.playbackUrl;
@@ -3454,7 +3173,7 @@ function VideoPlayer({
               hls.startLoad();
             } else {
               const detail = data.details ? ` (${data.details})` : "";
-              setError(`The browser player failed to load this HLS stream${detail}. Try mpv fallback.`);
+              setError(`The browser player failed to load this HLS stream${detail}.`);
               hls.destroy();
             }
           });
@@ -3622,11 +3341,6 @@ function VideoPlayer({
       });
   }
 
-  async function openMpv() {
-    const current = Math.floor(videoRef.current?.currentTime || context.startTime || 0);
-    await api.openInMpv(context.anime.provider, context.episode.id, current);
-  }
-
   function togglePlay() {
     const video = videoRef.current;
     if (!video) return;
@@ -3669,11 +3383,13 @@ function VideoPlayer({
 
   function changeSubtitle(value: string) {
     setSubtitle(value);
-    const tracks = videoRef.current?.textTracks;
-    if (!tracks) return;
-    for (let index = 0; index < tracks.length; index += 1) {
-      tracks[index].mode = value === String(index) ? "showing" : "disabled";
-    }
+    applySubtitleSelection(value);
+  }
+
+  function applySubtitleSelection(value: string) {
+    subtitleTrackRefs.current.forEach((track, index) => {
+      if (track) track.track.mode = value === String(index) ? "showing" : "disabled";
+    });
   }
 
   async function toggleFullscreen() {
@@ -3727,6 +3443,12 @@ function VideoPlayer({
   }
 
   const progress = duration > 0 ? (currentTime / duration) * 100 : 0;
+  const markerDuration = duration > 0
+    ? duration
+    : Math.max(0, ...skipTimes.map((item) => item.endTime));
+  const timelineSkipTimes = markerDuration > 0
+    ? skipTimes.filter((item) => item.startTime < markerDuration && item.endTime > 0)
+    : [];
 
   return (
     <motion.div
@@ -3749,11 +3471,15 @@ function VideoPlayer({
         {subtitleTracks.map((item, index) => (
           <track
             key={item.url}
+            ref={(track) => { subtitleTrackRefs.current[index] = track; }}
             kind="subtitles"
             src={item.url}
             srcLang={languageCode(item.language)}
             label={item.language}
             default={index === 0}
+            onLoad={(event) => {
+              event.currentTarget.track.mode = subtitle === String(index) ? "showing" : "disabled";
+            }}
           />
         ))}
       </video>
@@ -3841,7 +3567,6 @@ function VideoPlayer({
         {error && (
           <div className="player-error-fallback">
             <span>{error}</span>
-            {context.playback.canFallbackToMpv && <button onClick={() => void openMpv()}>Open fallback player</button>}
           </div>
         )}
         <div className="player-control-row">
@@ -3861,6 +3586,20 @@ function VideoPlayer({
               {levels.map((level) => <option value={String(level.index)} key={level.index}>{level.label}</option>)}
             </select>
             </label>
+            <button
+              className="player-auto-skip-toggle"
+              type="button"
+              role="switch"
+              aria-checked={autoSkip}
+              aria-busy={skipTimingStatus === "loading"}
+              data-state={skipTimingStatus === "error" ? "error" : skipTimingStatus === "ready" ? "success" : skipTimingStatus}
+              disabled={skipTimingStatus === "loading"}
+              aria-label="Toggle automatic opening and ending skip"
+              title={skipTimingStatusLabel(skipTimingStatus, skipTimes.length)}
+              onClick={() => onAutoSkipChange(!autoSkip)}
+            >
+              Auto-skip <span>{autoSkip ? "On" : "Off"}</span>
+            </button>
             {subtitleTracks.length > 0 && (
               <label title="Subtitles">
                 <span>Subtitles</span>
@@ -3874,22 +3613,42 @@ function VideoPlayer({
         </div>
         <div className="player-timeline">
           <span>{formatTime(currentTime)}</span>
-          <input
-            className="player-progress"
-            type="range"
-            min={0}
-            max={duration || 0}
-            step={1}
-            value={Math.min(currentTime, duration || currentTime)}
-            style={{ "--progress": `${progress}%` } as React.CSSProperties}
-            onChange={(event) => {
-              const video = videoRef.current;
-              if (!video) return;
-              video.currentTime = Number(event.target.value);
-              setCurrentTime(video.currentTime);
-            }}
-            onMouseUp={() => void saveProgress(true)}
-          />
+          <div className="player-progress-shell">
+            <div className="player-skip-markers" role="list" aria-label="Opening and ending timeline markers">
+              {timelineSkipTimes.map((item) => {
+                const start = Math.max(0, Math.min(100, item.startTime / markerDuration * 100));
+                const end = Math.max(start, Math.min(100, item.endTime / markerDuration * 100));
+                return (
+                  <span
+                    key={`${item.skipType}:${item.startTime}:${item.endTime}`}
+                    className={`player-skip-marker ${item.skipType}`}
+                    role="listitem"
+                    aria-label={`${skipTypeDisplayLabel(item.skipType)}, ${formatTime(item.startTime)} to ${formatTime(item.endTime)}`}
+                    style={{ insetInlineStart: `${start}%`, width: `${Math.max(0.35, end - start)}%` }}
+                    title={`${skipTypeDisplayLabel(item.skipType)} · ${formatTime(item.startTime)}–${formatTime(item.endTime)}`}
+                  >
+                    <span className="sr-only">{skipTypeDisplayLabel(item.skipType)}</span>
+                  </span>
+                );
+              })}
+            </div>
+            <input
+              className="player-progress"
+              type="range"
+              min={0}
+              max={duration || 0}
+              step={1}
+              value={Math.min(currentTime, duration || currentTime)}
+              style={{ "--progress": `${progress}%` } as React.CSSProperties}
+              onChange={(event) => {
+                const video = videoRef.current;
+                if (!video) return;
+                video.currentTime = Number(event.target.value);
+                setCurrentTime(video.currentTime);
+              }}
+              onMouseUp={() => void saveProgress(true)}
+            />
+          </div>
           <span>-{formatTime(Math.max(0, duration - currentTime))}</span>
         </div>
       </div>
@@ -4046,7 +3805,7 @@ function findHistoryForAnime(anime: Anime, history: WatchHistory[]) {
 
 function loadSavedSourceName() {
   try {
-    return localStorage.getItem(SOURCE_STORAGE_KEY);
+    return localStorage.getItem(SOURCE_STORAGE_KEY) ?? localStorage.getItem("ani-desk:selected-source");
   } catch {
     return null;
   }
@@ -4062,8 +3821,8 @@ function saveSourceName(sourceName: string) {
 
 function loadSavedTheme(): AppTheme {
   try {
-    const saved = localStorage.getItem(THEME_STORAGE_KEY);
-    if (saved === "obsidian" || saved === "oled" || saved === "system") return saved;
+    const saved = localStorage.getItem(THEME_STORAGE_KEY) ?? localStorage.getItem("ani-desk:theme");
+    if (saved === "obsidian" || saved === "oled" || saved === "ember" || saved === "crimson" || saved === "system") return saved;
   } catch {
     // localStorage can be unavailable in restricted WebView contexts.
   }
@@ -4080,7 +3839,7 @@ function saveTheme(theme: AppTheme) {
 
 function loadSavedScale(): AppScale {
   try {
-    const saved = localStorage.getItem(APP_SCALE_STORAGE_KEY);
+    const saved = localStorage.getItem(APP_SCALE_STORAGE_KEY) ?? localStorage.getItem("ani-desk:scale");
     if (saved === "compact" || saved === "comfortable" || saved === "large" || saved === "tv") return saved;
   } catch {
     // localStorage can be unavailable in restricted WebView contexts.
@@ -4098,7 +3857,7 @@ function saveScale(scale: AppScale) {
 
 function loadSavedFont(): AppFont {
   try {
-    const saved = localStorage.getItem(APP_FONT_STORAGE_KEY);
+    const saved = localStorage.getItem(APP_FONT_STORAGE_KEY) ?? localStorage.getItem("ani-desk:font");
     if (saved === "manrope" || saved === "noto" || saved === "system") return saved;
   } catch {
     // localStorage can be unavailable in restricted WebView contexts.
@@ -4116,7 +3875,7 @@ function saveFont(font: AppFont) {
 
 function loadSavedAutoSkip() {
   try {
-    const saved = localStorage.getItem(AUTO_SKIP_STORAGE_KEY);
+    const saved = localStorage.getItem(AUTO_SKIP_STORAGE_KEY) ?? localStorage.getItem("ani-desk:auto-skip");
     return saved === null ? true : saved !== "false";
   } catch {
     return true;
@@ -4136,6 +3895,20 @@ function skipTypeLabel(skipType: string) {
   if (skipType === "ed") return "ending";
   if (skipType === "recap") return "recap";
   return "segment";
+}
+
+function skipTypeDisplayLabel(skipType: string) {
+  if (skipType === "op") return "Opening";
+  if (skipType === "ed") return "Ending";
+  if (skipType === "recap") return "Recap";
+  return "Skip segment";
+}
+
+function skipTimingStatusLabel(status: "loading" | "ready" | "unavailable" | "error", count: number) {
+  if (status === "loading") return "Loading timing data";
+  if (status === "error") return "Timing unavailable";
+  if (status === "unavailable") return "No catalog match";
+  return count ? `${count} marked segment${count === 1 ? "" : "s"}` : "No marked segments";
 }
 
 function applyHlsQuality(hls: Hls | null, quality: string) {
@@ -4212,10 +3985,6 @@ function formatDownloadDate(value: string) {
     day: "numeric",
     year: new Date(timestamp).getFullYear() === new Date().getFullYear() ? undefined : "numeric",
   }).format(timestamp);
-}
-
-function isTauriRuntime() {
-  return typeof window !== "undefined" && "__TAURI_INTERNALS__" in window;
 }
 
 function errorMessage(error: unknown) {

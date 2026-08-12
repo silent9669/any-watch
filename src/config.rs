@@ -17,13 +17,16 @@ pub struct Config {
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct SourcesConfig {
+    #[serde(default = "default_true")]
+    pub anizone: bool,
+
     #[serde(default)]
     pub allanime: bool,
 
     #[serde(default)]
     pub animegg: bool,
 
-    #[serde(default = "default_true")]
+    #[serde(default)]
     pub moviebox: bool,
 
     #[serde(default = "default_true")]
@@ -64,6 +67,23 @@ mod tests {
         assert!(!config.sources.animevietsub);
         assert!(!config.sources.animetvn);
         assert!(!config.sources.hianime);
+        assert!(config.sources.anizone);
+    }
+
+    #[test]
+    fn defaults_enable_only_browser_certified_sources() {
+        let sources = super::SourcesConfig::default();
+
+        assert!(sources.kkphim);
+        assert!(sources.ophim);
+        assert!(sources.niniyo);
+        assert!(sources.anizone);
+        assert!(!sources.moviebox);
+        assert!(!sources.allanime);
+        assert!(!sources.animegg);
+        assert!(!sources.animevietsub);
+        assert!(!sources.animetvn);
+        assert!(!sources.hianime);
     }
 }
 
@@ -93,6 +113,7 @@ fn default_theme() -> ThemeConfig {
 impl Default for SourcesConfig {
     fn default() -> Self {
         Self {
+            anizone: true,
             // AllAnime remains available for manual verification, but its
             // current episode sources do not resolve to a playable stream.
             allanime: false,
@@ -100,7 +121,7 @@ impl Default for SourcesConfig {
             // it enabled would advertise a provider that cannot pass playback
             // certification.
             animegg: false,
-            moviebox: true,
+            moviebox: false,
             kkphim: true,
             ophim: true,
             animevietsub: false,

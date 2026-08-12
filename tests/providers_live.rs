@@ -1,7 +1,7 @@
 use ani_desk_core::providers::{
     allanime::AllAnimeProvider, animegg::AnimeGgProvider, animevietsub::AnimeVietSubProvider,
-    kkphim::KkphimProvider, moviebox::MovieBoxProvider, niniyo::NiniyoProvider,
-    ophim::OphimProvider, AnimeProvider, StreamInfo,
+    anizone::AniZoneProvider, kkphim::KkphimProvider, moviebox::MovieBoxProvider,
+    niniyo::NiniyoProvider, normalize_title, ophim::OphimProvider, AnimeProvider, StreamInfo,
 };
 use anyhow::{Context, Result};
 use reqwest::{header, Client, Url};
@@ -10,8 +10,17 @@ use std::time::Duration;
 async fn assert_live_playback(provider: &dyn AnimeProvider, query: &str) -> Result<()> {
     let anime_results = provider.search(query).await?;
     let mut last_error = None;
+    let aliases = query_aliases(query);
 
-    for anime in anime_results.into_iter().take(5) {
+    for anime in anime_results
+        .into_iter()
+        .filter(|anime| {
+            aliases
+                .iter()
+                .any(|alias| normalize_title(alias) == normalize_title(&anime.title))
+        })
+        .take(5)
+    {
         let episodes = match provider.get_episodes(&anime.id).await {
             Ok(episodes) => episodes,
             Err(error) => {
@@ -50,6 +59,14 @@ async fn assert_live_playback(provider: &dyn AnimeProvider, query: &str) -> Resu
 
     Err(last_error
         .unwrap_or_else(|| anyhow::anyhow!("{} returned no playable episodes", provider.name())))
+}
+
+fn query_aliases(query: &str) -> Vec<&str> {
+    match query {
+        "One Piece" | "Đảo Hải Tặc" => vec!["One Piece", "Đảo Hải Tặc"],
+        "Solo Leveling" => vec!["Solo Leveling", "Thăng Cấp Một Mình"],
+        _ => vec![query],
+    }
 }
 
 async fn probe_stream(stream: &StreamInfo) -> Result<()> {
@@ -152,6 +169,12 @@ async fn test_animegg_live_health() -> Result<()> {
 
 #[tokio::test]
 #[ignore = "requires live provider network access"]
+async fn test_anizone_live_health() -> Result<()> {
+    AniZoneProvider::new().health_check().await
+}
+
+#[tokio::test]
+#[ignore = "requires live provider network access"]
 async fn test_kkphim_live_health() -> Result<()> {
     KkphimProvider::new().health_check().await
 }
@@ -190,6 +213,12 @@ async fn test_allanime_live_playback() -> Result<()> {
 #[ignore = "requires live provider network access"]
 async fn test_animegg_live_playback() -> Result<()> {
     assert_live_playback(&AnimeGgProvider::new(), "One Piece").await
+}
+
+#[tokio::test]
+#[ignore = "requires live provider network access"]
+async fn test_anizone_live_playback() -> Result<()> {
+    assert_live_playback(&AniZoneProvider::new(), "One Piece").await
 }
 
 #[tokio::test]

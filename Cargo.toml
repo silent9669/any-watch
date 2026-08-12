@@ -8,7 +8,7 @@ license = "MIT"
 repository = "https://github.com/silent9669/ani-desk"
 
 [workspace]
-members = ["src-tauri", "server"]
+members = ["server"]
 resolver = "2"
 
 [lib]
@@ -17,9 +17,6 @@ name = "ani_desk_core"
 [dependencies]
 # Async runtime
 tokio = { version = "1", features = ["full"] }
-
-# Image support
-image = { version = "0.24", default-features = false, features = ["png", "jpeg"] }
 
 # HTTP client
 reqwest = { version = "0.12", default-features = false, features = ["json", "rustls-tls"] }
@@ -54,8 +51,6 @@ regex = "1.10"
 # Image encoding
 base64 = "0.22"
 
-semver = "1.0"
-
 # Crypto for AllAnime decryption
 aes = "0.8"
 aes-gcm = "0.10"
@@ -63,10 +58,6 @@ ctr = "0.9"
 sha2 = "0.10"
 hmac = "0.12"
 md-5 = "0.10"
-
-# Installer utilities
-indicatif = "0.17"
-dialoguer = "0.11"
 
 [profile.release]
 opt-level = 3

@@ -1,9 +1,8 @@
-# Provider inventory and migration policy
+# Provider inventory and admission policy
 
 ## Purpose
 
-This is the migration inventory for source adapters already present in the
-legacy codebase. It records implementation status, not legal authorization,
+This inventory records implementation status, not legal authorization,
 regional availability, or a promise that an upstream will work.
 
 No new provider is enabled based only on a repository, a search result, or an
@@ -12,27 +11,113 @@ integration method and pass the certification requirements below. Private
 any-watch accounts protect access to this application; they do not authorize an
 upstream provider or permit transferring browser cookies into the service.
 
-## Legacy adapter inventory
+## Adapter inventory
 
-| Provider | Language focus | Legacy status | any-watch disposition |
+| Provider | Language focus | Current status | any-watch disposition |
 | --- | --- | --- | --- |
-| MovieBox | English | Default registered adapter | Port after re-certification |
-| KKPhim | Vietnamese | Default registered adapter | Port after re-certification |
-| OPhim | Vietnamese | Default registered adapter | Port after re-certification |
-| Niniyo | Vietnamese | Default registered adapter | Port after re-certification |
-| AllAnime | English | Implemented, default disabled, verification-sensitive | Keep as disabled candidate pending review and certification |
+| MovieBox | English | Implemented, default disabled | Keep disabled pending browser-safe re-certification |
+| KKPhim | Vietnamese | Implemented and certified | Enabled by default |
+| OPhim | Vietnamese | Implemented and certified | Enabled by default |
+| Niniyo | Vietnamese | Implemented and certified | Enabled by default |
+| AllAnime | English | Legacy adapter; current source API is challenge-gated | Keep disabled; no documented browser-safe integration is available |
 | AnimeGG | English | Implemented, default disabled | Keep as disabled candidate pending review and certification |
 | AnimeVietSub | Vietnamese | Legacy adapter currently duplicates OPhim's public API | Disabled candidate; replace with a distinct documented web-safe integration before enabling |
 | HiAnime | English | Stub, not registered | Do not port without a supported integration basis |
 | AnimeTVN | Vietnamese | Configuration only, no adapter | Do not port without an implementation and supported integration basis |
+| AniZone | English | Implemented; HLS and converted English softsubs pass live browser and Docker playback | Enabled by default at user direction; undocumented page integration remains fragile |
+| Reanime | English | Public catalog API documented; playback integration is undocumented | Defer pending a supported playback API, embed, or handoff |
 | Prowlarr | N/A | Configuration only | Not a playback provider |
+
+## Evaluated external repositories
+
+### anime-vsub/desktop-web
+
+Evaluated at repository commit `b2d86e026578fb117b1adf34d2290fba33e7a44b`.
+The project exposes one playback source, AnimeVietSub; its `DU` and `FB` labels
+are alternate routes through the same upstream rather than independent
+providers. No adapter was imported because:
+
+- all upstream HTTP and media access is gated by AnimeVsub Helper, a browser
+  extension bridge;
+- account and verification flows transfer AnimeVietSub cookies and instruct the
+  user to complete upstream Cloudflare checks;
+- playback uses protected AJAX tokens, playlist/segment decryption, and the
+  `anime-vsub/new-dha` submodule, which was unavailable during evaluation;
+- the source repository is GPL-3.0 while any-watch is currently distributed
+  under MIT, so copying implementation code would require satisfying GPL-3.0
+  obligations for the resulting work or obtaining separate compatible
+  permission;
+- no documented public API, supported embed, or authorized server-side handoff
+  was found.
+
+The existing `AnimeVietSub` adapter in this repository is not a port of that
+project. It remains an opt-in OPhim-backed compatibility adapter and is not
+presented as the AnimeVietSub website integration. A future distinct adapter
+requires upstream documentation or permission and full certification.
 
 AniList remains discovery and metadata only. It does not prove playback
 availability and must not be represented as a media provider.
 
+### AllAnime / MKissa
+
+Re-evaluated on 2026-08-12 against the live `mkissa.to` frontend and
+`api.mkissa.net` source API. Public catalog search still works, and the current
+frontend bundles expose enough rotating material to reproduce the signed
+bootstrap and `aaReq` request. The source request then returns `NEED_CAPTCHA`.
+
+The current protocol also depends on undocumented, frequently rotated frontend
+implementation details: a build ID, four obfuscated mask seeds, a content lane,
+a signed bootstrap request, and a matching GraphQL query hash. Completing the
+source request would require integrating the upstream challenge flow or
+transferring browser state. Neither is an acceptable unauthenticated,
+browser-safe integration method under this policy, so the legacy adapter stays
+disabled even though its catalog operations remain reachable.
+
+### AniZone
+
+Evaluated on 2026-08-12 against `anizone.to`. Exact-title search, recent
+episodes, browser playback, HLS variants, media segments, and an English ASS
+subtitle track were verified without imported browser state. AniZone exposes
+these through server-rendered first-party pages, not a documented public API,
+supported embed, or external handoff. No canonical API terms, caching rules, or
+integration permission were found, and the media CDN authorizes browser CORS
+only for AniZone's own origin.
+
+At the user's explicit direction, AniZone is now enabled despite the absence of
+a documented integration contract. The adapter uses public server-rendered
+search, title, and episode pages without imported cookies or challenge bypasses.
+The authenticated opaque proxy relays HLS manifests, keys, audio, video, and
+segments, and converts English ASS tracks to browser-native WebVTT. This loses
+advanced ASS positioning, fonts, animation, and karaoke styling but preserves
+ordinary dialogue and line breaks.
+
+Certification passed for exact One Piece search, 1,173 regular episodes, recent
+episode playback, rewritten media resources, converted English subtitles, the
+production Docker image, and Chromium playback with a same-origin media blob.
+The adapter is operational rather than supported: AniZone page markup or CDN
+policy can change without notice, so failures must remain isolated from login,
+libraries, and the Vietnamese providers.
+
+### Reanime
+
+Evaluated on 2026-08-12 against `reanime.to`. Its first-party OpenAPI document
+describes unauthenticated search, title, episode, and playability endpoints, and
+those endpoints returned an exact One Piece match and current subbed episode
+metadata. The documentation does not expose streams, subtitles, an embed
+contract, or a media handoff.
+
+On-site playback resolves through an undocumented `/api/flix` endpoint and a
+Flixcloud player using short-lived, IP-bound media state, encoded playlists, and
+CDN resources that reject direct server retrieval. Reproducing that pipeline
+would require relying on rotating undocumented implementation details and would
+not work with the existing opaque HLS proxy. Reanime's terms also prohibit
+copying, reverse engineering, transferring, or mirroring site materials.
+Reanime is deferred until it publishes API-specific integration terms and a
+supported browser-safe playback method.
+
 ## Required adapter contract
 
-Each port implements or explicitly disables:
+Each adapter implements or explicitly disables:
 
 - Provider identity, display name, language/region scope, and capabilities.
 - Search, details, episodes, and opaque source identifiers.

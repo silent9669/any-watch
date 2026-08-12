@@ -1,6 +1,7 @@
 pub mod allanime;
 pub mod animegg;
 pub mod animevietsub;
+pub mod anizone;
 pub mod hianime;
 pub mod kkphim;
 pub mod moviebox;
@@ -68,6 +69,18 @@ pub struct StreamInfo {
 pub struct Subtitle {
     pub language: String,
     pub url: String,
+    #[serde(default)]
+    pub format: SubtitleFormat,
+}
+
+#[derive(Debug, Clone, Copy, Default, Serialize, Deserialize, PartialEq, Eq)]
+#[serde(rename_all = "lowercase")]
+pub enum SubtitleFormat {
+    Ass,
+    WebVtt,
+    Srt,
+    #[default]
+    Unknown,
 }
 
 pub async fn probe_stream(stream: &StreamInfo) -> Result<()> {
@@ -75,35 +88,57 @@ pub async fn probe_stream(stream: &StreamInfo) -> Result<()> {
         .redirect(reqwest::redirect::Policy::limited(10))
         .timeout(Duration::from_secs(15))
         .build()?;
-    let (url, content_type, body) =
-        fetch_health_resource(&client, &stream.video_url, &stream.headers).await?;
-    anyhow::ensure!(
-        !body.is_empty(),
-        "STREAM_UNAVAILABLE: media response was empty"
-    );
-    let is_hls = content_type.contains("mpegurl")
-        || url.path().to_ascii_lowercase().contains(".m3u8")
-        || body.starts_with(b"#EXTM3U");
-    if is_hls {
+    let mut next_url = stream.video_url.clone();
+    for depth in 0..=3 {
+        let (url, content_type, body) =
+            fetch_health_resource(&client, &next_url, &stream.headers).await?;
+        anyhow::ensure!(
+            !body.is_empty(),
+            "STREAM_UNAVAILABLE: media response was empty"
+        );
+        anyhow::ensure!(
+            !looks_like_html(&body),
+            "STREAM_UNAVAILABLE: media request returned HTML"
+        );
+        let is_hls = content_type.contains("mpegurl")
+            || url.path().to_ascii_lowercase().contains(".m3u8")
+            || body.starts_with(b"#EXTM3U");
+        if !is_hls {
+            if content_type.contains("dash+xml") || url.path().to_ascii_lowercase().contains(".mpd")
+            {
+                let manifest = String::from_utf8(body)?;
+                anyhow::ensure!(
+                    manifest.contains("<MPD"),
+                    "STREAM_UNAVAILABLE: DASH response was not a manifest"
+                );
+            }
+            return Ok(());
+        }
+
         anyhow::ensure!(
             body.starts_with(b"#EXTM3U"),
             "STREAM_UNAVAILABLE: HLS response was not a playlist"
         );
+        anyhow::ensure!(
+            depth < 3,
+            "STREAM_UNAVAILABLE: HLS playlist nesting exceeded the safety limit"
+        );
         let playlist = String::from_utf8(body)?;
-        let resource = playlist
+        next_url = playlist
             .lines()
             .map(str::trim)
             .find(|line| !line.is_empty() && !line.starts_with('#'))
             .and_then(|line| url.join(line).ok())
-            .context("STREAM_UNAVAILABLE: HLS playlist contained no media resource")?;
-        let (_, _, resource_body) =
-            fetch_health_resource(&client, resource.as_str(), &stream.headers).await?;
-        anyhow::ensure!(
-            !resource_body.is_empty(),
-            "STREAM_UNAVAILABLE: HLS media resource was empty"
-        );
+            .context("STREAM_UNAVAILABLE: HLS playlist contained no media resource")?
+            .to_string();
     }
-    Ok(())
+    anyhow::bail!("STREAM_UNAVAILABLE: media probe did not resolve")
+}
+
+fn looks_like_html(body: &[u8]) -> bool {
+    let prefix = String::from_utf8_lossy(&body[..body.len().min(256)]).to_ascii_lowercase();
+    let prefix = prefix.trim_start();
+    prefix.starts_with("<!doctype html") || prefix.starts_with("<html")
 }
 
 async fn fetch_health_resource(
@@ -278,6 +313,10 @@ impl ProviderRegistry {
         let mut providers: Vec<Arc<dyn AnimeProvider>> = Vec::new();
 
         // --- English Sources ---
+        if config.sources.anizone {
+            providers.push(Arc::new(anizone::AniZoneProvider::new()));
+        }
+
         // 1. AllAnime (Anime & Films)
         if config.sources.allanime {
             providers.push(Arc::new(allanime::AllAnimeProvider::new()));
@@ -385,6 +424,7 @@ mod tests {
         let mut config = Config::default();
         config.sources.moviebox = true;
         config.sources.animegg = true;
+        config.sources.anizone = true;
         config.sources.hianime = true;
         config.sources.animevietsub = true;
         config.sources.animetvn = true;
@@ -398,6 +438,7 @@ mod tests {
 
         assert!(names.contains(&"MovieBox"));
         assert!(names.contains(&"AnimeGG"));
+        assert!(names.contains(&"AniZone"));
         assert!(!names.contains(&"HiAnime"));
         assert!(names.contains(&"AnimeVietSub"));
         assert!(!names.contains(&"AnimeTVN"));

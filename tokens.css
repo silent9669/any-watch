@@ -1,28 +1,28 @@
-/* Hallmark · design-system: design.md · theme: custom Obsidian Cinema
- * vibe: "cinematic private family theatre" · axes: dark / display-condensed-bold / warm
+/* Hallmark · design-system: design.md · theme: Obsidian Cinema
+ * vibe: "cinematic private family theatre" · axes: black / grotesk-sans / red
  */
 :root {
-  --color-paper: oklch(9% 0.014 28);
-  --color-paper-2: oklch(14% 0.018 28);
-  --color-paper-3: oklch(20% 0.020 28);
-  --color-ink: oklch(96% 0.010 30);
-  --color-ink-2: oklch(77% 0.012 30);
-  --color-rule: oklch(32% 0.018 28);
-  --color-rule-2: oklch(25% 0.016 28);
-  --color-muted: oklch(62% 0.014 28);
-  --color-neutral: oklch(45% 0.014 28);
-  --color-accent: oklch(64% 0.20 25);
-  --color-accent-ink: oklch(12% 0.015 28);
-  --color-focus: oklch(70% 0.20 25);
-  --color-accent-soft: oklch(64% 0.20 25 / 0.16);
-  --color-accent-faint: oklch(64% 0.20 25 / 0.08);
-  --color-glass: oklch(14% 0.018 28 / 0.72);
-  --color-glass-strong: oklch(17% 0.020 28 / 0.88);
-  --color-glass-hairline: oklch(96% 0.010 30 / 0.14);
-  --color-glass-highlight: oklch(96% 0.010 30 / 0.07);
-  --color-veil: oklch(5% 0.012 28 / 0.82);
-  --color-veil-soft: oklch(5% 0.012 28 / 0.46);
-  --color-shadow: oklch(3% 0.010 28 / 0.72);
+  --color-paper: oklch(9% 0.008 25);
+  --color-paper-2: oklch(13% 0.010 25);
+  --color-paper-3: oklch(18% 0.012 25);
+  --color-ink: oklch(97% 0.004 25);
+  --color-ink-2: oklch(80% 0.008 25);
+  --color-rule: oklch(31% 0.018 25);
+  --color-rule-2: oklch(23% 0.014 25);
+  --color-muted: oklch(64% 0.012 25);
+  --color-neutral: oklch(45% 0.016 25);
+  --color-accent: oklch(62% 0.245 25);
+  --color-accent-ink: oklch(98% 0.004 25);
+  --color-focus: oklch(72% 0.21 25);
+  --color-accent-soft: oklch(62% 0.245 25 / 0.18);
+  --color-accent-faint: oklch(62% 0.245 25 / 0.09);
+  --color-glass: oklch(13% 0.010 25 / 0.72);
+  --color-glass-strong: oklch(16% 0.012 25 / 0.9);
+  --color-glass-hairline: oklch(97% 0.004 25 / 0.14);
+  --color-glass-highlight: oklch(97% 0.004 25 / 0.07);
+  --color-veil: oklch(3% 0.006 25 / 0.84);
+  --color-veil-soft: oklch(3% 0.006 25 / 0.48);
+  --color-shadow: oklch(2% 0.004 25 / 0.76);
   --color-success: oklch(72% 0.13 145);
   --color-warning: oklch(78% 0.14 78);
   --color-danger: oklch(64% 0.20 25);
@@ -90,21 +90,41 @@
 :root[data-scale="tv"] { font-size: 20px; }
 
 :root[data-theme="oled"] {
-  --color-paper: oklch(5% 0.010 28);
-  --color-paper-2: oklch(9% 0.012 28);
-  --color-paper-3: oklch(14% 0.014 28);
-  --color-glass: oklch(9% 0.012 28 / 0.78);
-  --color-glass-strong: oklch(11% 0.014 28 / 0.92);
+  --color-paper: #000;
+  --color-paper-2: oklch(6% 0.006 25);
+  --color-paper-3: oklch(11% 0.01 25);
+  --color-glass: oklch(5% 0.006 25 / 0.82);
+  --color-glass-strong: oklch(8% 0.008 25 / 0.94);
+}
+
+:root[data-theme="ember"] {
+  --color-paper: oklch(10% 0.016 35);
+  --color-paper-2: oklch(15% 0.024 35);
+  --color-paper-3: oklch(21% 0.03 35);
+  --color-accent: oklch(66% 0.22 32);
+  --color-focus: oklch(75% 0.18 38);
+  --color-accent-soft: oklch(66% 0.22 32 / 0.2);
+  --color-accent-faint: oklch(66% 0.22 32 / 0.1);
+}
+
+:root[data-theme="crimson"] {
+  --color-paper: oklch(8% 0.014 15);
+  --color-paper-2: oklch(13% 0.025 15);
+  --color-paper-3: oklch(19% 0.04 15);
+  --color-accent: oklch(58% 0.27 18);
+  --color-focus: oklch(70% 0.22 18);
+  --color-accent-soft: oklch(58% 0.27 18 / 0.22);
+  --color-accent-faint: oklch(58% 0.27 18 / 0.11);
 }
 
 @media (prefers-contrast: more) {
   :root[data-theme="system"] {
-    --color-paper: oklch(7% 0.012 28);
-    --color-paper-2: oklch(13% 0.016 28);
-    --color-paper-3: oklch(22% 0.018 28);
-    --color-rule: oklch(48% 0.018 28);
-    --color-rule-2: oklch(38% 0.016 28);
-    --color-muted: oklch(72% 0.012 28);
-    --color-glass: oklch(12% 0.016 28 / 0.92);
+    --color-paper: oklch(7% 0.008 25);
+    --color-paper-2: oklch(12% 0.012 25);
+    --color-paper-3: oklch(20% 0.018 25);
+    --color-rule: oklch(48% 0.026 25);
+    --color-rule-2: oklch(38% 0.022 25);
+    --color-muted: oklch(74% 0.014 25);
+    --color-glass: oklch(11% 0.014 25 / 0.92);
   }
 }
