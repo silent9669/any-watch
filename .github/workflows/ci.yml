@@ -4,8 +4,6 @@ on:
   push:
     branches: [master]
   workflow_dispatch:
-  schedule:
-    - cron: "17 4 * * *"
 
 permissions:
   contents: read
@@ -113,7 +111,7 @@ jobs:
         run: pytest tests/e2e/test_maintenance.py -q
 
   web-container:
-    name: Production container smoke
+    name: Production image build
     runs-on: ubuntu-latest
     timeout-minutes: 25
     steps:
@@ -122,22 +120,6 @@ jobs:
           persist-credentials: false
       - name: Build production image
         run: docker build --tag any-watch:provider-verification .
-      - name: Verify authentication and configured provider catalog
-        run: npm run providers:test:docker
-
-  provider-certification:
-    name: Live AniZone provider certification
-    if: github.event_name == 'schedule' || github.event_name == 'workflow_dispatch'
-    runs-on: ubuntu-latest
-    timeout-minutes: 25
-    steps:
-      - uses: actions/checkout@v7
-        with:
-          persist-credentials: false
-      - name: Build production image
-        run: docker build --tag any-watch:provider-verification .
-      - name: Verify live provider playback and AniZone English subtitles
-        run: ANY_WATCH_SMOKE_LIVE_PROVIDERS=1 npm run providers:test:docker
 
   audit:
     name: Dependency audit

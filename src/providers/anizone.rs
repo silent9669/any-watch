@@ -142,32 +142,72 @@ impl AniZoneProvider {
     }
 
     fn parse_stream(html: &str) -> Result<StreamInfo> {
-        let video_url = Regex::new(r#"<media-player[^>]+src="(?P<url>https?://[^"]+)""#)?
-            .captures(html)
-            .map(|capture| capture["url"].to_string())
-            .context("STREAM_NOT_FOUND: AniZone returned no HLS player")?;
-        let track = Regex::new(
-            r#"<track\s+src=(?:"(?P<quoted>https?://[^"]+)"|(?P<plain>https?://[^\s>]+))[^>]*data-type="ass"[^>]*label="(?P<label>[^"]+)""#,
-        )?;
-        let mut subtitles = track
-            .captures_iter(html)
-            .filter_map(|capture| {
-                let language = decode_html(&capture["label"]);
-                if !language.to_ascii_lowercase().starts_with("english") {
-                    return None;
-                }
-                let url = capture
-                    .name("quoted")
-                    .or_else(|| capture.name("plain"))?
-                    .as_str()
-                    .to_string();
-                Some(Subtitle {
-                    language,
-                    url,
-                    format: SubtitleFormat::Ass,
-                })
+        let player_payload =
+            Regex::new(r#"(?s)vidstackPlayer\(JSON\.parse\('(?P<payload>.*?)'\)\)"#)?
+                .captures(html)
+                .and_then(|capture| capture.name("payload"))
+                .map(|payload| decode_player_payload(payload.as_str()))
+                .transpose()?;
+
+        let video_url = player_payload
+            .as_ref()
+            .and_then(|payload| payload["src"].as_str())
+            .map(str::to_string)
+            .or_else(|| {
+                Regex::new(r#"<media-player[^>]+src="(?P<url>https?://[^"]+)""#)
+                    .ok()?
+                    .captures(html)
+                    .map(|capture| capture["url"].to_string())
             })
-            .collect::<Vec<_>>();
+            .context("STREAM_NOT_FOUND: AniZone returned no HLS player")?;
+
+        let mut subtitles = if let Some(payload) = player_payload {
+            payload["subtitles"]
+                .as_array()
+                .into_iter()
+                .flatten()
+                .filter_map(|track| {
+                    let language = track["title"].as_str()?.to_string();
+                    if !language.to_ascii_lowercase().starts_with("english") {
+                        return None;
+                    }
+                    let format = match track["format"].as_str().unwrap_or_default() {
+                        "ass" => SubtitleFormat::Ass,
+                        "vtt" | "webvtt" => SubtitleFormat::WebVtt,
+                        "srt" => SubtitleFormat::Srt,
+                        _ => SubtitleFormat::Unknown,
+                    };
+                    Some(Subtitle {
+                        language,
+                        url: track["file"].as_str()?.to_string(),
+                        format,
+                    })
+                })
+                .collect::<Vec<_>>()
+        } else {
+            let track = Regex::new(
+                r#"<track\s+src=(?:"(?P<quoted>https?://[^"]+)"|(?P<plain>https?://[^\s>]+))[^>]*data-type="ass"[^>]*label="(?P<label>[^"]+)""#,
+            )?;
+            track
+                .captures_iter(html)
+                .filter_map(|capture| {
+                    let language = decode_html(&capture["label"]);
+                    if !language.to_ascii_lowercase().starts_with("english") {
+                        return None;
+                    }
+                    let url = capture
+                        .name("quoted")
+                        .or_else(|| capture.name("plain"))?
+                        .as_str()
+                        .to_string();
+                    Some(Subtitle {
+                        language,
+                        url,
+                        format: SubtitleFormat::Ass,
+                    })
+                })
+                .collect::<Vec<_>>()
+        };
         subtitles.sort_by_key(|track| {
             let label = track.language.to_ascii_lowercase();
             if label.contains("full subtitles") {
@@ -278,9 +318,29 @@ impl AnimeProvider for AniZoneProvider {
     }
 
     async fn health_check(&self) -> Result<()> {
-        let stream = self.get_stream_url("uyyyn4kf/1173").await?;
-        super::probe_stream(&stream).await
+        let anime =
+            super::best_title_match(self.search("One Piece").await?, &["One Piece".to_string()])
+                .context("AniZone health check found no matching title")?;
+        let episodes = self.get_episodes(&anime.id).await?;
+        let mut last_error = None;
+        for episode in episodes.into_iter().rev().take(12) {
+            match self.get_stream_url(&episode.id).await {
+                Ok(stream) => match super::probe_stream(&stream).await {
+                    Ok(()) => return Ok(()),
+                    Err(error) => last_error = Some(error),
+                },
+                Err(error) => last_error = Some(error),
+            }
+        }
+        Err(last_error
+            .unwrap_or_else(|| anyhow::anyhow!("AniZone health check found no playable episode")))
     }
+}
+
+fn decode_player_payload(payload: &str) -> Result<serde_json::Value> {
+    let javascript_string: String = serde_json::from_str(&format!("\"{payload}\""))
+        .context("AniZone returned an invalid player payload")?;
+    serde_json::from_str(&javascript_string).context("AniZone returned invalid player JSON")
 }
 
 fn decode_html(value: &str) -> String {
@@ -316,5 +376,10 @@ mod tests {
         assert_eq!(stream.video_url, "https://cdn.example/master.m3u8");
         assert_eq!(stream.subtitles[0].format, SubtitleFormat::Ass);
         assert_eq!(stream.subtitles[0].language, "English - Full Subtitles");
+
+        let encoded = r#"<div x-data="vidstackPlayer(JSON.parse('{\u0022src\u0022:\u0022https:\\/\\/cdn.example\\/master.m3u8\u0022,\u0022subtitles\u0022:[{\u0022title\u0022:\u0022English\u0022,\u0022format\u0022:\u0022ass\u0022,\u0022file\u0022:\u0022https:\\/\\/cdn.example\\/sub.ass\u0022}]}'))"></div>"#;
+        let stream = AniZoneProvider::parse_stream(encoded).unwrap();
+        assert_eq!(stream.video_url, "https://cdn.example/master.m3u8");
+        assert_eq!(stream.subtitles[0].url, "https://cdn.example/sub.ass");
     }
 }

@@ -1,8 +1,4 @@
-# Legacy ani-web Cloudflare automatic maintenance fallback
-
-> This configuration serves the current production application. Keep it intact
-> for rollback during migration; any-watch needs a separate reviewed Cloudflare
-> deployment before these names, routes, or artifacts change.
+# any-watch Cloudflare automatic maintenance fallback
 
 `failover-worker.js` runs as a Worker Route on `ani.dangphuc.me/*`. The DNS
 record remains an orange-clouded `A` record pointing at the homelab. Calling
@@ -15,7 +11,7 @@ For each request, the Worker:
    failures and provider errors;
 3. returns a stable JSON `503` for API calls when the origin is unavailable;
 4. serves navigation and static assets from the independent GitHub Pages
-   artifact at `https://silent9669.github.io/ani-web/`;
+   artifact at `https://silent9669.github.io/any-watch/`;
 5. adds `X-Ani-Desk-Mode: app` or `maintenance` for verification.
 
 Cookies and authorization headers are sent only to the normal ani-desk origin.

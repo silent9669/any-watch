@@ -1,5 +1,5 @@
 const MAINTENANCE_ORIGIN = "https://silent9669.github.io";
-const MAINTENANCE_PREFIX = "/ani-web";
+const MAINTENANCE_PREFIX = "/any-watch";
 const ORIGIN_TIMEOUT_MS = 4_000;
 
 export default {

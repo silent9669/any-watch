@@ -27,7 +27,7 @@ try {
   assert.equal(fallback.status, 200);
   assert.equal(fallback.headers.get("x-ani-desk-mode"), "maintenance");
   assert.equal(fallback.headers.get("cache-control"), "no-store");
-  assert.equal(requestedUrls[1], "https://silent9669.github.io/ani-web/");
+  assert.equal(requestedUrls[1], "https://silent9669.github.io/any-watch/");
 
   const bareRootFallback = await worker.fetch(new Request("https://ani.dangphuc.me/"));
   assert.equal(bareRootFallback.headers.get("x-ani-desk-mode"), "maintenance");
