@@ -331,6 +331,7 @@ def mocked_page(page, vite_server):
                         id: `ep-${i}`,
                         number: i,
                         title: `Episode ${i}`,
+                        aniskipEpisodeNumber: i,
                         thumbnail: `https://example.com/ep-${i}.jpg`
                     });
                 }
