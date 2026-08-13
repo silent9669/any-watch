@@ -92,10 +92,14 @@ pub async fn probe_stream(stream: &StreamInfo) -> Result<()> {
         .redirect(reqwest::redirect::Policy::limited(10))
         .timeout(Duration::from_secs(15))
         .build()?;
+    probe_stream_with(&client, stream).await
+}
+
+pub(crate) async fn probe_stream_with(client: &reqwest::Client, stream: &StreamInfo) -> Result<()> {
     let mut next_url = stream.video_url.clone();
     for depth in 0..=3 {
         let (url, content_type, body) =
-            fetch_health_resource(&client, &next_url, &stream.headers).await?;
+            fetch_health_resource(client, &next_url, &stream.headers).await?;
         anyhow::ensure!(
             !body.is_empty(),
             "STREAM_UNAVAILABLE: media response was empty"

@@ -110,11 +110,12 @@ Piece with 1,173 regular episodes and a Japanese-audio HLS stream.
 
 The site fronts its HTML and API endpoints with Cloudflare bot management. It
 challenges known scraper user agents (including the literal `curl` UA) and
-browser-claiming UAs issued by non-browser TLS stacks. the adapter therefore
-uses a neutral, honest user agent (`ani-desk/1.0`) over the system TLS stack via
-the `secure-http` workspace crate; this signature passes from both residential
-and datacenter networks. No cookies, challenges, or impersonated browser state
-are involved.
+browser-claiming UAs issued by non-browser TLS stacks. The adapter therefore
+uses a neutral, honest user agent (`ani-desk/1.0`) and reqwest's `use_native_tls`
+backend (SecureTransport on macOS, OpenSSL on Linux), and its health check
+probes streams through that same client. This signature passes from both
+residential and datacenter networks. No cookies, challenges, or impersonated
+browser state are involved.
 
 The integration has no documented public API contract and upstream page markup,
 embed structure, or bot policy can change without notice. Failures are

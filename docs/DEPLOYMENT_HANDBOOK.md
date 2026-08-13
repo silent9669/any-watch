@@ -91,7 +91,7 @@ The post-deploy SQLite snapshot must report `integrity: ok` and user, favorite, 
   cargo test --test providers_live test_anidb_live_health -- --ignored --nocapture
   ```
 
-- Production currently enables AniZone and AniDB for English and OPhim, KKPhim, and Niniyo for Vietnamese. AniDB uses the `secure-http` workspace crate (system TLS) and a neutral `ani-desk/1.0` user agent because `anidb.app` challenges browser-claiming user agents issued by non-browser TLS stacks. A provider is selectable only while its application health check is healthy.
+- Production currently enables AniZone and AniDB for English and OPhim, KKPhim, and Niniyo for Vietnamese. AniDB uses reqwest's native TLS backend and a neutral `ani-desk/1.0` user agent because `anidb.app` challenges browser-claiming user agents issued by non-browser TLS stacks. A provider is selectable only while its application health check is healthy.
 - A provider can become unavailable because of rate limits, regional routing, or upstream changes. Treat that as an operational incident, not a reason to delete user data or bypass access controls.
 
 ## Cloudflare failover

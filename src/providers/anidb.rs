@@ -2,7 +2,7 @@ use super::{Anime, AnimeProvider, Episode, Language, ProviderCapabilities, Strea
 use anyhow::{Context, Result};
 use async_trait::async_trait;
 use regex::Regex;
-use secure_http::reqwest::header::{HeaderMap, HeaderValue, REFERER, USER_AGENT};
+use reqwest::header::{HeaderMap, HeaderValue, REFERER, USER_AGENT};
 use serde_json::Value;
 use std::collections::HashMap;
 use std::time::Duration;
@@ -12,7 +12,7 @@ const BASE_URL: &str = "https://anidb.app";
 const USER_AGENT_VALUE: &str = "ani-desk/1.0";
 
 pub struct AniDbProvider {
-    client: secure_http::reqwest::Client,
+    client: reqwest::Client,
 }
 
 impl Default for AniDbProvider {
@@ -26,11 +26,11 @@ impl AniDbProvider {
         let mut headers = HeaderMap::new();
         headers.insert(USER_AGENT, HeaderValue::from_static(USER_AGENT_VALUE));
         Self {
-            client: secure_http::reqwest::Client::builder()
+            client: reqwest::Client::builder()
                 .default_headers(headers)
-                .redirect(secure_http::reqwest::redirect::Policy::limited(8))
+                .redirect(reqwest::redirect::Policy::limited(8))
                 .timeout(Duration::from_secs(30))
-                .http1_only()
+                .use_native_tls()
                 .build()
                 .expect("failed to build AniDB client"),
         }
@@ -221,6 +221,25 @@ impl AnimeProvider for AniDbProvider {
             .text(Self::anime_url(anime_id)?, "AniDB details")
             .await?;
         Ok(Some(Self::parse_details(&html, anime_id)?))
+    }
+
+    async fn health_check(&self) -> Result<()> {
+        let variants = vec!["One Piece".to_string(), "Đảo Hải Tặc".to_string()];
+        let anime = super::best_title_match(self.search("One Piece").await?, &variants)
+            .context("AniDB health check found no matching title")?;
+        let episodes = self.get_episodes(&anime.id).await?;
+        let mut last_error = None;
+        for episode in episodes.into_iter().rev().take(24) {
+            match self.get_stream_url(&episode.id).await {
+                Ok(stream) => match super::probe_stream_with(&self.client, &stream).await {
+                    Ok(()) => return Ok(()),
+                    Err(error) => last_error = Some(error),
+                },
+                Err(error) => last_error = Some(error),
+            }
+        }
+        Err(last_error
+            .unwrap_or_else(|| anyhow::anyhow!("AniDB health check found no playable episodes")))
     }
 
     async fn get_episodes(&self, anime_id: &str) -> Result<Vec<Episode>> {

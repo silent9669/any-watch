@@ -8,7 +8,7 @@ license = "MIT"
 repository = "https://github.com/silent9669/ani-desk"
 
 [workspace]
-members = ["server", "crates/secure-http"]
+members = ["server"]
 resolver = "2"
 
 [lib]
@@ -19,8 +19,7 @@ name = "ani_desk_core"
 tokio = { version = "1", features = ["full"] }
 
 # HTTP client
-reqwest = { version = "0.12", default-features = false, features = ["json", "rustls-tls"] }
-secure-http = { path = "crates/secure-http" }
+reqwest = { version = "0.12", default-features = false, features = ["json", "rustls-tls", "native-tls"] }
 
 # Serialization
 serde = { version = "1.0", features = ["derive"] }
