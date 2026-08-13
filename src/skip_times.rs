@@ -1,10 +1,12 @@
 use anyhow::{Context, Result};
 use reqwest::Client;
 use serde::{Deserialize, Serialize};
-use std::time::Duration;
+use std::{collections::HashMap, sync::OnceLock, time::Duration};
+use tokio::sync::RwLock;
 
 const ANILIST_API: &str = "https://graphql.anilist.co";
 const ANISKIP_API: &str = "https://api.aniskip.com/v1/skip-times";
+static MAL_ID_CACHE: OnceLock<RwLock<HashMap<i64, u64>>> = OnceLock::new();
 
 #[derive(Debug, Clone, Serialize, PartialEq)]
 #[serde(rename_all = "camelCase")]
@@ -12,6 +14,7 @@ pub struct SkipTime {
     pub skip_type: String,
     pub start_time: f64,
     pub end_time: f64,
+    pub episode_length: Option<f64>,
 }
 
 #[derive(Debug, Deserialize)]
@@ -42,6 +45,7 @@ struct AniSkipResponse {
 struct AniSkipResult {
     skip_type: String,
     interval: AniSkipInterval,
+    episode_length: Option<f64>,
 }
 
 #[derive(Debug, Deserialize)]
@@ -83,6 +87,10 @@ pub async fn fetch_skip_times(catalog_id: i64, episode_number: u32) -> Result<Ve
 }
 
 async fn resolve_mal_id(client: &Client, catalog_id: i64) -> Result<u64> {
+    let cache = MAL_ID_CACHE.get_or_init(|| RwLock::new(HashMap::new()));
+    if let Some(id) = cache.read().await.get(&catalog_id).copied() {
+        return Ok(id);
+    }
     let response = client
         .post(ANILIST_API)
         .json(&serde_json::json!({
@@ -97,11 +105,13 @@ async fn resolve_mal_id(client: &Client, catalog_id: i64) -> Result<u64> {
         .json::<AniListResponse>()
         .await
         .context("AniList id mapping returned an invalid response")?;
-    response
+    let id = response
         .data
         .and_then(|data| data.media)
         .and_then(|media| media.id_mal)
-        .context("this title has no MyAnimeList id for AniSkip")
+        .context("this title has no MyAnimeList id for AniSkip")?;
+    cache.write().await.insert(catalog_id, id);
+    Ok(id)
 }
 
 fn normalize_results(results: Vec<AniSkipResult>) -> Vec<SkipTime> {
@@ -119,6 +129,9 @@ fn normalize_results(results: Vec<AniSkipResult>) -> Vec<SkipTime> {
             skip_type: item.skip_type,
             start_time: item.interval.start_time,
             end_time: item.interval.end_time,
+            episode_length: item
+                .episode_length
+                .filter(|length| length.is_finite() && *length > 0.0),
         })
         .collect::<Vec<_>>();
     ranges.sort_by(|left, right| left.start_time.total_cmp(&right.start_time));
@@ -138,6 +151,7 @@ mod tests {
                     start_time: 90.0,
                     end_time: 150.0,
                 },
+                episode_length: Some(1420.0),
             },
             AniSkipResult {
                 skip_type: "preview".into(),
@@ -145,6 +159,7 @@ mod tests {
                     start_time: 1400.0,
                     end_time: 1450.0,
                 },
+                episode_length: None,
             },
             AniSkipResult {
                 skip_type: "ed".into(),
@@ -152,10 +167,12 @@ mod tests {
                     start_time: 1500.0,
                     end_time: 1490.0,
                 },
+                episode_length: None,
             },
         ]);
         assert_eq!(ranges.len(), 1);
         assert_eq!(ranges[0].skip_type, "op");
+        assert_eq!(ranges[0].episode_length, Some(1420.0));
     }
 
     #[tokio::test]

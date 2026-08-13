@@ -12,6 +12,8 @@ pub struct CatalogAnime {
     pub catalog_id: i64,
     pub title: String,
     pub native_title: Option<String>,
+    #[serde(default)]
+    pub synonyms: Vec<String>,
     pub description: Option<String>,
     pub cover_url: String,
     pub banner_url: Option<String>,
@@ -211,7 +213,7 @@ const CATALOG_PAGE_QUERY: &str = r#"
     }
   }
   fragment CatalogFields on Media {
-    id title { romaji english native } description(asHtml: false)
+    id title { romaji english native } synonyms description(asHtml: false)
     coverImage { extraLarge large } bannerImage genres episodes averageScore format seasonYear season status popularity trending
   }
 "#;
@@ -223,7 +225,7 @@ const CATALOG_IDS_QUERY: &str = r#"
     }
   }
   fragment CatalogFields on Media {
-    id title { romaji english native } description(asHtml: false)
+    id title { romaji english native } synonyms description(asHtml: false)
     coverImage { extraLarge large } bannerImage genres episodes averageScore format seasonYear season status popularity trending
   }
 "#;
@@ -273,7 +275,7 @@ fn catalog_browser_request(
           Page(page: $page, perPage: $perPage) {{
             pageInfo {{ hasNextPage }}
             media({}) {{
-              id title {{ romaji english native }} description(asHtml: false)
+               id title {{ romaji english native }} synonyms description(asHtml: false)
               coverImage {{ extraLarge large }} bannerImage genres episodes averageScore
               format seasonYear season status popularity trending
             }}
@@ -298,7 +300,7 @@ const DISCOVERY_QUERY: &str = r#"
     }
   }
   fragment CatalogFields on Media {
-    id title { romaji english native } description(asHtml: false)
+    id title { romaji english native } synonyms description(asHtml: false)
     coverImage { extraLarge large } bannerImage genres episodes averageScore format seasonYear season status popularity trending
   }
 "#;
@@ -326,6 +328,15 @@ fn parse_media(media: &serde_json::Value) -> Option<CatalogAnime> {
         catalog_id,
         title,
         native_title: media["title"]["native"].as_str().map(str::to_string),
+        synonyms: media["synonyms"]
+            .as_array()
+            .map(|items| {
+                items
+                    .iter()
+                    .filter_map(|item| item.as_str().map(str::to_string))
+                    .collect()
+            })
+            .unwrap_or_default(),
         description: media["description"].as_str().map(str::to_string),
         cover_url,
         banner_url: media["bannerImage"].as_str().map(str::to_string),
@@ -409,6 +420,7 @@ mod tests {
             catalog_id: 1,
             title: "Example".into(),
             native_title: None,
+            synonyms: Vec::new(),
             description: None,
             cover_url: "cover".into(),
             banner_url: None,

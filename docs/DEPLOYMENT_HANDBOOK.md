@@ -100,6 +100,11 @@ The post-deploy SQLite snapshot must report `integrity: ok` and user, favorite, 
 - Production currently enables AniZone and AniDB for English and OPhim, KKPhim, and Niniyo for Vietnamese. AniDB fetches through the system `curl` binary with a neutral `any-watch/1.0` user agent — never a browser-claiming UA or reqwest TLS stack — because `anidb.app` challenges browser-claiming user agents issued by non-browser TLS stacks. A provider is selectable only while its application health check is healthy.
 - A provider can become unavailable because of rate limits, regional routing, or upstream changes. Treat that as an operational incident, not a reason to delete user data or bypass access controls.
 - Authenticated `GET /api/providers/health` results are cached for five minutes, and concurrent stale requests share one refresh. Each provider check is bounded to 60 seconds. If the initial UI health request fails while entries are still `unknown`, they become retryable `unavailable` entries instead of remaining indefinitely in `Checking`.
+- AniSkip certification must verify the exact catalog ID, provider episode
+  number, and stream duration. Run
+  `cargo test skip_times::tests::live_one_piece_skip_times_smoke -- --ignored --nocapture`
+  plus the provider playback test. Missing upstream timing is not a failure and
+  must not be replaced with an adjacent episode's timing.
 
 ## Cloudflare failover
 

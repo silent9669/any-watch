@@ -417,9 +417,24 @@ pub fn parse_episode_number(name: &str) -> u32 {
     ep_num
 }
 
+pub fn aniskip_episode_number(name: &str) -> Option<u32> {
+    let normalized = name.replace("Tập ", "").replace("Tap ", "");
+    let token = normalized
+        .split(|character: char| !(character.is_ascii_digit() || character == '.'))
+        .find(|token| !token.is_empty())?;
+    let value = token.parse::<f64>().ok()?;
+    if !value.is_finite() || value <= 0.0 || value.fract() != 0.0 || value > u32::MAX as f64 {
+        return None;
+    }
+    Some(value as u32)
+}
+
 #[cfg(test)]
 mod tests {
-    use super::{best_title_match, parse_episode_number, Anime, Language, ProviderRegistry};
+    use super::{
+        aniskip_episode_number, best_title_match, parse_episode_number, Anime, Language,
+        ProviderRegistry,
+    };
     use crate::config::Config;
 
     #[test]
@@ -427,6 +442,14 @@ mod tests {
         assert_eq!(parse_episode_number("Tập 1004.5"), 1004);
         assert_eq!(parse_episode_number("Episode 1167"), 1167);
         assert_eq!(parse_episode_number("Full"), 1);
+    }
+
+    #[test]
+    fn aniskip_number_accepts_only_positive_integer_episodes() {
+        assert_eq!(aniskip_episode_number("Tập 1168"), Some(1168));
+        assert_eq!(aniskip_episode_number("Episode 12"), Some(12));
+        assert_eq!(aniskip_episode_number("Tập 1004.5"), None);
+        assert_eq!(aniskip_episode_number("Full"), None);
     }
 
     #[test]

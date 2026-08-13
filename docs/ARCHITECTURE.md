@@ -58,6 +58,15 @@ short-lived server session. HLS playlists and DASH manifests are rewritten to
 opaque same-origin resource IDs. Browser JSON, markup, and logs must not expose
 raw signed media URLs or reversible encodings of private upstream material.
 
+AniSkip is keyed by a canonical AniList title (resolved to MyAnimeList) plus a
+provider-certified positive integer episode number. AniZone, AniDB, KKPhim,
+OPhim, and integer-numbered Niniyo episodes expose that mapping; decimal
+specials remain unmapped. Direct search keeps a unique exact catalog/query match
+attached to the chosen provider without switching providers. Skip intro seeks
+only opening ranges whose reported episode length matches the active video
+within 20 seconds or three percent. Missing AniSkip submissions are a normal
+no-marker state.
+
 `GET /api/providers/health` caches aggregate results for five minutes and
 coalesces concurrent stale refreshes. Provider checks run concurrently with a
 60-second per-check backend timeout. Cloudflare allows this endpoint 70 seconds

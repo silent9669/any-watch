@@ -978,7 +978,6 @@ def test_t3_player_matches_apple_style_control_composition(mocked_page):
     mocked_page.locator(".detail-actions button.primary").click()
     mocked_page.wait_for_selector(".episode-list-row")
     mocked_page.locator(".episode-list-row").first.click()
-
     expect(mocked_page.locator(".player-leading-controls")).to_be_visible()
     expect(mocked_page.locator(".player-volume-dock")).to_be_visible()
     expect(mocked_page.locator(".player-now-playing")).to_contain_text("Naruto Shippuden")
@@ -986,7 +985,7 @@ def test_t3_player_matches_apple_style_control_composition(mocked_page):
     expect(mocked_page.locator(".player-now-playing small")).not_to_contain_text("Episode 1 · Episode 1")
     expect(mocked_page.locator(".player-timeline")).to_be_visible()
     expect(mocked_page.locator(".player-utility-pill")).to_be_visible()
-    auto_skip = mocked_page.get_by_role("switch", name="Toggle automatic opening and ending skip")
+    auto_skip = mocked_page.get_by_role("switch", name="Toggle skip intro")
     expect(auto_skip).to_be_visible()
     expect(auto_skip).to_have_attribute("aria-checked", "true")
     assert auto_skip.evaluate("node => node.getBoundingClientRect().width") >= 108
@@ -1082,15 +1081,99 @@ def test_t3_chromium_hls_uses_media_source_instead_of_native_m3u8(mocked_page):
 def test_t3_aniskip_is_on_by_default_and_persists(mocked_page):
     settings_nav = mocked_page.get_by_label("Primary navigation").get_by_role("button", name="Settings")
     settings_nav.click()
-    auto_on = mocked_page.get_by_role("radio", name="Auto-skip on", exact=False)
-    auto_off = mocked_page.get_by_role("radio", name="Auto-skip off", exact=False)
+    auto_on = mocked_page.get_by_role("radio", name="Skip intro on", exact=False)
+    auto_off = mocked_page.get_by_role("radio", name="Skip intro off", exact=False)
     expect(auto_on).to_have_attribute("aria-checked", "true")
 
     auto_off.click()
     expect(auto_off).to_have_attribute("aria-checked", "true")
     mocked_page.reload()
     mocked_page.get_by_label("Primary navigation").get_by_role("button", name="Settings").click()
-    expect(mocked_page.get_by_role("radio", name="Auto-skip off", exact=False)).to_have_attribute("aria-checked", "true")
+    expect(mocked_page.get_by_role("radio", name="Skip intro off", exact=False)).to_have_attribute("aria-checked", "true")
+
+
+def test_t3_direct_provider_result_links_catalog_and_skips_verified_intro(mocked_page):
+    mocked_page.locator(".hero-search-trigger").click()
+    mocked_page.locator(".search-input-shell input").fill("Naruto")
+    mocked_page.wait_for_selector(".search-result")
+    mocked_page.locator(".search-result").first.click()
+    mocked_page.locator(".detail-actions button.primary").click()
+    mocked_page.wait_for_selector(".episode-list-row")
+    mocked_page.locator(".episode-list-row").first.click()
+    mocked_page.wait_for_selector("video")
+    mocked_page.wait_for_function("""() => window.__API_CALLS__.some(
+        (call) => call.cmd === 'get_skip_times'
+            && call.args.catalogId === 3000
+            && call.args.episodeNumber === 1
+    )""")
+
+    current_time = mocked_page.locator("video").evaluate("""video => {
+        Object.defineProperty(video, 'duration', { configurable: true, value: 1420 });
+        video.currentTime = 100;
+        video.dispatchEvent(new Event('timeupdate'));
+        return video.currentTime;
+    }""")
+    assert current_time == 150
+    expect(mocked_page.locator(".player-skip-feedback")).to_contain_text("Skipped opening")
+
+
+def test_t3_localized_provider_result_uses_exact_search_catalog_id(mocked_page):
+    mocked_page.locator(".hero-search-trigger").click()
+    mocked_page.get_by_role("button", name="Vietnamese").click()
+    mocked_page.locator(".search-input-shell input").fill("One Piece")
+    mocked_page.wait_for_selector(".search-result")
+    expect(mocked_page.locator(".search-result").first).to_contain_text("One Piece")
+    expect(mocked_page.locator(".search-result").first).to_contain_text("KKPhim")
+    mocked_page.locator(".search-result").first.click()
+    mocked_page.locator(".detail-actions button.primary").click()
+    mocked_page.wait_for_selector(".episode-list-row")
+    mocked_page.locator(".episode-list-row").first.click()
+    mocked_page.wait_for_function("""() => window.__API_CALLS__.some(
+        (call) => call.cmd === 'get_skip_times'
+            && call.args.catalogId === 21
+            && call.args.episodeNumber === 1
+    )""")
+
+
+def test_t3_skip_intro_does_not_seek_for_mismatched_cut(mocked_page):
+    mocked_page.locator(".hero-search-trigger").click()
+    mocked_page.locator(".search-input-shell input").fill("Naruto")
+    mocked_page.wait_for_selector(".search-result")
+    mocked_page.locator(".search-result").first.click()
+    mocked_page.locator(".detail-actions button.primary").click()
+    mocked_page.wait_for_selector(".episode-list-row")
+    mocked_page.locator(".episode-list-row").first.click()
+    mocked_page.wait_for_selector("video")
+    mocked_page.wait_for_function("""() => window.__API_CALLS__.some(
+        (call) => call.cmd === 'get_skip_times'
+    )""")
+
+    current_time = mocked_page.locator("video").evaluate("""video => {
+        Object.defineProperty(video, 'duration', { configurable: true, value: 1200 });
+        video.currentTime = 100;
+        video.dispatchEvent(new Event('timeupdate'));
+        return video.currentTime;
+    }""")
+    assert current_time == 100
+
+
+def test_t3_missing_aniskip_record_is_not_an_error(mocked_page):
+    mocked_page.evaluate("""() => {
+        const state = window.__API_MOCK_STATE__;
+        state.skip_times = [];
+        localStorage.setItem('__API_MOCK_STATE__', JSON.stringify(state));
+    }""")
+    mocked_page.reload()
+    mocked_page.locator(".hero-search-trigger").click()
+    mocked_page.locator(".search-input-shell input").fill("Naruto")
+    mocked_page.wait_for_selector(".search-result")
+    mocked_page.locator(".search-result").first.click()
+    mocked_page.locator(".detail-actions button.primary").click()
+    mocked_page.wait_for_selector(".episode-list-row")
+    mocked_page.locator(".episode-list-row").first.click()
+    skip_intro = mocked_page.get_by_role("switch", name="Toggle skip intro")
+    expect(skip_intro).to_have_attribute("data-state", "success")
+    expect(skip_intro).to_have_attribute("title", "No marked segments")
 
 def test_t3_my_list_nav_and_remove(mocked_page):
     mocked_page.locator(".hero-search-trigger").click()

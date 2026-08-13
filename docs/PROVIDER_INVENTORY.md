@@ -153,6 +153,9 @@ Each adapter implements or explicitly disables:
 - Subtitles, audio, quality, and stream type metadata where available.
 - Health check, error classification, retry policy, and explicit availability state.
 - Per-provider concurrency, timeout, cache, and circuit-breaker configuration.
+- Explicit AniSkip episode numbering where provider episodes are certified to
+  match the canonical title; ambiguous season splits and decimal specials stay
+  unmapped.
 
 The aggregate health GET caches and coalesces checks for five minutes. Each
 provider health operation has a 60-second backend timeout; the Cloudflare Worker
@@ -162,6 +165,13 @@ scoped to that endpoint.
 Provider search results remain distinct. Matching a canonical title is a
 confidence-scored mapping; it is never permission to merge source episode IDs or
 to silently switch playback providers.
+
+The current defaults expose AniSkip numbers for AniZone, AniDB, KKPhim, OPhim,
+and integer-numbered Niniyo episodes. Automatic Skip intro still requires a
+unique exact catalog match and a compatible episode duration. AniSkip may have
+no submitted timing for an otherwise correct episode (for example, One Piece
+1170 at the time of certification); the application must not borrow timing from
+an adjacent episode.
 
 ## Certification policy
 

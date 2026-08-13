@@ -64,7 +64,7 @@ const SOURCE_STORAGE_KEY = "any-watch:selected-source";
 const THEME_STORAGE_KEY = "any-watch:theme";
 const APP_SCALE_STORAGE_KEY = "any-watch:scale";
 const APP_FONT_STORAGE_KEY = "any-watch:font";
-const AUTO_SKIP_STORAGE_KEY = "any-watch:auto-skip";
+const SKIP_INTRO_STORAGE_KEY = "any-watch:skip-intro";
 const EPISODE_RANGE_SIZE = 50;
 const LOGO_SRC = "/logo.png";
 const fadeUpVariant = {
@@ -426,9 +426,15 @@ function App() {
       if (catalogOutcome.ok) {
         const items = catalogOutcome.items;
         setCatalogResults(items);
-        if (directItems.length) {
+        const linkedDirectItems = directItems.map((anime, index) => {
+          const catalogMatch = exactCatalogMatch(items, anime)
+            ?? (index === 0 ? exactCatalogTitleMatch(items, cleanQuery) : null);
+          return catalogMatch ? catalogToAnime(catalogMatch, anime) : anime;
+        });
+        setProviderResults(linkedDirectItems);
+        if (linkedDirectItems.length) {
           setCatalogSelection(null);
-          setSearchSelection(directItems[0]);
+          setSearchSelection(linkedDirectItems[0]);
         } else {
           setCatalogSelection(null);
         }
@@ -503,10 +509,13 @@ function App() {
   }
 
   function selectProviderResult(anime: Anime) {
+    const catalogMatch = anime.catalogId
+      ? catalogResults.find((item) => item.catalogId === anime.catalogId) ?? null
+      : exactCatalogMatch(catalogResults, anime);
     setCatalogSelection(null);
     setAvailability([]);
     setSelectedSource(sources.find((source) => source.name === anime.provider) ?? null);
-    setSearchSelection(anime);
+    setSearchSelection(catalogMatch ? catalogToAnime(catalogMatch, anime) : anime);
   }
 
   function selectProviderSource(source: Source) {
@@ -664,9 +673,11 @@ function App() {
     setLoadingEpisodes(true);
     setError(null);
     if (route !== "detail") navigate("detail");
-    void enrichAnime(anime);
+    const linkedAnime = await linkCatalogAnime(anime);
+    if (linkedAnime !== anime) setSelectedAnime(linkedAnime);
+    void enrichAnime(linkedAnime);
     try {
-      setEpisodes(await api.getEpisodes(anime.provider, anime.id));
+      setEpisodes(await api.getEpisodes(linkedAnime.provider, linkedAnime.id));
     } catch (err) {
       const appError = toAppError(err, "episodes");
       if (providerFailureMakesOffline(appError)) markProviderOffline(anime.provider, appError.code);
@@ -674,6 +685,14 @@ function App() {
     } finally {
       setLoadingEpisodes(false);
     }
+  }
+
+  async function linkCatalogAnime(anime: Anime): Promise<Anime> {
+    if (anime.catalogId) return anime;
+    const outcome = await loadCatalogSearchResults(anime.title);
+    if (!outcome.ok) return anime;
+    const match = exactCatalogMatch(outcome.items, anime);
+    return match ? catalogToAnime(match, anime) : anime;
   }
 
   async function openHistoryItem(item: WatchHistory) {
@@ -1159,15 +1178,15 @@ function SettingsPage({
 
         <section className="settings-edit-card settings-playback-card">
           <div className="settings-section-heading">
-            <div><h2>Playback</h2><p>Use AniSkip community timing data to move past openings and endings.</p></div>
+            <div><h2>Playback</h2><p>Use AniSkip community timing data to skip known openings.</p></div>
           </div>
-          <div className="appearance-options" role="radiogroup" aria-label="Automatic AniSkip">
+          <div className="appearance-options" role="radiogroup" aria-label="Skip intro">
             <button role="radio" aria-checked={autoSkip} className={autoSkip ? "active" : ""} onClick={() => onAutoSkipChange(true)}>
-              <span><strong>Auto-skip on</strong><small>Skip known opening and ending ranges automatically.</small></span>
+              <span><strong>Skip intro on</strong><small>Skip a verified opening when playback enters its marked range.</small></span>
               {autoSkip ? <Check size={17} /> : null}
             </button>
             <button role="radio" aria-checked={!autoSkip} className={!autoSkip ? "active" : ""} onClick={() => onAutoSkipChange(false)}>
-              <span><strong>Auto-skip off</strong><small>Play every detected segment without interruption.</small></span>
+              <span><strong>Skip intro off</strong><small>Play openings normally while keeping timing markers visible.</small></span>
               {!autoSkip ? <Check size={17} /> : null}
             </button>
           </div>
@@ -3080,7 +3099,7 @@ function VideoPlayer({
         }
       });
     return () => { cancelled = true; };
-  }, [context.anime.catalogId, context.episode.id, context.episode.number]);
+  }, [context.anime.catalogId, context.episode.id, context.episode.aniskipEpisodeNumber]);
 
   useEffect(() => {
     const video = videoRef.current;
@@ -3226,8 +3245,8 @@ function VideoPlayer({
     if (!video) return;
 
     const syncState = () => {
-      if (autoSkip) {
-        const range = skipTimes.find((item) => video.currentTime >= item.startTime && video.currentTime < item.endTime);
+      if (autoSkip && timingMatchesDuration(skipTimes, video.duration)) {
+        const range = skipTimes.find((item) => item.skipType === "op" && video.currentTime >= item.startTime && video.currentTime < item.endTime);
         if (range) {
           const rangeKey = `${range.skipType}:${range.startTime}:${range.endTime}`;
           if (!skippedRangesRef.current.has(rangeKey)) {
@@ -3610,11 +3629,11 @@ function VideoPlayer({
               aria-busy={skipTimingStatus === "loading"}
               data-state={skipTimingStatus === "error" ? "error" : skipTimingStatus === "ready" ? "success" : skipTimingStatus}
               disabled={skipTimingStatus === "loading"}
-              aria-label="Toggle automatic opening and ending skip"
+              aria-label="Toggle skip intro"
               title={skipTimingStatusLabel(skipTimingStatus, skipTimes.length)}
               onClick={() => onAutoSkipChange(!autoSkip)}
             >
-              Auto-skip <span>{autoSkip ? "On" : "Off"}</span>
+              Skip intro <span>{autoSkip ? "On" : "Off"}</span>
             </button>
             {subtitleTracks.length > 0 && (
               <label title="Subtitles">
@@ -3738,6 +3757,27 @@ function catalogToAnime(catalog: CatalogAnime, providerAnime: Anime): Anime {
     totalEpisodes: providerAnime.totalEpisodes ?? catalog.totalEpisodes,
     synopsis: catalog.description || providerAnime.synopsis,
   };
+}
+
+function exactCatalogMatch(catalog: CatalogAnime[], anime: Anime): CatalogAnime | null {
+  return exactCatalogTitleMatch(catalog, anime.title);
+}
+
+function exactCatalogTitleMatch(catalog: CatalogAnime[], title: string): CatalogAnime | null {
+  const normalizedTitle = normalizeCatalogTitle(title);
+  if (!normalizedTitle) return null;
+  const matches = catalog.filter((item) => [item.title, item.nativeTitle, ...(item.synonyms ?? [])]
+    .some((candidate) => normalizeCatalogTitle(candidate ?? "") === normalizedTitle));
+  return matches.length === 1 ? matches[0] : null;
+}
+
+function normalizeCatalogTitle(title: string) {
+  return title
+    .normalize("NFKD")
+    .toLowerCase()
+    .replace(/[\u0300-\u036f]/g, "")
+    .replace(/[^a-z0-9]+/g, " ")
+    .trim();
 }
 
 function catalogOnlyAnime(catalog: CatalogAnime): Anime {
@@ -3891,7 +3931,9 @@ function saveFont(font: AppFont) {
 
 function loadSavedAutoSkip() {
   try {
-    const saved = localStorage.getItem(AUTO_SKIP_STORAGE_KEY) ?? localStorage.getItem("any-watch:auto-skip");
+    const saved = localStorage.getItem(SKIP_INTRO_STORAGE_KEY)
+      ?? localStorage.getItem("any-watch:auto-skip")
+      ?? localStorage.getItem("ani-desk:auto-skip");
     return saved === null ? true : saved !== "false";
   } catch {
     return true;
@@ -3900,7 +3942,7 @@ function loadSavedAutoSkip() {
 
 function saveAutoSkip(enabled: boolean) {
   try {
-    localStorage.setItem(AUTO_SKIP_STORAGE_KEY, String(enabled));
+    localStorage.setItem(SKIP_INTRO_STORAGE_KEY, String(enabled));
   } catch {
     // localStorage can be unavailable in restricted WebView contexts.
   }
@@ -3925,6 +3967,12 @@ function skipTimingStatusLabel(status: "loading" | "ready" | "unavailable" | "er
   if (status === "error") return "Timing unavailable";
   if (status === "unavailable") return "No catalog match";
   return count ? `${count} marked segment${count === 1 ? "" : "s"}` : "No marked segments";
+}
+
+function timingMatchesDuration(times: SkipTime[], duration: number) {
+  if (!Number.isFinite(duration) || duration <= 0) return false;
+  const expected = times.find((item) => item.episodeLength && Number.isFinite(item.episodeLength))?.episodeLength;
+  return expected == null || Math.abs(duration - expected) <= Math.max(20, expected * 0.03);
 }
 
 function applyHlsQuality(hls: Hls | null, quality: string) {

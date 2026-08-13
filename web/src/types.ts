@@ -20,6 +20,7 @@ export type CatalogAnime = {
   catalogId: number;
   title: string;
   nativeTitle?: string | null;
+  synonyms?: string[];
   description?: string | null;
   coverUrl: string;
   bannerUrl?: string | null;
@@ -149,6 +150,7 @@ export type SkipTime = {
   skipType: "op" | "ed" | "recap" | string;
   startTime: number;
   endTime: number;
+  episodeLength?: number | null;
 };
 
 export type DownloadEvent = {

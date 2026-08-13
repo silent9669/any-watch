@@ -124,14 +124,15 @@ impl NiniyoProvider {
             .flatten()
             .filter_map(|episode| {
                 let number_text = episode["episodeNumber"].as_str()?;
-                let number = number_text.parse::<f64>().ok()?.floor() as u32;
+                let number_value = number_text.parse::<f64>().ok()?;
+                let number = number_value.floor() as u32;
                 if number == 0 {
                     return None;
                 }
                 Some(Episode {
                     id: episode["episodeId"].as_str()?.to_string(),
                     number,
-                    aniskip_episode_number: None,
+                    aniskip_episode_number: (number_value.fract() == 0.0).then_some(number),
                     title: Some(format!("Tập {number_text}")),
                     thumbnail: None,
                 })
@@ -357,11 +358,19 @@ mod tests {
         let episodes = NiniyoProvider::episodes_from_value(&serde_json::json!({
             "episodes": [
                 { "episodeNumber": "12", "episodeId": "solo-leveling$12" },
-                { "episodeNumber": "1", "episodeId": "solo-leveling$1" }
+                { "episodeNumber": "1", "episodeId": "solo-leveling$1" },
+                { "episodeNumber": "12.5", "episodeId": "solo-leveling$12.5" }
             ]
         }));
         assert_eq!(episodes[0].number, 1);
+        assert_eq!(episodes[0].aniskip_episode_number, Some(1));
         assert_eq!(episodes[1].id, "solo-leveling$12");
+        assert_eq!(episodes[1].aniskip_episode_number, Some(12));
+        assert_eq!(
+            episodes.len(),
+            2,
+            "decimal specials must not replace a regular episode"
+        );
 
         let stream = NiniyoProvider::stream_from_value(&serde_json::json!({
             "server": "P16",

@@ -12,7 +12,7 @@ and SQLite persistence.
 - Account-scoped watch history, progress, and My List across browsers.
 - Title-first discovery with explicit provider availability and no silent source switching.
 - Browser-native HLS, DASH, subtitle, quality, fullscreen, and picture-in-picture playback.
-- AniSkip opening and ending markers with a persistent auto-skip preference.
+- AniSkip opening and ending markers with a persistent Skip intro preference.
 - Browser downloads through short-lived authenticated tickets.
 - Responsive layouts and keyboard/remote navigation for phones, computers, and TVs.
 
@@ -25,6 +25,11 @@ ani-cli v5. MovieBox, AllAnime,
 AnimeGG, AnimeVietSub, and HiAnime remain disabled unless they pass the current
 admission and playback certification requirements. Provider cookies, required
 headers, and upstream media URLs stay server-side behind opaque playback paths.
+
+Direct provider results retain a unique exact AniList catalog match so AniSkip
+uses the correct MyAnimeList title and provider-certified episode number. Skip
+intro automatically seeks only verified opening ranges; an episode without an
+AniSkip submission remains playable and displays no marker.
 
 See [docs/PROVIDER_INVENTORY.md](docs/PROVIDER_INVENTORY.md) for the complete
 status and admission policy.

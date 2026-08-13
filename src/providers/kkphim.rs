@@ -271,7 +271,9 @@ impl AnimeProvider for KkphimProvider {
                                     episodes.push(Episode {
                                         id: format!("{}:{}", anime_id, ep_number),
                                         number: ep_number,
-                                        aniskip_episode_number: None,
+                                        aniskip_episode_number: super::aniskip_episode_number(
+                                            name_str,
+                                        ),
                                         title: Some(format!("Episode {}", ep_number)),
                                         thumbnail: None,
                                     });

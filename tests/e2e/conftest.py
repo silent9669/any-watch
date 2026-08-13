@@ -5,22 +5,30 @@ import subprocess
 import pytest
 from playwright.sync_api import sync_playwright
 
+def _free_port():
+    with socket.socket(socket.AF_INET, socket.SOCK_STREAM) as sock:
+        sock.bind(("127.0.0.1", 0))
+        return sock.getsockname()[1]
+
 @pytest.fixture(scope="session")
 def vite_server():
-    # Start the Vite server
+    # Start the Vite server on a free port so concurrent sessions and CI
+    # runners never collide on a fixed port.
+    port = _free_port()
     proc = subprocess.Popen(
-        ["npm", "run", "dev"],
-        stdout=subprocess.PIPE,
-        stderr=subprocess.PIPE,
-        text=True
+        ["npm", "run", "dev", "--", "--port", str(port)],
+        stdout=subprocess.DEVNULL,
+        stderr=subprocess.DEVNULL,
     )
 
-    # Wait for the port to be open
+    # Wait until our process serves the port; fail fast if it exited
+    # (for example when the port was already taken by another server).
     start_time = time.time()
-    port = 1420
     host = "127.0.0.1"
     server_ready = False
     while time.time() - start_time < 15:
+        if proc.poll() is not None:
+            break
         try:
             with socket.create_connection((host, port), timeout=1):
                 server_ready = True
@@ -30,15 +38,16 @@ def vite_server():
 
     if not server_ready:
         proc.kill()
-        raise RuntimeError("Vite dev server failed to start on port 1420")
+        raise RuntimeError(f"Vite dev server failed to start on port {port}")
 
-    yield proc
+    yield proc, port
 
     proc.terminate()
     proc.wait()
 
 @pytest.fixture(scope="function")
 def mocked_page(page, vite_server):
+    vite_proc, vite_port = vite_server
     # Mock the browser API before the application loads.
     page.add_init_script("""
         window.__API_CALLS__ = window.__API_CALLS__ || [];
@@ -79,6 +88,8 @@ def mocked_page(page, vite_server):
                 catalog_search_error: null,
                 provider_search_error: null,
                 provider_health_error: null,
+                episode_provider: null,
+                skip_times: null,
                 playback_error: null,
                 download_error: null,
                 downloads: [],
@@ -118,6 +129,7 @@ def mocked_page(page, vite_server):
                     catalogId: 1000 + index,
                     title: index === 0 ? "One Piece" : `Catalog Anime ${index + 1}`,
                     nativeTitle: null,
+                    synonyms: index === 0 ? ["Đảo Hải Tặc"] : [],
                     description: `Catalog synopsis ${index + 1}.`,
                     coverUrl: `https://example.com/catalog-${index + 1}.jpg`,
                     bannerUrl: `https://example.com/catalog-banner-${index + 1}.jpg`,
@@ -138,6 +150,7 @@ def mocked_page(page, vite_server):
                     catalogId: 2000 + index,
                     title: `${args.genre} Anime ${index + 1}`,
                     nativeTitle: null,
+                    synonyms: [],
                     description: `${args.genre} catalog title.`,
                     coverUrl: `https://example.com/genre-${index + 1}.jpg`,
                     bannerUrl: null,
@@ -156,6 +169,7 @@ def mocked_page(page, vite_server):
                         catalogId: page * 10000 + index,
                         title: `${args.filters.genre || "Trending"} Anime ${index + 1}`,
                         nativeTitle: null,
+                        synonyms: [],
                         description: "Catalog browser synopsis.",
                         coverUrl: `https://example.com/browser-${index + 1}.jpg`,
                         bannerUrl: null,
@@ -173,10 +187,12 @@ def mocked_page(page, vite_server):
                 if (state.search_error) throw state.search_error;
                 if ((args.query || "").toLowerCase().includes("empty")) return [];
                 if ((args.query || "").toLowerCase().includes("cinema")) return [];
+                const onePiece = (args.query || "").toLowerCase().includes("one piece");
                 return Array.from({ length: 16 }, (_, index) => ({
-                    catalogId: 3000 + index,
-                    title: index === 0 ? "Naruto Shippuden" : `Sample Anime ${index + 1}`,
+                    catalogId: index === 0 && onePiece ? 21 : 3000 + index,
+                    title: index === 0 ? (onePiece ? "One Piece" : "Naruto Shippuden") : `Sample Anime ${index + 1}`,
                     nativeTitle: null,
+                    synonyms: index === 0 ? (onePiece ? [] : ["Naruto: Shippuden"]) : [],
                     description: index === 0 ? "A story about Naruto." : `Sample synopsis ${index + 1}.`,
                     coverUrl: `https://example.com/search-${index + 1}.jpg`,
                     bannerUrl: `https://example.com/search-banner-${index + 1}.jpg`,
@@ -283,10 +299,22 @@ def mocked_page(page, vite_server):
                         }
                     ];
                 }
+                if (query.toLowerCase().includes("one piece") && ["KKPhim", "OPhim", "Niniyo"].includes(args.source)) {
+                    return [{
+                        id: "dao-hai-tac",
+                        provider: args.source,
+                        title: "Đảo Hải Tặc",
+                        coverUrl: "https://example.com/one-piece.jpg",
+                        bannerUrl: "https://example.com/one-piece-banner.jpg",
+                        language: "Vietnamese",
+                        totalEpisodes: 1173,
+                        synopsis: "A pirate adventure.",
+                        isFavorite: false
+                    }];
+                }
                 const baseResults = [
                     {
                         id: "naruto-shippuden",
-                        catalogId: 20,
                         provider: args.source || "AllAnime",
                         title: "Naruto Shippuden",
                         coverUrl: "https://example.com/naruto-shippuden.jpg",
@@ -329,12 +357,14 @@ def mocked_page(page, vite_server):
             } else if (cmd === "get_episodes") {
                 const eps = [];
                 const total = state.episode_count || 1200;
+                const provider = state.episode_provider || args.provider || state.sources?.find((source) => source.status === "healthy")?.name || "AniZone";
+                const certified = ["AniZone", "AniDB", "KKPhim", "OPhim", "Niniyo"].includes(provider);
                 for (let i = 1; i <= total; i++) {
                     eps.push({
                         id: `ep-${i}`,
                         number: i,
                         title: `Episode ${i}`,
-                        aniskipEpisodeNumber: i,
+                        aniskipEpisodeNumber: certified ? i : null,
                         thumbnail: `https://example.com/ep-${i}.jpg`
                     });
                 }
@@ -354,9 +384,9 @@ def mocked_page(page, vite_server):
                     canFallbackToMpv: true
                 };
             } else if (cmd === "get_skip_times") {
-                return [
-                    { skipType: "op", startTime: 90, endTime: 150 },
-                    { skipType: "ed", startTime: 1320, endTime: 1410 }
+                return state.skip_times || [
+                    { skipType: "op", startTime: 90, endTime: 150, episodeLength: 1420 },
+                    { skipType: "ed", startTime: 1320, endTime: 1410, episodeLength: 1420 }
                 ];
             } else if (cmd === "download_episode") {
                 if (state.download_error) {
@@ -507,7 +537,7 @@ def mocked_page(page, vite_server):
             }
         };
     """)
-    page.goto("http://127.0.0.1:1420")
+    page.goto(f"http://127.0.0.1:{vite_port}")
     page.evaluate("localStorage.clear()")
     page.reload()
     page.wait_for_selector(".app-container, #root")
