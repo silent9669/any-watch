@@ -154,6 +154,11 @@ Each adapter implements or explicitly disables:
 - Health check, error classification, retry policy, and explicit availability state.
 - Per-provider concurrency, timeout, cache, and circuit-breaker configuration.
 
+The aggregate health GET caches and coalesces checks for five minutes. Each
+provider health operation has a 60-second backend timeout; the Cloudflare Worker
+gives the aggregate endpoint 70 seconds and leaves provider-level failures
+scoped to that endpoint.
+
 Provider search results remain distinct. Matching a canonical title is a
 confidence-scored mapping; it is never permission to merge source episode IDs or
 to silently switch playback providers.
@@ -172,9 +177,10 @@ A provider can be enabled only after a repeatable test verifies:
    upstream headers, or raw signed media URLs.
 
 The certification report records timestamp, environment, region, sample titles,
-capabilities, result, and safe error category. A provider that fails is marked
-`Limited`, `Verify`, or `Offline`; it is not silently hidden from existing saved
-items.
+capabilities, result, and safe error category. A failed check is exposed as
+retryable `unavailable` rather than silently hiding saved items. If the initial
+aggregate request fails, UI entries still in `unknown` transition to retryable
+`unavailable` so users can explicitly retry them.
 
 ## Adding sources
 

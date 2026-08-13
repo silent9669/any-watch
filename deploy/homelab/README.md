@@ -114,7 +114,11 @@ python3 deploy/homelab/data-guard.py snapshot \
 ```
 
 The second snapshot must report `integrity: ok`, and protected row counts must
-not decrease. There is deliberately no deployment cron entry or systemd timer.
+not decrease. Also verify the public Cloudflare path: `/` must report
+`X-Any-Watch-Mode: app`, authenticated `/api/providers/health` must return the
+complete provider snapshot, and `/status.json` must report `mode: online` with
+`detectedAtIso: null`. There is deliberately no application deployment cron
+entry or systemd timer.
 
 ## Dockerfile not found
 
@@ -165,10 +169,13 @@ data directory must remain mounted during every redeploy.
 
 ## Provider monitoring
 
-Provider health is a snapshot, not a permanent disable switch. A later explicit
-search is allowed to recover a source and clear a stale unavailable badge. OPhim
-uses `https://ophim1.com/v1/api`, allows a 20-second upstream response window,
-and validates HTTP status before parsing results. MovieBox signs the request
+Provider health is a snapshot, not a permanent disable switch. Authenticated
+`GET /api/providers/health` is cached for five minutes, concurrent stale
+requests share one refresh, and each provider check is bounded to 60 seconds.
+Failed initial `unknown` checks become retryable `unavailable` entries, and an
+explicit provider-health retry can restore a healthy source. OPhim uses
+`https://ophim1.com/v1/api`, allows a 20-second upstream response window, and
+validates HTTP status before parsing results. MovieBox signs the request
 separately for each of its API mirrors and fails over between `api4`, `api5`,
 and `api6` when a regional endpoint is unreachable.
 
@@ -181,3 +188,5 @@ cargo run --example provider_certification -- --require-english
 
 For continuous monitoring, probe `/api/health` every minute and run provider
 certification at most once or twice daily to avoid noisy or rate-limited traffic.
+Cloudflare allows aggregate provider health 70 seconds and does not treat an
+endpoint failure as evidence that the whole site requires maintenance.

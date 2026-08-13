@@ -6,13 +6,20 @@ record remains an orange-clouded `A` record pointing at the homelab. Calling
 
 For each request, the Worker:
 
-1. gives the homelab origin four seconds to respond;
-2. returns every non-5xx origin response unchanged, including authentication
-   failures and provider errors;
-3. returns a stable JSON `503` for API calls when the origin is unavailable;
+1. gives ordinary origin requests four seconds, but allows
+   `/api/providers/health` 70 seconds for its 60-second backend checks;
+2. returns non-5xx origin responses unchanged and leaves provider-health errors
+   scoped to that endpoint rather than selecting whole-site maintenance;
+3. returns a stable JSON `503` for ordinary API calls when the origin is unavailable;
 4. serves navigation and static assets from the independent GitHub Pages
    artifact at `https://silent9669.github.io/any-watch/`;
 5. adds `X-Any-Watch-Mode: app` or `maintenance` for verification.
+
+The hostname-scoped `OUTAGE_STATE` Durable Object globally records the first
+failure observed by any Worker location. Worker-served `/status.json` probes
+`/api/health`, returns that stable ISO timestamp to all visitors during the
+incident, and clears it after recovery. `maintenance/status.json` is only a
+timestamp-free default for direct GitHub Pages previews.
 
 Cookies and authorization headers are sent only to the normal any-watch origin.
 Fallback requests are reconstructed with an `Accept` header and do not disclose
@@ -22,7 +29,8 @@ account credentials to GitHub Pages.
 
 1. Manage the `dangphuc.me` zone with Cloudflare nameservers.
 2. Keep `ani` as an orange-clouded `A` record pointing to the homelab address.
-3. Create a Worker from `failover-worker.js`.
+3. Deploy `any-watch-failover` with `./deploy-worker.sh`; its checked-in
+   `wrangler.toml` supplies the module entry and `OUTAGE_STATE` binding/migration.
 4. Add the Worker Route `ani.dangphuc.me/*` for the `dangphuc.me` zone.
 
 Moving the authoritative nameservers disables Namecheap Dynamic DNS. Install
@@ -41,6 +49,25 @@ The token needs only Zone DNS Edit permission for `dangphuc.me`. Run the new
 service successfully before disabling `any-watch-ddns.timer`. Keep the old unit
 installed but disabled so rolling the nameservers back to Namecheap is quick.
 
+### Deploying the Worker
+
+The Worker Route remains bound to `any-watch-failover`. Deploy the script and
+its checked-in Wrangler configuration together:
+
+```bash
+./deploy-worker.sh
+```
+
+`deploy-worker.sh` runs `wrangler deploy` from this directory. `wrangler.toml`
+provides the name, module entry, compatibility date, `workers_dev` setting, and
+Durable Object migration.
+It reads a workers-capable API token from, in order: `$CLOUDFLARE_API_TOKEN`,
+`/etc/any-watch-worker.env` on the machine, or the homelab VM at
+`192.168.1.181` (root-owned `/etc/any-watch-worker.env`, read via the
+docker-group trick). The token on the VM needs Account `Workers Scripts: Edit`
+plus Zone `Workers Routes: Edit` on the account hosting the Worker — the
+DNS-only DDNS token above cannot deploy Workers.
+
 Do not configure `ani.dangphuc.me` as a Worker Custom Domain: this deployment
 has a real external origin and therefore uses a Worker Route.
 
@@ -53,11 +80,16 @@ curl -fsS -D - -o /dev/null https://ani.dangphuc.me/ \
   | grep -i '^x-any-watch-mode: app'
 ```
 
-During a controlled origin stop, `/` must return the maintenance page with
-`X-Any-Watch-Mode: maintenance`, while `/api/health` returns JSON `503` with the
-same header. Restart the origin and confirm the header returns to `app`.
+Also validate authenticated provider health through the public route. During a
+controlled origin stop, `/` must return the maintenance page with
+`X-Any-Watch-Mode: maintenance`, ordinary API routes must return JSON `503`, and
+repeated `/status.json` requests must preserve one `detectedAtIso`. Restart the
+origin and confirm `/status.json` returns `mode: online` with a null
+`detectedAtIso`, then confirm `/` returns app mode.
 
-Worker-only rollback requires removing the Worker Route; the proxied DNS record
-then continues directly to the same homelab origin through Cloudflare. A full
-DNS rollback requires restoring Namecheap BasicDNS nameservers, disabling the
-Cloudflare DDNS timer, and re-enabling the Namecheap DDNS timer.
+Normal Worker rollback redeploys the previous known-good Worker commit with its
+matching `wrangler.toml`. Removing the Worker Route is the emergency bypass; the
+proxied DNS record then reaches the unchanged homelab origin directly. Do not
+delete `OUTAGE_STATE` during a routine rollback. A full DNS rollback requires
+restoring Namecheap BasicDNS nameservers, disabling the Cloudflare DDNS timer,
+and re-enabling the Namecheap DDNS timer.

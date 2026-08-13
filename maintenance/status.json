@@ -4,7 +4,7 @@
   "message": "any-watch is temporarily offline for maintenance. Your watch history, family accounts, and library remain stored safely on the home server.",
   "statusLabel": "Maintenance in progress",
   "expectedReturn": "Shortly",
-  "lastUpdated": "13 Aug · 12:00 ICT",
-  "lastUpdatedIso": "",
+  "detectedAtIso": null,
+  "checkedAtIso": null,
   "privacy": "Account data stays on your home server."
 }

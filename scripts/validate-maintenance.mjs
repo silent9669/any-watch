@@ -41,7 +41,6 @@ const requiredFields = [
   "message",
   "statusLabel",
   "expectedReturn",
-  "lastUpdated",
   "privacy"
 ];
 
@@ -49,6 +48,10 @@ for (const field of requiredFields) {
   if (typeof status[field] !== "string" || !status[field].trim()) {
     throw new Error(`status.json requires a non-empty ${field} string`);
   }
+}
+
+if (status.detectedAtIso !== null || status.checkedAtIso !== null) {
+  throw new Error("static status.json timestamps must be null; the Worker owns live outage timing");
 }
 
 if (!new Set(["maintenance", "online"]).has(status.mode)) {
@@ -64,20 +67,27 @@ const forbidden = [
   /stack\s*trace/i
 ];
 
-for (const [name, source] of [["status.json", statusSource], ["app.js", script]]) {
+for (const [name, source] of [["index.html", html], ["status.json", statusSource], ["app.js", script]]) {
   for (const pattern of forbidden) {
     if (pattern.test(source)) throw new Error(`${name} contains forbidden public detail: ${pattern}`);
   }
 }
 
+for (const [name, source] of [["index.html", html], ["status.json", statusSource], ["app.js", script]]) {
+  if (/ani-desk|ani_desk/i.test(source)) throw new Error(`${name} contains former product branding`);
+}
+
 const checks = [
   [html.includes('aria-live="polite"'), "aria-live status region"],
   [html.includes('id="check-again"'), "Check again action"],
+  [html.includes('id="down-detected"'), "outage detection time"],
+  [html.includes("any-watch"), "any-watch branding"],
   [html.includes('class="announcement__track" tabindex="0"'), "focusable announcement strip"],
   [css.includes("overflow: clip"), "viewport overflow guard"],
   [css.includes("prefers-reduced-motion"), "reduced-motion treatment"],
   [css.includes("pre-emit critique:"), "Hallmark critique stamp"],
   [script.includes('cache: "no-store"'), "no-store status fetch"],
+  [script.includes("detectedAtIso"), "Worker outage timestamp rendering"],
   [!html.includes("<script type=\"module\""), "dependency-free fallback rendering"]
 ];
 

@@ -78,6 +78,7 @@ def mocked_page(page, vite_server):
                 search_error: null,
                 catalog_search_error: null,
                 provider_search_error: null,
+                provider_health_error: null,
                 playback_error: null,
                 download_error: null,
                 downloads: [],
@@ -108,6 +109,8 @@ def mocked_page(page, vite_server):
 
             if (cmd === "list_sources") {
                 return state.sources;
+            } else if (cmd === "list_provider_health" && state.provider_health_error) {
+                throw state.provider_health_error;
             } else if (cmd === "list_provider_health" || cmd === "retry_provider_health") {
                 return state.sources;
             } else if (cmd === "get_discovery") {

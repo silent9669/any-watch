@@ -3,9 +3,9 @@
 ## Current release state
 
 - Production deploys use the exact green commit from the `master` branch. The deployed SHA is recorded in `/srv/any-watch/app/.release-sha`.
-- GitHub Actions runs only for `master` pushes or manual dispatches. It validates quality/API behavior, browser E2E, dependency audit, and the production image build.
+- CI runs for `master` pushes or manual dispatches. It validates quality/API behavior, browser E2E, dependency audit, and the production image build. The immutable GitHub Pages maintenance shell deploys only when maintenance assets or their workflow change, or through manual dispatch.
 - CI does not call live providers. Provider certification is an explicit pre-deploy or incident-response operation because upstream availability is outside repository control.
-- Persistent data is intact: 10 users, 1 favorite, and 41 history rows; SQLite integrity is `ok`.
+- Persistent data counts are deployment-specific. Record a pre-deploy snapshot and require that user, favorite, and history counts do not decrease unexpectedly; SQLite integrity must remain `ok`.
 - Current internal and public health return `{"service":"any-watch","status":"ok"}`.
 
 ## Architecture
@@ -15,7 +15,8 @@
 - User accounts, sessions, favorites, and history are persisted at `/srv/any-watch/data`.
 - Caddy certificates and configuration use named Docker volumes. Do not remove those volumes during an application deploy.
 - Cloudflare fronts `ani.dangphuc.me`; its DDNS timer keeps the origin address current.
-- The `any-watch-failover` Worker Route remains `ani.dangphuc.me/*`. It serves the independent maintenance artifact from `https://silent9669.github.io/any-watch/` when the origin times out or returns a 5xx response.
+- The `any-watch-failover` Worker Route remains `ani.dangphuc.me/*`. Ordinary requests receive a four-second origin window; `/api/providers/health` receives 70 seconds and its endpoint errors never select whole-site maintenance. Ordinary origin timeouts and 5xx responses serve the independent maintenance shell from `https://silent9669.github.io/any-watch/`.
+- The hostname-scoped `OUTAGE_STATE` Durable Object globally preserves the first Worker-observed outage time. Worker-served `/status.json` probes `/api/health`, reports that stable timestamp during the incident, and clears it after recovery.
 - Recreating Caddy or its certificates does not change the Worker Route. Caddy must still present a valid certificate for `ani.dangphuc.me` so Cloudflare can reach the origin.
 
 ## Required safeguards
@@ -26,6 +27,11 @@
 4. Retain the previous application tree or image for rollback.
 5. Never use `docker compose down -v`, delete `/srv/any-watch/data`, or remove Caddy volumes during a normal release.
 6. Do not put passwords, SSH private keys, Cloudflare tokens, or cookies in commands, logs, commits, or this handbook.
+
+An incident deployment from a dirty or uncommitted worktree is not a complete
+release. After restoring service, commit the exact source, obtain green CI, and
+redeploy that reviewed SHA so `/srv/any-watch/app/.release-sha`, Git history,
+and the running image describe the same release.
 
 ## Deploy procedure
 
@@ -93,16 +99,14 @@ The post-deploy SQLite snapshot must report `integrity: ok` and user, favorite, 
 
 - Production currently enables AniZone and AniDB for English and OPhim, KKPhim, and Niniyo for Vietnamese. AniDB fetches through the system `curl` binary with a neutral `any-watch/1.0` user agent — never a browser-claiming UA or reqwest TLS stack — because `anidb.app` challenges browser-claiming user agents issued by non-browser TLS stacks. A provider is selectable only while its application health check is healthy.
 - A provider can become unavailable because of rate limits, regional routing, or upstream changes. Treat that as an operational incident, not a reason to delete user data or bypass access controls.
+- Authenticated `GET /api/providers/health` results are cached for five minutes, and concurrent stale requests share one refresh. Each provider check is bounded to 60 seconds. If the initial UI health request fails while entries are still `unknown`, they become retryable `unavailable` entries instead of remaining indefinitely in `Checking`.
 
 ## Cloudflare failover
 
-The Worker source is `deploy/cloudflare/failover-worker.js`. Deploy it to the existing script and route rather than creating a custom domain:
+Deploy the Worker through its checked-in script and Wrangler configuration. Do not reconstruct the deployment with ad hoc flags or paste only the JavaScript into the dashboard; `wrangler.toml` includes the `OUTAGE_STATE` binding and migration:
 
 ```sh
-npx wrangler deploy deploy/cloudflare/failover-worker.js \
-  --name any-watch-failover \
-  --route 'ani.dangphuc.me/*' \
-  --compatibility-date 2026-08-13
+deploy/cloudflare/deploy-worker.sh
 ```
 
 Online verification must include `X-Any-Watch-Mode: app`:
@@ -112,7 +116,13 @@ curl -fsS -D - -o /dev/null https://ani.dangphuc.me/ \
   | grep -i '^x-any-watch-mode: app'
 ```
 
-For a controlled failover test, stop Caddy briefly. `/` must serve the maintenance page with `X-Any-Watch-Mode: maintenance`, while `/api/health` must return JSON `503` with the same mode header. Restart Caddy immediately and confirm the mode returns to `app`.
+Production validation must confirm:
+
+- `/` returns `X-Any-Watch-Mode: app` while the origin is healthy;
+- authenticated `/api/providers/health` can exceed four seconds, up to the 70-second edge allowance, without selecting maintenance;
+- during a controlled Caddy stop, `/` serves the static shell and ordinary API routes return JSON `503`;
+- `/status.json` reports one stable `detectedAtIso` throughout the outage; and
+- after recovery, `/status.json` returns `mode: online`, clears `detectedAtIso`, and `/` returns app mode again.
 
 ## Monitoring
 
@@ -128,6 +138,12 @@ For a controlled failover test, stop Caddy briefly. `/` must serve the maintenan
 3. Rebuild and run `docker compose up -d any-watch caddy` without `-v`.
 4. Verify internal/public health and database integrity/counts.
 5. Restore the data archive only if the application change actually damaged persistent state.
+
+For a Worker-only rollback, redeploy the previous known-good Worker commit with
+its matching `wrangler.toml`, then repeat the production validation. If a safe
+redeploy is unavailable, remove the Worker Route temporarily so proxied traffic
+reaches the unchanged homelab origin directly. Do not delete the `OUTAGE_STATE`
+namespace or migration during a routine script rollback.
 
 ## Host access
 

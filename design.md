@@ -95,7 +95,9 @@ source status language, or interaction semantics.
 - Focus appears immediately, has strong contrast, and is enlarged for TV mode.
 - Never hide essential poster labels, provider status, or source selection behind
   hover.
-- Provider status is explicit: `Healthy`, `Limited`, `Verify`, or `Offline`.
+- Provider status is explicit: `healthy`, initially `unknown`, or retryable
+  `unavailable`; a failed aggregate check never leaves providers indefinitely
+  in `Checking`.
 - A source choice is always intentional. Fallback suggestions explain why and
   require user selection.
 - Saves are silent. Destructive library actions offer Undo when reversible.

@@ -1,0 +1,12 @@
+name = "any-watch-failover"
+main = "failover-worker.js"
+compatibility_date = "2026-08-13"
+workers_dev = false
+
+[[durable_objects.bindings]]
+name = "OUTAGE_STATE"
+class_name = "OutageState"
+
+[[migrations]]
+tag = "v1"
+new_sqlite_classes = ["OutageState"]

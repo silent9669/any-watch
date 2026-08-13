@@ -1,35 +1,14 @@
 name: Maintenance page
 
 on:
+  push:
+    branches:
+      - master
+    paths:
+      - "maintenance/**"
+      - "scripts/validate-maintenance.mjs"
+      - ".github/workflows/maintenance.yml"
   workflow_dispatch:
-    inputs:
-      mode:
-        description: "Status written to the static artifact"
-        required: true
-        type: choice
-        options:
-          - maintenance
-          - online
-        default: maintenance
-      headline:
-        description: "Optional public headline override"
-        required: false
-        type: string
-      message:
-        description: "Optional public message override"
-        required: false
-        type: string
-      expected_return:
-        description: "Optional public return estimate"
-        required: false
-        type: string
-      deploy_pages:
-        description: "Publish after validation"
-        required: true
-        type: boolean
-        default: false
-  schedule:
-    - cron: "*/5 * * * *"
 
 permissions:
   contents: read
@@ -41,11 +20,8 @@ concurrency:
 jobs:
   validate:
     name: Validate static maintenance artifact
-    if: github.event_name == 'workflow_dispatch' || vars.AUTO_MAINTENANCE_ENABLED == 'true'
     runs-on: ubuntu-latest
     timeout-minutes: 10
-    outputs:
-      mode: ${{ steps.mode.outputs.value }}
     steps:
       - uses: actions/checkout@v7
         with:
@@ -59,71 +35,10 @@ jobs:
       - run: npm ci
       - run: npm run maintenance:validate
 
-      - name: Resolve requested mode
-        id: mode
-        env:
-          EVENT_NAME: ${{ github.event_name }}
-          MANUAL_MODE: ${{ inputs.mode }}
-          HEALTHCHECK_URL: ${{ secrets.ANY_WATCH_HEALTHCHECK_URL }}
-        run: |
-          set -euo pipefail
-          if [ "$EVENT_NAME" = "workflow_dispatch" ]; then
-            echo "value=$MANUAL_MODE" >> "$GITHUB_OUTPUT"
-            exit 0
-          fi
-
-          if [ -z "$HEALTHCHECK_URL" ]; then
-            echo "ANY_WATCH_HEALTHCHECK_URL is required when automatic checks are enabled." >&2
-            exit 1
-          fi
-
-          successes=0
-          failures=0
-          for _ in 1 2; do
-            if curl --fail --silent --show-error \
-              --connect-timeout 2 --max-time 4 \
-              --header "Accept: application/json" \
-              "$HEALTHCHECK_URL" >/dev/null; then
-              successes=$((successes + 1))
-            else
-              failures=$((failures + 1))
-            fi
-          done
-
-          if [ "$successes" -eq 2 ]; then
-            echo "value=online" >> "$GITHUB_OUTPUT"
-          else
-            echo "value=maintenance" >> "$GITHUB_OUTPUT"
-          fi
-
       - name: Stage Pages-only artifact
-        env:
-          STATUS_MODE: ${{ steps.mode.outputs.value }}
-          STATUS_HEADLINE: ${{ inputs.headline }}
-          STATUS_MESSAGE: ${{ inputs.message }}
-          STATUS_EXPECTED_RETURN: ${{ inputs.expected_return }}
         run: |
           set -euo pipefail
           cp -R maintenance .maintenance-dist
-          node --input-type=module <<'NODE'
-          import { readFile, writeFile } from "node:fs/promises";
-          const path = ".maintenance-dist/status.json";
-          const status = JSON.parse(await readFile(path, "utf8"));
-          status.mode = process.env.STATUS_MODE === "online" ? "online" : "maintenance";
-          if (process.env.STATUS_HEADLINE?.trim()) status.headline = process.env.STATUS_HEADLINE.trim().slice(0, 90);
-          if (process.env.STATUS_MESSAGE?.trim()) status.message = process.env.STATUS_MESSAGE.trim().slice(0, 320);
-          if (process.env.STATUS_EXPECTED_RETURN?.trim()) {
-            status.expectedReturn = process.env.STATUS_EXPECTED_RETURN.trim().slice(0, 60);
-          }
-          status.statusLabel = status.mode === "online" ? "The theatre is online" : "Maintenance in progress";
-          status.lastUpdated = new Intl.DateTimeFormat("en-GB", {
-            dateStyle: "medium",
-            timeStyle: "short",
-            timeZone: "UTC"
-          }).format(new Date()) + " UTC";
-          status.lastUpdatedIso = new Date().toISOString();
-          await writeFile(path, JSON.stringify(status, null, 2) + "\n");
-          NODE
 
       - uses: actions/upload-pages-artifact@v4
         with:
@@ -132,9 +47,6 @@ jobs:
   deploy:
     name: Deploy static maintenance artifact
     needs: validate
-    if: >-
-      (github.event_name == 'workflow_dispatch' && inputs.deploy_pages) ||
-      (github.event_name == 'schedule' && vars.AUTO_MAINTENANCE_ENABLED == 'true')
     runs-on: ubuntu-latest
     timeout-minutes: 10
     environment:

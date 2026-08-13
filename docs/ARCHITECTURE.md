@@ -5,13 +5,17 @@
 ```text
 Authenticated desktop, mobile, or TV browser
   -> Cloudflare DNS/TLS edge
-  -> Caddy
-  -> Rust/Axum service
-       -> React/Vite static assets
-       -> same-origin /api routes
-       -> provider orchestration and opaque media proxy
-       -> SQLite account and library data
-       -> AniList, AniSkip, and admitted providers
+  -> any-watch failover Worker
+       -> OUTAGE_STATE Durable Object
+       -> dynamic /status.json
+       -> GitHub Pages immutable maintenance shell when origin is unavailable
+       -> Caddy
+            -> Rust/Axum service
+                 -> React/Vite static assets
+                 -> same-origin /api routes
+                 -> provider orchestration and opaque media proxy
+                 -> SQLite account and library data
+                 -> AniList, AniSkip, and admitted providers
 ```
 
 Only the reverse proxy publishes host ports. The application serves the browser
@@ -27,7 +31,9 @@ desktop updater, MPV process, or application-managed local filesystem library.
 | Rust core | Provider adapters, catalog matching, skip timing, configuration, and shared SQLite models |
 | SQLite | Users, sessions, My List, watch progress, and existing compatible data |
 | Caddy | TLS, reverse proxy, security headers, compression, and access logs |
-| Cloudflare | DNS, TLS edge, static-cache policy, and maintenance routing |
+| Cloudflare Worker | Origin routing, four-second ordinary timeout, 70-second provider-health allowance, dynamic status, and maintenance selection |
+| Durable Object `OUTAGE_STATE` | Globally persistent first Worker-observed outage timestamp, cleared on recovery |
+| GitHub Pages | Immutable, account-free maintenance shell; it does not own live status |
 
 ## Browser contract
 
@@ -51,6 +57,11 @@ Playback preparation stores upstream URLs, cookies, and required headers in a
 short-lived server session. HLS playlists and DASH manifests are rewritten to
 opaque same-origin resource IDs. Browser JSON, markup, and logs must not expose
 raw signed media URLs or reversible encodings of private upstream material.
+
+`GET /api/providers/health` caches aggregate results for five minutes and
+coalesces concurrent stale refreshes. Provider checks run concurrently with a
+60-second per-check backend timeout. Cloudflare allows this endpoint 70 seconds
+and does not reinterpret provider-health errors as a whole-site outage.
 
 ## Persistence compatibility
 

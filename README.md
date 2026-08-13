@@ -59,8 +59,15 @@ Homelab and Cloudflare instructions remain under `deploy/`. Keep the existing
 data mount and environment variables when upgrading so accounts, sessions,
 history, and My List remain available.
 
+Provider-health GETs are cached and concurrent refreshes are coalesced for five
+minutes; checks have a 60-second backend budget. Cloudflare allows that endpoint
+70 seconds without selecting whole-site maintenance. The independent GitHub
+Pages maintenance shell is static; the Worker owns dynamic `/status.json` and
+the globally stable first-observed outage timestamp.
+
 ## Documentation
 
 - [Architecture](docs/ARCHITECTURE.md)
+- [Deployment handbook](docs/DEPLOYMENT_HANDBOOK.md)
 - [Provider inventory](docs/PROVIDER_INVENTORY.md)
 - [Design system](design.md)

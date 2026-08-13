@@ -24,7 +24,7 @@ use axum::{
 };
 use bytes::Bytes;
 use db::{NewFavorite, NewHistory, SessionUser, WebDatabase};
-use futures_util::TryStreamExt;
+use futures_util::{future::join_all, FutureExt, TryStreamExt};
 use hmac::{Hmac, Mac};
 use rand_core::{OsRng, RngCore};
 use reqwest::{header::HeaderMap as ReqwestHeaderMap, Client, Url};
@@ -35,6 +35,7 @@ use std::{
     collections::HashMap,
     env,
     net::SocketAddr,
+    panic::AssertUnwindSafe,
     path::PathBuf,
     sync::{Arc, Mutex as StdMutex},
     time::{Duration, Instant},
@@ -53,6 +54,8 @@ const MAX_MEDIA_SESSIONS: usize = 2_048;
 const LOGIN_ATTEMPT_WINDOW: Duration = Duration::from_secs(15 * 60);
 const LOGIN_ATTEMPT_LIMIT: usize = 8;
 const LOGIN_ATTEMPT_KEY_LIMIT: usize = 10_000;
+const PROVIDER_HEALTH_TTL: Duration = Duration::from_secs(5 * 60);
+const PROVIDER_HEALTH_TIMEOUT: Duration = Duration::from_secs(60);
 
 #[derive(Clone)]
 struct AppState {
@@ -64,7 +67,15 @@ struct AppState {
     login_attempts: Arc<Mutex<HashMap<String, Vec<Instant>>>>,
     download_tickets: Arc<Mutex<HashMap<String, DownloadTicket>>>,
     media_sessions: Arc<Mutex<HashMap<String, MediaSession>>>,
+    provider_health: Arc<Mutex<ProviderHealthCache>>,
+    provider_health_refresh: Arc<Mutex<()>>,
     media_client: Client,
+}
+
+#[derive(Default)]
+struct ProviderHealthCache {
+    checked_at: Option<Instant>,
+    health: Vec<SourceDto>,
 }
 
 #[derive(Clone)]
@@ -97,7 +108,7 @@ enum MediaTransform {
     AssToWebVtt,
 }
 
-#[derive(Debug, Serialize)]
+#[derive(Debug, Clone, Serialize)]
 #[serde(rename_all = "camelCase")]
 struct ApiErrorBody {
     code: String,
@@ -282,7 +293,7 @@ struct RemoveInput {
     anime_id: String,
 }
 
-#[derive(Debug, Serialize)]
+#[derive(Debug, Clone, Serialize)]
 #[serde(rename_all = "camelCase")]
 struct SourceDto {
     name: String,
@@ -373,6 +384,8 @@ async fn main() -> Result<()> {
         login_attempts: Arc::new(Mutex::new(HashMap::new())),
         download_tickets: Arc::new(Mutex::new(HashMap::new())),
         media_sessions: Arc::new(Mutex::new(HashMap::new())),
+        provider_health: Arc::new(Mutex::new(ProviderHealthCache::default())),
+        provider_health_refresh: Arc::new(Mutex::new(())),
         media_client: Client::builder()
             .connect_timeout(Duration::from_secs(20))
             .timeout(Duration::from_secs(6 * 60 * 60))
@@ -651,22 +664,35 @@ async fn list_sources(
     headers: HeaderMap,
 ) -> ApiResult<Json<Vec<SourceDto>>> {
     require_user(&state, &headers).await?;
-    Ok(Json(
-        state
-            .providers
-            .list_providers()
+    let cached = state.provider_health.lock().await;
+    let mut sources = source_list(&state);
+    for source in &mut sources {
+        if let Some(health) = cached
+            .health
             .iter()
-            .map(|provider| SourceDto {
-                name: provider.name().into(),
-                language: language_label(provider.language()).into(),
-                language_group: language_group(provider.language()).into(),
-                status: "unknown".into(),
-                failure_code: None,
-                capabilities: provider.capabilities(),
-                website_url: provider.website_url().map(str::to_string),
-            })
-            .collect(),
-    ))
+            .find(|health| health.name == source.name)
+        {
+            *source = health.clone();
+        }
+    }
+    Ok(Json(sources))
+}
+
+fn source_list(state: &AppState) -> Vec<SourceDto> {
+    state
+        .providers
+        .list_providers()
+        .iter()
+        .map(|provider| SourceDto {
+            name: provider.name().into(),
+            language: language_label(provider.language()).into(),
+            language_group: language_group(provider.language()).into(),
+            status: "unknown".into(),
+            failure_code: None,
+            capabilities: provider.capabilities(),
+            website_url: provider.website_url().map(str::to_string),
+        })
+        .collect()
 }
 
 fn source_dto(
@@ -690,7 +716,30 @@ async fn list_provider_health(
     headers: HeaderMap,
 ) -> ApiResult<Json<Vec<SourceDto>>> {
     require_user(&state, &headers).await?;
-    Ok(Json(check_provider_health(&state, None).await?))
+    {
+        let cache = state.provider_health.lock().await;
+        if cache
+            .checked_at
+            .is_some_and(|checked_at| checked_at.elapsed() < PROVIDER_HEALTH_TTL)
+        {
+            return Ok(Json(cache.health.clone()));
+        }
+    }
+
+    let _refresh = state.provider_health_refresh.lock().await;
+    let cache = state.provider_health.lock().await;
+    if cache
+        .checked_at
+        .is_some_and(|checked_at| checked_at.elapsed() < PROVIDER_HEALTH_TTL)
+    {
+        return Ok(Json(cache.health.clone()));
+    }
+    drop(cache);
+    let health = check_provider_health(&state, None).await?;
+    let mut cache = state.provider_health.lock().await;
+    cache.checked_at = Some(Instant::now());
+    cache.health = health.clone();
+    Ok(Json(health))
 }
 
 async fn retry_provider_health(
@@ -700,9 +749,23 @@ async fn retry_provider_health(
 ) -> ApiResult<Json<Vec<SourceDto>>> {
     require_app_request(&headers)?;
     require_user(&state, &headers).await?;
-    Ok(Json(
-        check_provider_health(&state, input.provider.as_deref()).await?,
-    ))
+    let health = check_provider_health(&state, input.provider.as_deref()).await?;
+    let mut cache = state.provider_health.lock().await;
+    for update in &health {
+        if let Some(current) = cache
+            .health
+            .iter_mut()
+            .find(|item| item.name == update.name)
+        {
+            *current = update.clone();
+        } else {
+            cache.health.push(update.clone());
+        }
+    }
+    if input.provider.is_none() {
+        cache.checked_at = Some(Instant::now());
+    }
+    Ok(Json(health))
 }
 
 async fn check_provider_health(
@@ -719,21 +782,29 @@ async fn check_provider_health(
         ));
     }
 
-    let mut tasks = tokio::task::JoinSet::new();
-    for provider in state.providers.list_providers() {
-        if selected.is_some_and(|name| name != provider.name()) {
-            continue;
-        }
-        let provider = provider.clone();
-        tasks.spawn(async move {
-            let result =
-                tokio::time::timeout(Duration::from_secs(90), provider.health_check()).await;
+    let checks = state
+        .providers
+        .list_providers()
+        .iter()
+        .filter(|provider| selected.is_none_or(|name| name == provider.name()))
+        .cloned()
+        .map(|provider| async move {
+            let result = tokio::time::timeout(
+                PROVIDER_HEALTH_TIMEOUT,
+                AssertUnwindSafe(provider.health_check()).catch_unwind(),
+            )
+            .await;
             match result {
-                Ok(Ok(())) => source_dto(provider.as_ref(), "healthy", None),
-                Ok(Err(error)) => source_dto(
+                Ok(Ok(Ok(()))) => source_dto(provider.as_ref(), "healthy", None),
+                Ok(Ok(Err(error))) => source_dto(
                     provider.as_ref(),
                     "unavailable",
                     Some(classify_provider_error(&error.to_string()).into()),
+                ),
+                Ok(Err(_)) => source_dto(
+                    provider.as_ref(),
+                    "unavailable",
+                    Some("PROVIDER_UNAVAILABLE".into()),
                 ),
                 Err(_) => source_dto(
                     provider.as_ref(),
@@ -742,21 +813,8 @@ async fn check_provider_health(
                 ),
             }
         });
-    }
 
-    let mut health = Vec::new();
-    while let Some(result) = tasks.join_next().await {
-        health.push(result.map_err(|error| ApiError::internal("provider-health", error))?);
-    }
-    health.sort_by_key(|item| {
-        state
-            .providers
-            .list_providers()
-            .iter()
-            .position(|provider| provider.name() == item.name)
-            .unwrap_or(usize::MAX)
-    });
-    Ok(health)
+    Ok(join_all(checks).await)
 }
 
 async fn discovery(State(state): State<AppState>, headers: HeaderMap) -> ApiResult<Json<Value>> {

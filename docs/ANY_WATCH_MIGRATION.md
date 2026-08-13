@@ -41,8 +41,9 @@ For each candidate:
 4. Certify search, details, episodes, playback preparation, subtitles, and
    browser playback independently.
 5. Record the result, date, region, and failure mode in the provider registry.
-6. Enable only after the certification passes; otherwise expose `Limited`,
-   `Verify`, or `Offline` without deleting user library data.
+6. Enable only after certification passes; otherwise expose retryable
+   `unavailable` without deleting user library data. An initial aggregate health
+   failure must transition `unknown` entries out of `Checking`.
 
 See [PROVIDER_INVENTORY.md](PROVIDER_INVENTORY.md) for the current inventory.
 

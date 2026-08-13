@@ -298,7 +298,16 @@ function App() {
           const selected = health.find((source) => source.name === current?.name && source.status === "healthy");
           return selected ?? firstSearchableSource(health, languageGroup) ?? null;
         });
-      }).catch((err) => setError(toAppError(err, "provider-health")));
+      }).catch((err) => {
+        const appError = toAppError(err, "provider-health");
+        setSources((current) => current.map((source) => source.status === "unknown" ? {
+          ...source,
+          status: "unavailable",
+          failureCode: appError.code,
+        } : source));
+        setSelectedSource(null);
+        setError(appError);
+      });
       void api.getDiscovery().then((catalog) => {
         setDiscovery(catalog);
       }).catch((err) => setError(toAppError(err, "catalog")));
@@ -531,7 +540,13 @@ function App() {
         selectProviderSource(update);
       }
     } catch (err) {
-      setError(toAppError(err, "provider-health"));
+      const appError = toAppError(err, "provider-health");
+      setSources((current) => current.map((item) => item.name === source.name ? {
+        ...item,
+        status: "unavailable",
+        failureCode: appError.code,
+      } : item));
+      setError(appError);
     } finally {
       setProviderHealthPending(null);
     }

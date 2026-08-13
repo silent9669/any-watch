@@ -171,7 +171,8 @@ def test_key_contrast_ratios(maintenance_url):
 def test_refresh_online_offline_and_failure_states(maintenance_url):
     with sync_playwright() as playwright:
         browser = playwright.chromium.launch()
-        page = browser.new_page()
+        context = browser.new_context(locale="en-GB", timezone_id="UTC")
+        page = context.new_page()
         mode = {"value": "maintenance"}
 
         def status_route(route):
@@ -185,7 +186,7 @@ def test_refresh_online_offline_and_failure_states(maintenance_url):
                     "message": "Your family library remains safe on the home server.",
                     "statusLabel": "The theatre is online" if mode["value"] == "online" else "Maintenance in progress",
                     "expectedReturn": "Shortly",
-                    "lastUpdated": "Now",
+                    "detectedAtIso": "2026-08-13T10:15:42.000Z" if mode["value"] == "maintenance" else None,
                     "privacy": "Account data stays on your home server.",
                 }
             )
@@ -193,6 +194,10 @@ def test_refresh_online_offline_and_failure_states(maintenance_url):
         page.route("**/status.json?now=*", status_route)
         page.goto(maintenance_url, wait_until="networkidle")
         button = page.locator("#check-again")
+        expect(page.locator("#down-detected")).to_have_text("13 Aug 2026 · 10:15:42 UTC")
+        expect(page.locator("#down-detected")).to_have_attribute("datetime", "2026-08-13T10:15:42.000Z")
+        expect(page).to_have_title("any-watch · Theatre maintenance")
+        expect(page.locator(".brand-lockup strong")).to_have_text("any-watch")
 
         button.click()
         expect(button).to_have_attribute("data-state", "offline")
@@ -207,4 +212,26 @@ def test_refresh_online_offline_and_failure_states(maintenance_url):
         button.click()
         expect(button).to_have_attribute("data-state", "failed")
         expect(page.locator("#status-live")).to_contain_text("request failed")
+        browser.close()
+
+
+def test_missing_detection_time_is_honest(maintenance_url):
+    with sync_playwright() as playwright:
+        browser = playwright.chromium.launch()
+        page = browser.new_page()
+        page.route(
+            "**/status.json?now=*",
+            lambda route: route.fulfill(json={
+                "mode": "maintenance",
+                "headline": "The theatre is taking a short break.",
+                "message": "any-watch is temporarily offline for maintenance.",
+                "statusLabel": "Maintenance in progress",
+                "expectedReturn": "Shortly",
+                "detectedAtIso": None,
+                "privacy": "Account data stays on your home server.",
+            }),
+        )
+        page.goto(maintenance_url, wait_until="networkidle")
+        expect(page.locator("#down-detected")).to_have_text("Detection time unavailable")
+        assert page.locator("body").inner_text().lower().find("ani-desk") == -1
         browser.close()

@@ -683,6 +683,32 @@ def test_t2_search_provider_disconnect(mocked_page):
     expect(mocked_page.locator(".error-notice")).to_be_visible()
     expect(mocked_page.locator(".error-notice strong")).to_have_text("UNEXPECTED_ERROR")
 
+
+def test_t2_failed_initial_health_becomes_retryable(mocked_page):
+    mocked_page.evaluate("""() => {
+        const state = window.__API_MOCK_STATE__;
+        state.sources = (state.sources || []).map((source) => ({
+            ...source,
+            status: 'unknown',
+            failureCode: null,
+        }));
+        state.provider_health_error = {
+            code: 'SERVICE_UNAVAILABLE',
+            message: 'Provider health is temporarily unavailable.',
+            operation: 'provider-health',
+            retryable: true,
+            correlationId: 'mock-provider-health-503',
+        };
+        localStorage.setItem('__API_MOCK_STATE__', JSON.stringify(state));
+    }""")
+    mocked_page.reload()
+    mocked_page.locator(".hero-search-trigger").click()
+    provider = mocked_page.locator(".availability-strip .provider-chip:has-text('AniZone')")
+    expect(provider).to_be_enabled()
+    expect(provider).to_have_attribute("aria-label", "AniZone: Recheck")
+    expect(provider).to_have_attribute("title", "SERVICE_UNAVAILABLE")
+
+
 def test_t2_unavailable_provider_stays_offline_until_health_recheck_passes(mocked_page):
     mocked_page.evaluate("""() => {
         const state = window.__API_MOCK_STATE__;

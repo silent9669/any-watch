@@ -9,33 +9,28 @@
       "any-watch is temporarily offline for maintenance. Your watch history, family accounts, and library remain stored safely on the home server.",
     statusLabel: "Maintenance in progress",
     expectedReturn: "Shortly",
-    lastUpdated: "",
+    detectedAtIso: null,
     privacy: "Account data stays on your home server."
   });
 
-  const FRESH_WINDOW_MS = 30 * 60 * 1000;
-
-  function formatNow(now = new Date()) {
+  function detectionTime(value) {
+    if (typeof value !== "string" || !value.trim()) return null;
+    const date = new Date(value);
+    if (!Number.isFinite(date.getTime())) return null;
     const parts = new Intl.DateTimeFormat("en-GB", {
       day: "numeric",
       month: "short",
+      year: "numeric",
       hour: "2-digit",
       minute: "2-digit",
+      second: "2-digit",
       timeZoneName: "short"
-    }).formatToParts(now);
-    const value = (type) => parts.find((part) => part.type === type)?.value ?? "";
-    return `${value("day")} ${value("month")} · ${value("hour")}:${value("minute")} ${value("timeZoneName")}`;
-  }
-
-  function displayTime(data) {
-    const iso = typeof data?.lastUpdatedIso === "string" ? data.lastUpdatedIso : "";
-    if (iso) {
-      const stamp = new Date(iso).getTime();
-      if (Number.isFinite(stamp) && Date.now() - stamp < FRESH_WINDOW_MS) {
-        return safeText(data?.lastUpdated, formatNow(), 60);
-      }
-    }
-    return formatNow();
+    }).formatToParts(date);
+    const part = (type) => parts.find((item) => item.type === type)?.value ?? "";
+    return {
+      iso: date.toISOString(),
+      display: `${part("day")} ${part("month")} ${part("year")} · ${part("hour")}:${part("minute")}:${part("second")} ${part("timeZoneName")}`
+    };
   }
 
   const elements = {
@@ -43,11 +38,10 @@
     message: document.querySelector("#maintenance-message"),
     current: document.querySelector("#current-status"),
     expected: document.querySelector("#expected-return"),
-    updated: document.querySelector("#last-update"),
+    detected: document.querySelector("#down-detected"),
     privacy: document.querySelector("#privacy-note"),
     button: document.querySelector("#check-again"),
-    live: document.querySelector("#status-live"),
-    frame: document.querySelector(".maintenance-frame")
+    live: document.querySelector("#status-live")
   };
 
   let status = defaults;
@@ -68,7 +62,7 @@
         60
       ),
       expectedReturn: safeText(data?.expectedReturn, defaults.expectedReturn, 60),
-      lastUpdated: displayTime(data),
+      detected: detectionTime(data?.detectedAtIso),
       privacy: safeText(data?.privacy, defaults.privacy, 120)
     };
   }
@@ -80,7 +74,9 @@
     elements.message.textContent = next.message;
     elements.current.lastChild.textContent = ` ${next.statusLabel}`;
     elements.expected.textContent = next.expectedReturn;
-    elements.updated.textContent = next.lastUpdated;
+    elements.detected.textContent = next.detected?.display ?? "Detection time unavailable";
+    if (next.detected) elements.detected.dateTime = next.detected.iso;
+    else elements.detected.removeAttribute("datetime");
     elements.privacy.lastChild.textContent = ` ${next.privacy}`;
   }
 
