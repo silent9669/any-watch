@@ -13,6 +13,7 @@ if [ -d "$OLD_ROOT" ] && [ ! -d "$NEW_ROOT" ]; then
 fi
 
 APP_DIR="$NEW_ROOT/app"
+UNIT_SOURCE="$APP_DIR/deploy/homelab"
 if [ ! -d "$APP_DIR" ]; then
   echo "error: expected app directory at $APP_DIR" >&2
   exit 1
@@ -35,10 +36,13 @@ done
 
 for unit in any-watch-ddns.service any-watch-ddns.timer \
   any-watch-cloudflare-ddns.service any-watch-cloudflare-ddns.timer; do
-  if [ -f "$SCRIPT_DIR/$unit" ]; then
-    cp "$SCRIPT_DIR/$unit" "/etc/systemd/system/$unit"
+  if [ -f "$UNIT_SOURCE/$unit" ]; then
+    cp "$UNIT_SOURCE/$unit" "/etc/systemd/system/$unit"
     chmod 644 "/etc/systemd/system/$unit"
     echo "Installed unit: $unit"
+  else
+    echo "error: unit source missing: $UNIT_SOURCE/$unit" >&2
+    exit 1
   fi
 done
 
