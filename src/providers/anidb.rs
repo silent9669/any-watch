@@ -2,18 +2,16 @@ use super::{Anime, AnimeProvider, Episode, Language, ProviderCapabilities, Strea
 use anyhow::{Context, Result};
 use async_trait::async_trait;
 use regex::Regex;
-use reqwest::header::{HeaderMap, HeaderValue, REFERER, USER_AGENT};
 use serde_json::Value;
 use std::collections::HashMap;
-use std::time::Duration;
+use tokio::process::Command;
 use url::Url;
 
 const BASE_URL: &str = "https://anidb.app";
 const USER_AGENT_VALUE: &str = "ani-desk/1.0";
+const OUTPUT_MARKER: &str = "\n__ANI_DESK__%{http_code}__%{content_type}";
 
-pub struct AniDbProvider {
-    client: reqwest::Client,
-}
+pub struct AniDbProvider;
 
 impl Default for AniDbProvider {
     fn default() -> Self {
@@ -23,33 +21,65 @@ impl Default for AniDbProvider {
 
 impl AniDbProvider {
     pub fn new() -> Self {
-        let mut headers = HeaderMap::new();
-        headers.insert(USER_AGENT, HeaderValue::from_static(USER_AGENT_VALUE));
-        Self {
-            client: reqwest::Client::builder()
-                .default_headers(headers)
-                .redirect(reqwest::redirect::Policy::limited(8))
-                .timeout(Duration::from_secs(30))
-                .use_native_tls()
-                .build()
-                .expect("failed to build AniDB client"),
+        Self
+    }
+
+    async fn curl_fetch(
+        &self,
+        url: &Url,
+        referer: Option<&str>,
+        range: Option<&str>,
+    ) -> Result<(u16, String, String)> {
+        let mut args: Vec<String> = vec![
+            "-sS".into(),
+            "-L".into(),
+            "--max-redirs".into(),
+            "8".into(),
+            "--max-time".into(),
+            "30".into(),
+            "-A".into(),
+            USER_AGENT_VALUE.into(),
+        ];
+        if let Some(referer) = referer {
+            args.push("-e".into());
+            args.push(referer.to_string());
         }
+        if let Some(range) = range {
+            args.push("-H".into());
+            args.push(format!("Range: {range}"));
+        }
+        args.push("-w".into());
+        args.push(OUTPUT_MARKER.into());
+        args.push(url.as_str().into());
+        let output = Command::new("curl")
+            .args(&args)
+            .output()
+            .await
+            .with_context(|| "PROVIDER_UNAVAILABLE: AniDB requires the curl binary")?;
+        let stdout = String::from_utf8_lossy(&output.stdout).into_owned();
+        let (body, meta) = stdout
+            .rsplit_once("__ANI_DESK__")
+            .unwrap_or((stdout.as_str(), "000__"));
+        let mut fields = meta.split("__");
+        let status = fields
+            .next()
+            .unwrap_or("000")
+            .trim()
+            .parse::<u16>()
+            .unwrap_or(0);
+        let content_type = fields.next().unwrap_or_default().to_string();
+        anyhow::ensure!(
+            status != 0,
+            "PROVIDER_UNAVAILABLE: AniDB request failed: {}",
+            String::from_utf8_lossy(&output.stderr)
+        );
+        Ok((status, content_type, body.to_string()))
     }
 
     async fn text(&self, url: Url, operation: &str) -> Result<String> {
-        let response = self
-            .client
-            .get(url)
-            .send()
-            .await
-            .with_context(|| format!("{operation} request failed"))?;
-        let status = response.status();
-        let body = response
-            .text()
-            .await
-            .with_context(|| format!("{operation} returned an unreadable response"))?;
+        let (status, _, body) = self.curl_fetch(&url, None, None).await?;
         anyhow::ensure!(
-            status.is_success(),
+            status == 200,
             "PROVIDER_UNAVAILABLE: {operation} returned HTTP {status}: {}",
             body.chars().take(200).collect::<String>()
         );
@@ -166,22 +196,63 @@ impl AniDbProvider {
             .map(|capture| capture["url"].to_string())
             .context("STREAM_NOT_FOUND: AniDB embed returned no HLS stream")?;
         let mut headers = HashMap::new();
-        headers.insert(REFERER.as_str().to_string(), embed_url.to_string());
-        headers.insert(
-            USER_AGENT.as_str().to_string(),
-            USER_AGENT_VALUE.to_string(),
-        );
+        headers.insert("referer".to_string(), embed_url.to_string());
+        headers.insert("user-agent".to_string(), USER_AGENT_VALUE.to_string());
         Ok(StreamInfo {
             video_url,
             subtitles: Vec::new(),
             qualities: vec!["Auto".into()],
             headers,
+            use_curl: true,
         })
     }
 
     fn anime_url(anime_id: &str) -> Result<Url> {
         Self::numeric_anime_id(anime_id)?;
         Url::parse(&format!("{BASE_URL}/anime/{anime_id}")).map_err(Into::into)
+    }
+
+    async fn probe(&self, stream: &StreamInfo) -> Result<()> {
+        let mut next_url = Url::parse(&stream.video_url)?;
+        let referer = stream.headers.get("referer").map(String::as_str);
+        for depth in 0..3 {
+            let (status, content_type, body) = self
+                .curl_fetch(&next_url, referer, Some("bytes=0-65535"))
+                .await?;
+            anyhow::ensure!(
+                status == 200 || status == 206,
+                "STREAM_FORBIDDEN: media request returned HTTP {status}"
+            );
+            anyhow::ensure!(
+                !body.is_empty(),
+                "STREAM_UNAVAILABLE: media response was empty"
+            );
+            anyhow::ensure!(
+                !body.trim_start().starts_with('<'),
+                "STREAM_UNAVAILABLE: media request returned HTML"
+            );
+            let is_hls = content_type.contains("mpegurl")
+                || next_url.path().to_ascii_lowercase().contains(".m3u8")
+                || body.starts_with("#EXTM3U");
+            if !is_hls {
+                return Ok(());
+            }
+            anyhow::ensure!(
+                body.starts_with("#EXTM3U"),
+                "STREAM_UNAVAILABLE: HLS response was not a playlist"
+            );
+            anyhow::ensure!(
+                depth < 2,
+                "STREAM_UNAVAILABLE: HLS playlist nesting exceeded the safety limit"
+            );
+            next_url = body
+                .lines()
+                .map(str::trim)
+                .find(|line| !line.is_empty() && !line.starts_with('#'))
+                .and_then(|line| next_url.join(line).ok())
+                .context("STREAM_UNAVAILABLE: HLS playlist contained no media resource")?;
+        }
+        anyhow::bail!("STREAM_UNAVAILABLE: media probe did not resolve")
     }
 }
 
@@ -231,7 +302,7 @@ impl AnimeProvider for AniDbProvider {
         let mut last_error = None;
         for episode in episodes.into_iter().rev().take(24) {
             match self.get_stream_url(&episode.id).await {
-                Ok(stream) => match super::probe_stream_with(&self.client, &stream).await {
+                Ok(stream) => match self.probe(&stream).await {
                     Ok(()) => return Ok(()),
                     Err(error) => last_error = Some(error),
                 },
@@ -321,5 +392,6 @@ mod tests {
         .unwrap();
         assert_eq!(stream.video_url, "https://hls.example/master.m3u8");
         assert_eq!(stream.headers["referer"], "https://anidb.app/embed/token");
+        assert!(stream.use_curl);
     }
 }

@@ -463,6 +463,7 @@ impl AnimeProvider for KkphimProvider {
             subtitles,
             qualities,
             headers,
+            use_curl: false,
         })
     }
 }

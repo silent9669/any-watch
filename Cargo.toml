@@ -19,7 +19,7 @@ name = "ani_desk_core"
 tokio = { version = "1", features = ["full"] }
 
 # HTTP client
-reqwest = { version = "0.12", default-features = false, features = ["json", "rustls-tls", "native-tls"] }
+reqwest = { version = "0.12", default-features = false, features = ["json", "rustls-tls"] }
 
 # Serialization
 serde = { version = "1.0", features = ["derive"] }

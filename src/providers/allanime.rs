@@ -1527,6 +1527,7 @@ impl AnimeProvider for AllAnimeProvider {
             subtitles,
             qualities: vec![candidate.label],
             headers: candidate.headers,
+            use_curl: false,
         })
     }
 

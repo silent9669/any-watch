@@ -233,6 +233,7 @@ impl AniZoneProvider {
             subtitles,
             qualities: vec!["Auto".into()],
             headers,
+            use_curl: false,
         })
     }
 

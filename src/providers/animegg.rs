@@ -161,6 +161,7 @@ impl AnimeGgProvider {
             subtitles: Vec::new(),
             qualities: sources.into_iter().map(|source| source.1).collect(),
             headers,
+            use_curl: false,
         })
     }
 }

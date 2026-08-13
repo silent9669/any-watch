@@ -449,6 +449,7 @@ impl AnimeProvider for MovieBoxProvider {
             subtitles,
             qualities,
             headers,
+            use_curl: false,
         })
     }
 

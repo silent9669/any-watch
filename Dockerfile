@@ -17,9 +17,9 @@ COPY src ./src
 COPY server ./server
 RUN cargo build --locked --release -p ani-desk-server
 
-FROM debian:bookworm-slim
+FROM debian:trixie-slim
 RUN apt-get update \
-    && apt-get install -y --no-install-recommends ca-certificates gosu \
+    && apt-get install -y --no-install-recommends ca-certificates curl gosu \
     && rm -rf /var/lib/apt/lists/* \
     && printf 'precedence ::ffff:0:0/96  100\n' >> /etc/gai.conf \
     && groupadd --system ani-desk \

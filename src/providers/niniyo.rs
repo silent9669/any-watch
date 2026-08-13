@@ -194,6 +194,7 @@ impl NiniyoProvider {
             subtitles: Vec::new(),
             qualities: vec![value["server"].as_str().unwrap_or("auto").to_string()],
             headers,
+            use_curl: false,
         })
     }
 }

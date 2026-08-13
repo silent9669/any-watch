@@ -339,6 +339,7 @@ impl AnimeProvider for AnimeVietSubProvider {
             subtitles,
             qualities: vec!["auto".to_string()],
             headers,
+            use_curl: false,
         })
     }
 }

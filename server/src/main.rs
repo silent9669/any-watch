@@ -1237,6 +1237,9 @@ async fn proxy_media_url(
     url: Url,
     incoming: &HeaderMap,
 ) -> ApiResult<Response> {
+    if session.stream.use_curl {
+        return proxy_media_url_via_curl(session_id, session, url, incoming).await;
+    }
     let mut request = state
         .media_client
         .get(url.clone())
@@ -1359,6 +1362,148 @@ async fn proxy_media_url(
             response.bytes_stream().map_err(std::io::Error::other),
         ))
         .map_err(|error| ApiError::internal("playback", error))
+}
+
+async fn proxy_media_url_via_curl(
+    session_id: &str,
+    session: &MediaSession,
+    url: Url,
+    incoming: &HeaderMap,
+) -> ApiResult<Response> {
+    let range = incoming
+        .get(header::RANGE)
+        .and_then(|value| value.to_str().ok())
+        .map(str::to_string);
+    let (status, content_type, body) =
+        curl_fetch(&url, &session.stream.headers, range.as_deref(), 600).await?;
+    let status = StatusCode::from_u16(status).unwrap_or(StatusCode::BAD_GATEWAY);
+    if !status.is_success() && status != StatusCode::PARTIAL_CONTENT {
+        return Err(ApiError::new(
+            StatusCode::BAD_GATEWAY,
+            "PROXY_FAILED",
+            "playback",
+            format!("upstream returned {status}"),
+            true,
+        ));
+    }
+    let hls = url.path().to_ascii_lowercase().contains(".m3u8") || content_type.contains("mpegurl");
+    if hls {
+        let text =
+            String::from_utf8(body).map_err(|error| ApiError::internal("playback", error))?;
+        let rewritten = rewrite_hls_manifest(session_id, session, &url, &text);
+        return Response::builder()
+            .status(StatusCode::OK)
+            .header(header::CONTENT_TYPE, "application/vnd.apple.mpegurl")
+            .header(header::CACHE_CONTROL, "no-store")
+            .body(Body::from(rewritten))
+            .map_err(|error| ApiError::internal("playback", error));
+    }
+    let dash =
+        url.path().to_ascii_lowercase().contains(".mpd") || content_type.contains("dash+xml");
+    if dash {
+        let text =
+            String::from_utf8(body).map_err(|error| ApiError::internal("playback", error))?;
+        let rewritten = rewrite_dash_manifest(session_id, session, &url, &text);
+        return Response::builder()
+            .status(StatusCode::OK)
+            .header(header::CONTENT_TYPE, "application/dash+xml; charset=utf-8")
+            .header(header::CACHE_CONTROL, "no-store")
+            .body(Body::from(rewritten))
+            .map_err(|error| ApiError::internal("playback", error));
+    }
+    let mut builder = Response::builder()
+        .status(status)
+        .header(header::CACHE_CONTROL, "private, no-store");
+    if !content_type.is_empty() {
+        builder = builder.header(header::CONTENT_TYPE, content_type);
+    }
+    builder
+        .body(Body::from(body))
+        .map_err(|error| ApiError::internal("playback", error))
+}
+
+async fn curl_fetch(
+    url: &Url,
+    headers: &std::collections::HashMap<String, String>,
+    range: Option<&str>,
+    max_time: u32,
+) -> ApiResult<(u16, String, Vec<u8>)> {
+    let mut args: Vec<String> = vec![
+        "-sS".into(),
+        "-L".into(),
+        "--max-redirs".into(),
+        "8".into(),
+        "--max-time".into(),
+        max_time.to_string(),
+    ];
+    for (name, value) in headers {
+        match name.to_ascii_lowercase().as_str() {
+            "user-agent" => {
+                args.push("-A".into());
+                args.push(value.clone());
+            }
+            "referer" => {
+                args.push("-e".into());
+                args.push(value.clone());
+            }
+            "accept" | "accept-encoding" | "connection" | "host" | "content-length" => {}
+            _ => args.extend(["-H".into(), format!("{name}: {value}")]),
+        }
+    }
+    if let Some(range) = range {
+        args.push("-H".into());
+        args.push(format!("Range: {range}"));
+    }
+    args.push("-w".into());
+    args.push("\n__ANI_DESK__%{http_code}__%{content_type}".into());
+    args.push(url.as_str().into());
+    let output = tokio::process::Command::new("curl")
+        .args(&args)
+        .output()
+        .await
+        .map_err(|error| {
+            ApiError::new(
+                StatusCode::BAD_GATEWAY,
+                "PROXY_FAILED",
+                "playback",
+                format!("curl failed: {error}"),
+                true,
+            )
+        })?;
+    let stdout = output.stdout;
+    const MARKER: &[u8] = b"__ANI_DESK__";
+    let (body, meta) = stdout
+        .windows(MARKER.len())
+        .position(|window| window == MARKER)
+        .map_or((stdout.clone(), Vec::new()), |index| {
+            (
+                stdout[..index].to_vec(),
+                stdout[index + MARKER.len()..].to_vec(),
+            )
+        });
+    let meta = String::from_utf8_lossy(&meta).into_owned();
+    let mut fields = meta.split("__");
+    let status = fields
+        .next()
+        .unwrap_or("000")
+        .trim()
+        .parse::<u16>()
+        .unwrap_or(0);
+    let content_type = fields.next().unwrap_or_default().to_string();
+    if status == 0 {
+        return Err(ApiError::new(
+            StatusCode::BAD_GATEWAY,
+            "PROXY_FAILED",
+            "playback",
+            format!(
+                "curl exited with {}: {}",
+                output.status,
+                String::from_utf8_lossy(&output.stderr)
+            ),
+            true,
+        ));
+    }
+    Ok((status, content_type, body))
 }
 
 async fn proxy_ass_subtitle(
@@ -2057,12 +2202,32 @@ async fn proxy_download_response(
     let file_name = browser_download_file_name(request, &stream);
 
     let body = if is_hls {
-        let segments = resolve_hls_segments(client, &upstream_headers, source).await?;
-        Body::from_stream(hls_body_stream(
-            client.clone(),
-            upstream_headers.clone(),
-            segments,
-        ))
+        let segments = if stream.use_curl {
+            resolve_hls_segments_via_curl(&stream.headers, source).await?
+        } else {
+            resolve_hls_segments(client, &upstream_headers, source).await?
+        };
+        if stream.use_curl {
+            Body::from_stream(hls_body_stream_via_curl(stream.headers.clone(), segments))
+        } else {
+            Body::from_stream(hls_body_stream(
+                client.clone(),
+                upstream_headers.clone(),
+                segments,
+            ))
+        }
+    } else if stream.use_curl {
+        let (status, _, body) = curl_fetch(&source, &stream.headers, None, 900).await?;
+        if status != 200 {
+            return Err(ApiError::new(
+                StatusCode::BAD_GATEWAY,
+                "DOWNLOAD_FAILED",
+                "download",
+                format!("upstream returned HTTP {status}"),
+                true,
+            ));
+        }
+        Body::from(body)
     } else {
         let response = client
             .get(source)
@@ -2125,6 +2290,44 @@ async fn resolve_hls_segments(
     } else {
         fetch_text(client, headers, media_url.clone()).await?
     };
+    parse_hls_segments(&media_url, &media)
+}
+
+async fn resolve_hls_segments_via_curl(
+    headers: &std::collections::HashMap<String, String>,
+    source: Url,
+) -> ApiResult<Vec<Url>> {
+    let (status, _, master) = curl_fetch(&source, headers, None, 900).await?;
+    if status != 200 {
+        return Err(ApiError::new(
+            StatusCode::BAD_GATEWAY,
+            "DOWNLOAD_FAILED",
+            "download",
+            format!("upstream returned HTTP {status}"),
+            true,
+        ));
+    }
+    let master = String::from_utf8_lossy(&master).into_owned();
+    let media_url = highest_bandwidth_variant(&source, &master).unwrap_or(source.clone());
+    let media = if media_url == source {
+        master
+    } else {
+        let (status, _, body) = curl_fetch(&media_url, headers, None, 900).await?;
+        if status != 200 {
+            return Err(ApiError::new(
+                StatusCode::BAD_GATEWAY,
+                "DOWNLOAD_FAILED",
+                "download",
+                format!("upstream returned HTTP {status}"),
+                true,
+            ));
+        }
+        String::from_utf8_lossy(&body).into_owned()
+    };
+    parse_hls_segments(&media_url, &media)
+}
+
+fn parse_hls_segments(media_url: &Url, media: &str) -> ApiResult<Vec<Url>> {
     if media.lines().any(|line| {
         let line = line.trim().to_ascii_uppercase();
         line.starts_with("#EXT-X-KEY") && !line.contains("METHOD=NONE")
@@ -2189,6 +2392,25 @@ fn hls_body_stream(
             while let Some(chunk) = response.chunk().await.map_err(std::io::Error::other)? {
                 yield chunk;
             }
+        }
+    }
+}
+
+fn hls_body_stream_via_curl(
+    headers: std::collections::HashMap<String, String>,
+    segments: Vec<Url>,
+) -> impl futures_util::Stream<Item = std::result::Result<Bytes, std::io::Error>> {
+    async_stream::try_stream! {
+        for segment in segments {
+            let (status, _, body) = curl_fetch(&segment, &headers, None, 900)
+                .await
+                .map_err(|error| std::io::Error::other(format!("{error:?}")))?;
+            if status != 200 {
+                Err(std::io::Error::other(format!(
+                    "upstream returned HTTP {status}"
+                )))?;
+            }
+            yield Bytes::from(body);
         }
     }
 }
@@ -2632,6 +2854,7 @@ mod tests {
             subtitles: Vec::new(),
             qualities: Vec::new(),
             headers: HashMap::new(),
+            use_curl: false,
         }
     }
 
