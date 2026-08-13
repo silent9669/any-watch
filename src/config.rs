@@ -26,10 +26,10 @@ pub struct SourcesConfig {
     #[serde(default)]
     pub allanime: bool,
 
-    #[serde(default)]
+    #[serde(default = "default_true")]
     pub animegg: bool,
 
-    #[serde(default)]
+    #[serde(default = "default_true")]
     pub moviebox: bool,
 
     #[serde(default = "default_true")]
@@ -56,7 +56,7 @@ mod tests {
     use super::Config;
 
     #[test]
-    fn omitted_opt_in_sources_remain_disabled() {
+    fn omitted_uncertified_sources_remain_disabled() {
         let config: Config = toml::from_str(
             r#"
                 [sources]
@@ -67,7 +67,7 @@ mod tests {
 
         assert!(!config.sources.allanime);
         assert!(config.sources.anidb);
-        assert!(!config.sources.animegg);
+        assert!(config.sources.animegg);
         assert!(!config.sources.animevietsub);
         assert!(!config.sources.animetvn);
         assert!(!config.sources.hianime);
@@ -83,9 +83,9 @@ mod tests {
         assert!(sources.niniyo);
         assert!(sources.anizone);
         assert!(sources.anidb);
-        assert!(!sources.moviebox);
+        assert!(sources.moviebox);
+        assert!(sources.animegg);
         assert!(!sources.allanime);
-        assert!(!sources.animegg);
         assert!(!sources.animevietsub);
         assert!(!sources.animetvn);
         assert!(!sources.hianime);
@@ -120,16 +120,17 @@ impl Default for SourcesConfig {
         Self {
             anidb: true,
             anizone: true,
-            // AllAnime remains available for manual verification, but its
-            // current episode sources do not resolve to a playable stream.
+            // AllAnime remains disabled: its current source API is
+            // challenge-gated and cannot pass playback certification.
             allanime: false,
-            // AnimeGG is opt-in while its public origin is timing out. Keeping
-            // it enabled would advertise a provider that cannot pass playback
-            // certification.
-            animegg: false,
-            moviebox: false,
+            // AnimeGG passes live playback certification and is enabled.
+            animegg: true,
+            // MovieBox passes live playback certification and is enabled.
+            moviebox: true,
             kkphim: true,
             ophim: true,
+            // AnimeVietSub remains an opt-in OPhim-backed compatibility
+            // adapter until a distinct web-safe integration is certified.
             animevietsub: false,
             animetvn: false,
             niniyo: true,

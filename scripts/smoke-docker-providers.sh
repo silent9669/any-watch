@@ -45,7 +45,7 @@ import json
 import sys
 
 names = [source["name"] for source in json.loads(sys.argv[1])]
-assert names == ["AniZone", "AniDB", "KKPhim", "OPhim", "Niniyo"], names
+assert names == ["AniZone", "AniDB", "MovieBox", "AnimeGG", "KKPhim", "OPhim", "Niniyo"], names
 PY
 
 health="$(curl --fail --silent --cookie "$COOKIE_JAR" "${BASE_URL}/api/providers/health")"

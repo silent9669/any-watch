@@ -15,12 +15,12 @@ upstream provider or permit transferring browser cookies into the service.
 
 | Provider | Language focus | Current status | any-watch disposition |
 | --- | --- | --- | --- |
-| MovieBox | English | Implemented, default disabled | Keep disabled pending browser-safe re-certification |
+| MovieBox | English | Implemented and certified | Enabled by default |
 | KKPhim | Vietnamese | Implemented and certified | Enabled by default |
 | OPhim | Vietnamese | Implemented and certified | Enabled by default |
 | Niniyo | Vietnamese | Implemented and certified | Enabled by default |
 | AllAnime | English | Legacy adapter; current source API is challenge-gated | Keep disabled; no documented browser-safe integration is available |
-| AnimeGG | English | Implemented, default disabled | Keep as disabled candidate pending review and certification |
+| AnimeGG | English | Implemented and certified | Enabled by default |
 | AnimeVietSub | Vietnamese | Legacy adapter currently duplicates OPhim's public API | Disabled candidate; replace with a distinct documented web-safe integration before enabling |
 | HiAnime | English | Stub, not registered | Do not port without a supported integration basis |
 | AnimeTVN | Vietnamese | Configuration only, no adapter | Do not port without an implementation and supported integration basis |

@@ -18,13 +18,13 @@ and SQLite persistence.
 
 ## Providers
 
-AniZone, AniDB, KKPhim, OPhim, and Niniyo are the playback-tested defaults.
-AniZone's English ASS subtitles are converted to browser-native WebVTT by the
-opaque media proxy; AniDB contributes the Japanese-audio HLS source used by
-ani-cli v5. MovieBox, AllAnime,
-AnimeGG, AnimeVietSub, and HiAnime remain disabled unless they pass the current
-admission and playback certification requirements. Provider cookies, required
-headers, and upstream media URLs stay server-side behind opaque playback paths.
+AniZone, AniDB, MovieBox, AnimeGG, KKPhim, OPhim, and Niniyo are the
+playback-certified defaults. AniZone's English ASS subtitles are converted to
+browser-native WebVTT by the opaque media proxy; AniDB contributes the
+Japanese-audio HLS source used by ani-cli v5. AllAnime, AnimeVietSub, and
+HiAnime remain disabled unless they pass the current admission and playback
+certification requirements. Provider cookies, required headers, and upstream
+media URLs stay server-side behind opaque playback paths.
 
 Direct provider results retain a unique exact AniList catalog match so AniSkip
 uses the correct MyAnimeList title and provider-certified episode number. Skip
