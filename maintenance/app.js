@@ -9,9 +9,34 @@
       "any-watch is temporarily offline for maintenance. Your watch history, family accounts, and library remain stored safely on the home server.",
     statusLabel: "Maintenance in progress",
     expectedReturn: "Shortly",
-    lastUpdated: "22 Jul · 19:30 ICT",
+    lastUpdated: "",
     privacy: "Account data stays on your home server."
   });
+
+  const FRESH_WINDOW_MS = 30 * 60 * 1000;
+
+  function formatNow(now = new Date()) {
+    const parts = new Intl.DateTimeFormat("en-GB", {
+      day: "numeric",
+      month: "short",
+      hour: "2-digit",
+      minute: "2-digit",
+      timeZoneName: "short"
+    }).formatToParts(now);
+    const value = (type) => parts.find((part) => part.type === type)?.value ?? "";
+    return `${value("day")} ${value("month")} · ${value("hour")}:${value("minute")} ${value("timeZoneName")}`;
+  }
+
+  function displayTime(data) {
+    const iso = typeof data?.lastUpdatedIso === "string" ? data.lastUpdatedIso : "";
+    if (iso) {
+      const stamp = new Date(iso).getTime();
+      if (Number.isFinite(stamp) && Date.now() - stamp < FRESH_WINDOW_MS) {
+        return safeText(data?.lastUpdated, formatNow(), 60);
+      }
+    }
+    return formatNow();
+  }
 
   const elements = {
     title: document.querySelector("#maintenance-title"),
@@ -43,7 +68,7 @@
         60
       ),
       expectedReturn: safeText(data?.expectedReturn, defaults.expectedReturn, 60),
-      lastUpdated: safeText(data?.lastUpdated, defaults.lastUpdated, 60),
+      lastUpdated: displayTime(data),
       privacy: safeText(data?.privacy, defaults.privacy, 120)
     };
   }
@@ -112,6 +137,6 @@
   }
 
   elements.button.addEventListener("click", () => refresh({ announce: true }));
-  render(defaults);
+  render(normalize(defaults));
   refresh();
 })();

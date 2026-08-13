@@ -10,7 +10,7 @@ try {
   };
   const online = await worker.fetch(new Request("https://ani.dangphuc.me/"));
   assert.equal(online.status, 200);
-  assert.equal(online.headers.get("x-ani-desk-mode"), "app");
+  assert.equal(online.headers.get("x-any-watch-mode"), "app");
   assert.equal(online.headers.get("cache-control"), "no-store");
   assert.equal(await online.text(), "app");
 
@@ -25,18 +25,18 @@ try {
     headers: { accept: "text/html" },
   }));
   assert.equal(fallback.status, 200);
-  assert.equal(fallback.headers.get("x-ani-desk-mode"), "maintenance");
+  assert.equal(fallback.headers.get("x-any-watch-mode"), "maintenance");
   assert.equal(fallback.headers.get("cache-control"), "no-store");
   assert.equal(requestedUrls[1], "https://silent9669.github.io/any-watch/");
 
   const bareRootFallback = await worker.fetch(new Request("https://ani.dangphuc.me/"));
-  assert.equal(bareRootFallback.headers.get("x-ani-desk-mode"), "maintenance");
+  assert.equal(bareRootFallback.headers.get("x-any-watch-mode"), "maintenance");
   assert.equal(bareRootFallback.headers.get("cache-control"), "no-store");
 
   globalThis.fetch = async () => { throw new TypeError("origin offline"); };
   const apiFallback = await worker.fetch(new Request("https://ani.dangphuc.me/api/health"));
   assert.equal(apiFallback.status, 503);
-  assert.equal(apiFallback.headers.get("x-ani-desk-mode"), "maintenance");
+  assert.equal(apiFallback.headers.get("x-any-watch-mode"), "maintenance");
   assert.equal((await apiFallback.json()).code, "SERVICE_UNAVAILABLE");
 } finally {
   globalThis.fetch = originalFetch;

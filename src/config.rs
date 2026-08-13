@@ -166,7 +166,7 @@ impl Config {
     }
 
     pub fn get_config_path() -> Result<PathBuf> {
-        let proj_dirs = ProjectDirs::from("com", "silent9669", "ani-desk")
+        let proj_dirs = ProjectDirs::from("com", "silent9669", "any-watch")
             .context("Failed to get config directory")?;
         Ok(proj_dirs.config_dir().join("config.toml"))
     }
@@ -189,7 +189,7 @@ impl Config {
 
         if let Some(parent) = config_path.parent() {
             std::fs::create_dir_all(parent)
-                .context("Failed to create ani-desk config directory")?;
+                .context("Failed to create any-watch config directory")?;
         }
 
         std::fs::copy(&legacy_path, config_path).with_context(|| {

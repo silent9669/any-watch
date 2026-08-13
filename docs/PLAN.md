@@ -1,7 +1,7 @@
 # any-watch delivery roadmap
 
 `ANY_WATCH_MIGRATION.md` is the canonical migration plan. This file is the
-working implementation sequence and replaces completed ani-desk desktop tasks.
+working implementation sequence and replaces completed any-watch desktop tasks.
 
 | Milestone | Deliverable | Exit evidence |
 | --- | --- | --- |

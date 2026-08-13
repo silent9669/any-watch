@@ -8,8 +8,8 @@ use tokio::process::Command;
 use url::Url;
 
 const BASE_URL: &str = "https://anidb.app";
-const USER_AGENT_VALUE: &str = "ani-desk/1.0";
-const OUTPUT_MARKER: &str = "\n__ANI_DESK__%{http_code}__%{content_type}";
+const USER_AGENT_VALUE: &str = "any-watch/1.0";
+const OUTPUT_MARKER: &str = "\n__ANY_WATCH__%{http_code}__%{content_type}";
 
 pub struct AniDbProvider;
 
@@ -58,7 +58,7 @@ impl AniDbProvider {
             .with_context(|| "PROVIDER_UNAVAILABLE: AniDB requires the curl binary")?;
         let stdout = String::from_utf8_lossy(&output.stdout).into_owned();
         let (body, meta) = stdout
-            .rsplit_once("__ANI_DESK__")
+            .rsplit_once("__ANY_WATCH__")
             .unwrap_or((stdout.as_str(), "000__"));
         let mut fields = meta.split("__");
         let status = fields

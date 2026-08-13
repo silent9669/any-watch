@@ -95,7 +95,7 @@ dependencies = [
 ]
 
 [[package]]
-name = "ani-desk-core"
+name = "any-watch-core"
 version = "1.0.9"
 dependencies = [
  "aes",
@@ -123,10 +123,10 @@ dependencies = [
 ]
 
 [[package]]
-name = "ani-desk-server"
+name = "any-watch-server"
 version = "1.0.9"
 dependencies = [
- "ani-desk-core",
+ "any-watch-core",
  "anyhow",
  "argon2",
  "async-stream",

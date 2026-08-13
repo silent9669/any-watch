@@ -538,8 +538,8 @@ def test_t1_cli_launch_help_argument(mocked_page):
     assert arg_check is True
 
 def test_t1_cli_launch_config_existence(mocked_page):
-    config_mock = mocked_page.evaluate("() => ({ path: '~/.config/ani-desk/config.toml' })")
-    assert "ani-desk" in config_mock["path"]
+    config_mock = mocked_page.evaluate("() => ({ path: '~/.config/any-watch/config.toml' })")
+    assert "any-watch" in config_mock["path"]
 
 def test_t1_cli_launch_port_conflict(mocked_page):
     port_status = mocked_page.evaluate("() => 'free'")

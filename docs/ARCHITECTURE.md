@@ -35,7 +35,7 @@ desktop updater, MPV process, or application-managed local filesystem library.
 - Administrators create, disable, reset, and remove family accounts.
 - Session cookies are Secure, HttpOnly, SameSite=Lax, same-origin, revocable,
   and stored server-side.
-- Unsafe requests require origin validation and `X-Ani-Desk-Request`; the
+- Unsafe requests require origin validation and `X-Any-Watch-Request`; the
   historical header name remains for deployed-client compatibility.
 - Progress persists on pause, seek, episode change, close, and a bounded cadence.
 - Browser downloads use short-lived authenticated tickets and the browser's
@@ -55,7 +55,7 @@ raw signed media URLs or reversible encodings of private upstream material.
 ## Persistence compatibility
 
 The service retains existing SQLite schemas, data directories, cookie behavior,
-`ANI_DESK_*` deployment variables, and legacy local-storage fallback keys. The
+`ANY_WATCH_*` deployment variables, and legacy local-storage fallback keys. The
 obsolete downloads table may remain in upgraded databases but is not used by the
 browser interface.
 

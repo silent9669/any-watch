@@ -1,7 +1,7 @@
-{$ANI_DESK_DOMAIN} {
+{$ANY_WATCH_DOMAIN} {
 	encode zstd gzip
 
-	reverse_proxy ani-desk:3000 {
+	reverse_proxy any-watch:3000 {
 		header_up X-Real-IP {remote_host}
 		header_up X-Forwarded-Proto {scheme}
 	}

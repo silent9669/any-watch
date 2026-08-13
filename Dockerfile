@@ -15,23 +15,23 @@ WORKDIR /app
 COPY Cargo.toml Cargo.lock ./
 COPY src ./src
 COPY server ./server
-RUN cargo build --locked --release -p ani-desk-server
+RUN cargo build --locked --release -p any-watch-server
 
 FROM debian:trixie-slim
 RUN apt-get update \
     && apt-get install -y --no-install-recommends ca-certificates curl gosu \
     && rm -rf /var/lib/apt/lists/* \
     && printf 'precedence ::ffff:0:0/96  100\n' >> /etc/gai.conf \
-    && groupadd --system ani-desk \
-    && useradd --system --gid ani-desk --home-dir /app --shell /usr/sbin/nologin ani-desk \
+    && groupadd --system any-watch \
+    && useradd --system --gid any-watch --home-dir /app --shell /usr/sbin/nologin any-watch \
     && mkdir -p /data \
-    && chown ani-desk:ani-desk /data
+    && chown any-watch:any-watch /data
 WORKDIR /app
-COPY --from=server-build /app/target/release/ani-desk-server /usr/local/bin/ani-desk-server
+COPY --from=server-build /app/target/release/any-watch-server /usr/local/bin/any-watch-server
 COPY --from=web-build /app/web/dist ./web/dist
 COPY scripts/docker-entrypoint.sh /usr/local/bin/docker-entrypoint.sh
-ENV ANI_DESK_DATA_DIR=/data
-ENV ANI_DESK_WEB_DIR=/app/web/dist
+ENV ANY_WATCH_DATA_DIR=/data
+ENV ANY_WATCH_WEB_DIR=/app/web/dist
 EXPOSE 3000
 ENTRYPOINT ["docker-entrypoint.sh"]
-CMD ["ani-desk-server"]
+CMD ["any-watch-server"]

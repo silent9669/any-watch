@@ -646,7 +646,7 @@ mod tests {
 
     #[tokio::test]
     async fn protected_admin_migrates_in_place_and_regular_accounts_are_manageable() {
-        let path = std::env::temp_dir().join(format!("ani-desk-web-{}.db", Uuid::new_v4()));
+        let path = std::env::temp_dir().join(format!("any-watch-web-{}.db", Uuid::new_v4()));
         let db = WebDatabase::open(&path).await.unwrap();
         db.bootstrap_admin("root", "Root-Password-2026")
             .await

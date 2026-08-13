@@ -12,8 +12,8 @@
     "maintenance:test": "pytest tests/e2e/test_maintenance.py -q",
     "cloudflare:test": "node scripts/test-cloudflare-worker.mjs",
     "providers:test:docker": "bash scripts/smoke-docker-providers.sh",
-    "serve:web": "cargo run -p ani-desk-server",
-    "check:web-server": "cargo check -p ani-desk-server",
+    "serve:web": "cargo run -p any-watch-server",
+    "check:web-server": "cargo check -p any-watch-server",
     "check:release-version": "node scripts/verify-release-version.mjs"
   },
   "dependencies": {

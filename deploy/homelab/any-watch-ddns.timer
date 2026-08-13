@@ -1,12 +1,12 @@
 [Unit]
-Description=Refresh ani-desk Cloudflare Dynamic DNS
+Description=Refresh any-watch Namecheap Dynamic DNS
 
 [Timer]
 OnBootSec=2min
 OnUnitActiveSec=10min
 RandomizedDelaySec=1min
 Persistent=true
-Unit=ani-desk-cloudflare-ddns.service
+Unit=any-watch-ddns.service
 
 [Install]
 WantedBy=timers.target

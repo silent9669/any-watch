@@ -1,7 +1,7 @@
 use thiserror::Error;
 
 #[derive(Error, Debug)]
-pub enum AniDeskError {
+pub enum AnyWatchError {
     #[error("Configuration error: {0}")]
     Config(String),
 
@@ -30,4 +30,4 @@ pub enum AniDeskError {
     Unknown(String),
 }
 
-pub type Result<T> = std::result::Result<T, AniDeskError>;
+pub type Result<T> = std::result::Result<T, AnyWatchError>;

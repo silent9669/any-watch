@@ -1,19 +1,19 @@
 services:
-  ani-desk:
+  any-watch:
     build:
       context: ../..
       dockerfile: Dockerfile
-    image: ani-desk-homelab:local
+    image: any-watch-homelab:local
     restart: unless-stopped
     env_file:
-      - ${ANI_DESK_ENV_FILE:-/srv/ani-desk/config/ani-desk.env}
+      - ${ANY_WATCH_ENV_FILE:-/srv/any-watch/config/any-watch.env}
     environment:
-      ANI_DESK_DATA_DIR: /data
-      ANI_DESK_WEB_DIR: /app/web/dist
-      ANI_DESK_SECURE_COOKIES: "1"
+      ANY_WATCH_DATA_DIR: /data
+      ANY_WATCH_WEB_DIR: /app/web/dist
+      ANY_WATCH_SECURE_COOKIES: "1"
       PORT: "3000"
     volumes:
-      - ${ANI_DESK_DATA_PATH:-/srv/ani-desk/data}:/data
+      - ${ANY_WATCH_DATA_PATH:-/srv/any-watch/data}:/data
     networks:
       - web
 
@@ -21,9 +21,9 @@ services:
     image: caddy:2.10-alpine
     restart: unless-stopped
     depends_on:
-      - ani-desk
+      - any-watch
     environment:
-      ANI_DESK_DOMAIN: ${ANI_DESK_DOMAIN}
+      ANY_WATCH_DOMAIN: ${ANY_WATCH_DOMAIN}
     ports:
       - "80:80"
       - "443:443"

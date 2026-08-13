@@ -57,6 +57,6 @@ ufw allow 443/tcp comment 'Caddy HTTPS'
 ufw allow 443/udp comment 'Caddy HTTP3'
 ufw --force enable
 
-hostnamectl set-hostname ani-desk-prod
+hostnamectl set-hostname any-watch-prod
 
 printf 'Host bootstrap complete. Reboot before deployment.\n'

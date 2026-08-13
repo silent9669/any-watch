@@ -1,12 +1,12 @@
 [Unit]
-Description=Update ani-desk public IP at Cloudflare
+Description=Update any-watch public IP at Namecheap
 After=network-online.target
 Wants=network-online.target
 
 [Service]
 Type=oneshot
-EnvironmentFile=/etc/ani-desk-cloudflare-ddns.env
-ExecStart=/usr/local/sbin/cloudflare-ddns
+EnvironmentFile=/etc/any-watch-ddns.env
+ExecStart=/usr/local/sbin/namecheap-ddns
 User=nobody
 Group=nogroup
 NoNewPrivileges=true

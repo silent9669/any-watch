@@ -1,4 +1,4 @@
-use ani_desk_core::providers::{
+use any_watch_core::providers::{
     allanime::AllAnimeProvider, anidb::AniDbProvider, animegg::AnimeGgProvider,
     animevietsub::AnimeVietSubProvider, anizone::AniZoneProvider, kkphim::KkphimProvider,
     moviebox::MovieBoxProvider, niniyo::NiniyoProvider, normalize_title, ophim::OphimProvider,

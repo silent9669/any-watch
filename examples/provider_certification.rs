@@ -1,5 +1,5 @@
-use ani_desk_core::config::Config;
-use ani_desk_core::providers::{
+use any_watch_core::config::Config;
+use any_watch_core::providers::{
     normalize_title, probe_stream, AnimeProvider, Language, ProviderRegistry,
 };
 use anyhow::{Context, Result};
@@ -105,7 +105,7 @@ fn query_aliases(query: &str) -> Vec<&str> {
     }
 }
 
-fn dedupe_results(results: &mut Vec<ani_desk_core::providers::Anime>) {
+fn dedupe_results(results: &mut Vec<any_watch_core::providers::Anime>) {
     let mut seen = std::collections::HashSet::new();
     results.retain(|anime| seen.insert(format!("{}:{}", anime.provider, anime.id)));
 }
@@ -119,7 +119,7 @@ fn exact_title_match(title: &str, variants: &[String]) -> bool {
 
 async fn certify_anime(
     provider: &dyn AnimeProvider,
-    anime: &ani_desk_core::providers::Anime,
+    anime: &any_watch_core::providers::Anime,
 ) -> Result<()> {
     let episodes = provider
         .get_episodes(&anime.id)

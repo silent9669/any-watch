@@ -1,6 +1,6 @@
 mod db;
 
-use ani_desk_core::{
+use any_watch_core::{
     catalog::{
         apply_personal_matches, CatalogAnime, CatalogClient, CatalogFilters, TastePreference,
     },
@@ -48,7 +48,7 @@ use tower_http::{
 };
 use uuid::Uuid;
 
-const SESSION_COOKIE: &str = "ani_desk_session";
+const SESSION_COOKIE: &str = "any_watch_session";
 const MAX_MEDIA_SESSIONS: usize = 2_048;
 const LOGIN_ATTEMPT_WINDOW: Duration = Duration::from_secs(15 * 60);
 const LOGIN_ATTEMPT_LIMIT: usize = 8;
@@ -290,7 +290,7 @@ struct SourceDto {
     language_group: String,
     status: String,
     failure_code: Option<String>,
-    capabilities: ani_desk_core::providers::ProviderCapabilities,
+    capabilities: any_watch_core::providers::ProviderCapabilities,
     website_url: Option<String>,
 }
 
@@ -349,16 +349,17 @@ async fn main() -> Result<()> {
     tracing_subscriber::fmt()
         .with_env_filter(
             tracing_subscriber::EnvFilter::try_from_default_env()
-                .unwrap_or_else(|_| "ani_desk_server=info,tower_http=info".into()),
+                .unwrap_or_else(|_| "any_watch_server=info,tower_http=info".into()),
         )
         .init();
 
-    let data_dir = PathBuf::from(env::var("ANI_DESK_DATA_DIR").unwrap_or_else(|_| "./data".into()));
+    let data_dir =
+        PathBuf::from(env::var("ANY_WATCH_DATA_DIR").unwrap_or_else(|_| "./data".into()));
     tokio::fs::create_dir_all(&data_dir).await?;
     let db = WebDatabase::open(&data_dir.join("web.db")).await?;
-    let admin_password = env::var("ANI_DESK_ADMIN_PASSWORD")
-        .context("ANI_DESK_ADMIN_PASSWORD must be set for the hosted web service")?;
-    let admin_username = env::var("ANI_DESK_ADMIN_USERNAME").unwrap_or_else(|_| "root".into());
+    let admin_password = env::var("ANY_WATCH_ADMIN_PASSWORD")
+        .context("ANY_WATCH_ADMIN_PASSWORD must be set for the hosted web service")?;
+    let admin_username = env::var("ANY_WATCH_ADMIN_USERNAME").unwrap_or_else(|_| "root".into());
     db.bootstrap_admin(&admin_username, &admin_password).await?;
 
     let core_db = Arc::new(Database::new_at(data_dir.join("catalog.db")).await?);
@@ -368,7 +369,7 @@ async fn main() -> Result<()> {
         catalog: CatalogClient::new(),
         metadata: MetadataCache::new(core_db),
         secure_cookies: env::var_os("RAILWAY_ENVIRONMENT").is_some()
-            || env::var("ANI_DESK_SECURE_COOKIES").is_ok_and(|value| value != "0"),
+            || env::var("ANY_WATCH_SECURE_COOKIES").is_ok_and(|value| value != "0"),
         login_attempts: Arc::new(Mutex::new(HashMap::new())),
         download_tickets: Arc::new(Mutex::new(HashMap::new())),
         media_sessions: Arc::new(Mutex::new(HashMap::new())),
@@ -415,7 +416,7 @@ async fn main() -> Result<()> {
         .route("/downloads/:id", get(browser_download))
         .layer(DefaultBodyLimit::max(64 * 1024));
 
-    let web_dist = env::var("ANI_DESK_WEB_DIR").unwrap_or_else(|_| "web/dist".into());
+    let web_dist = env::var("ANY_WATCH_WEB_DIR").unwrap_or_else(|_| "web/dist".into());
     let index = PathBuf::from(&web_dist).join("index.html");
     let static_files = ServeDir::new(&web_dist).fallback(ServeFile::new(index));
     let app = Router::new()
@@ -1455,7 +1456,7 @@ async fn curl_fetch(
         args.push(format!("Range: {range}"));
     }
     args.push("-w".into());
-    args.push("\n__ANI_DESK__%{http_code}__%{content_type}".into());
+    args.push("\n__ANY_WATCH__%{http_code}__%{content_type}".into());
     args.push(url.as_str().into());
     let output = tokio::process::Command::new("curl")
         .args(&args)
@@ -1471,7 +1472,7 @@ async fn curl_fetch(
             )
         })?;
     let stdout = output.stdout;
-    const MARKER: &[u8] = b"__ANI_DESK__";
+    const MARKER: &[u8] = b"__ANY_WATCH__";
     let (body, meta) = stdout
         .windows(MARKER.len())
         .position(|window| window == MARKER)
@@ -2645,7 +2646,7 @@ async fn require_admin(state: &AppState, headers: &HeaderMap) -> ApiResult<Sessi
 
 fn require_app_request(headers: &HeaderMap) -> ApiResult<()> {
     if headers
-        .get("x-ani-desk-request")
+        .get("x-any-watch-request")
         .and_then(|value| value.to_str().ok())
         != Some("1")
     {
@@ -2774,7 +2775,7 @@ mod tests {
 
     fn media_session(video_url: &str) -> MediaSession {
         let mut stream = stream(video_url);
-        stream.subtitles.push(ani_desk_core::providers::Subtitle {
+        stream.subtitles.push(any_watch_core::providers::Subtitle {
             language: "English".into(),
             url: format!("https://{UPSTREAM_HOST}/subtitles/en.vtt?token={SIGNED_VALUE}"),
             format: SubtitleFormat::WebVtt,

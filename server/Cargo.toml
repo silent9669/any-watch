@@ -1,12 +1,12 @@
 [package]
-name = "ani-desk-server"
+name = "any-watch-server"
 version = "1.0.9"
 edition = "2021"
 license = "MIT"
 publish = false
 
 [dependencies]
-ani-desk-core = { path = ".." }
+any-watch-core = { path = ".." }
 anyhow = "1.0.103"
 async-stream = "0.3"
 argon2 = "0.5"

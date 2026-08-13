@@ -3806,7 +3806,7 @@ function findHistoryForAnime(anime: Anime, history: WatchHistory[]) {
 
 function loadSavedSourceName() {
   try {
-    return localStorage.getItem(SOURCE_STORAGE_KEY) ?? localStorage.getItem("ani-desk:selected-source");
+    return localStorage.getItem(SOURCE_STORAGE_KEY) ?? localStorage.getItem("any-watch:selected-source");
   } catch {
     return null;
   }
@@ -3822,7 +3822,7 @@ function saveSourceName(sourceName: string) {
 
 function loadSavedTheme(): AppTheme {
   try {
-    const saved = localStorage.getItem(THEME_STORAGE_KEY) ?? localStorage.getItem("ani-desk:theme");
+    const saved = localStorage.getItem(THEME_STORAGE_KEY) ?? localStorage.getItem("any-watch:theme");
     if (saved === "obsidian" || saved === "oled" || saved === "ember" || saved === "crimson" || saved === "system") return saved;
   } catch {
     // localStorage can be unavailable in restricted WebView contexts.
@@ -3840,7 +3840,7 @@ function saveTheme(theme: AppTheme) {
 
 function loadSavedScale(): AppScale {
   try {
-    const saved = localStorage.getItem(APP_SCALE_STORAGE_KEY) ?? localStorage.getItem("ani-desk:scale");
+    const saved = localStorage.getItem(APP_SCALE_STORAGE_KEY) ?? localStorage.getItem("any-watch:scale");
     if (saved === "compact" || saved === "comfortable" || saved === "large" || saved === "tv") return saved;
   } catch {
     // localStorage can be unavailable in restricted WebView contexts.
@@ -3858,7 +3858,7 @@ function saveScale(scale: AppScale) {
 
 function loadSavedFont(): AppFont {
   try {
-    const saved = localStorage.getItem(APP_FONT_STORAGE_KEY) ?? localStorage.getItem("ani-desk:font");
+    const saved = localStorage.getItem(APP_FONT_STORAGE_KEY) ?? localStorage.getItem("any-watch:font");
     if (saved === "manrope" || saved === "noto" || saved === "system") return saved;
   } catch {
     // localStorage can be unavailable in restricted WebView contexts.
@@ -3876,7 +3876,7 @@ function saveFont(font: AppFont) {
 
 function loadSavedAutoSkip() {
   try {
-    const saved = localStorage.getItem(AUTO_SKIP_STORAGE_KEY) ?? localStorage.getItem("ani-desk:auto-skip");
+    const saved = localStorage.getItem(AUTO_SKIP_STORAGE_KEY) ?? localStorage.getItem("any-watch:auto-skip");
     return saved === null ? true : saved !== "false";
   } catch {
     return true;

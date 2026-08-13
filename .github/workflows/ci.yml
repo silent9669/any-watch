@@ -59,7 +59,7 @@ jobs:
           npm run cloudflare:test
           bash -n deploy/homelab/bootstrap-host.sh
           bash -n deploy/homelab/cloudflare-ddns.sh
-          ANI_DESK_ENV_FILE=.env.example docker compose \
+          ANY_WATCH_ENV_FILE=.env.example docker compose \
             --env-file deploy/homelab/.env.example \
             --file deploy/homelab/compose.yml \
             config --quiet
@@ -75,7 +75,7 @@ jobs:
 
       - name: Smoke-test hosted authentication and My List
         run: |
-          cargo build -p ani-desk-server
+          cargo build -p any-watch-server
           scripts/smoke-web-server.sh
 
   browser-e2e:

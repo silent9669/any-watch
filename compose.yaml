@@ -1,16 +1,16 @@
-name: ani-desk
+name: any-watch
 
 services:
   web:
     build:
       context: .
       dockerfile: Dockerfile
-    image: ani-desk:local
+    image: any-watch:local
     env_file:
       - .env.homelab
     environment:
-      ANI_DESK_DATA_DIR: /data
-      ANI_DESK_WEB_DIR: /app/web/dist
+      ANY_WATCH_DATA_DIR: /data
+      ANY_WATCH_WEB_DIR: /app/web/dist
       PORT: 3000
     ports:
       - "127.0.0.1:3000:3000"

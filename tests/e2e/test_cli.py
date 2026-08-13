@@ -21,9 +21,9 @@ def test_t4_cli_launcher_creation_and_execution():
         mock_app_dir.mkdir(parents=True, exist_ok=True)
 
         # Create a mock binary executable
-        mock_exe = mock_app_dir / "ani-desk-bin"
+        mock_exe = mock_app_dir / "any-watch-bin"
         with open(mock_exe, "w") as f:
-            f.write("#!/bin/sh\necho 'ani-desk launched'\n")
+            f.write("#!/bin/sh\necho 'any-watch launched'\n")
 
         # Make the mock binary executable
         os.chmod(mock_exe, 0o755)
@@ -31,7 +31,7 @@ def test_t4_cli_launcher_creation_and_execution():
         # 2. Simulate setup_cli_launcher execution
         # Ensure target directory exists (as setup_cli_launcher should do)
         mock_bin_dir.mkdir(parents=True, exist_ok=True)
-        symlink_path = mock_bin_dir / "ani-desk"
+        symlink_path = mock_bin_dir / "any-watch"
 
         # Create symlink pointing to the current exe
         if symlink_path.exists():
@@ -55,4 +55,4 @@ def test_t4_cli_launcher_creation_and_execution():
         import subprocess
         res = subprocess.run([str(symlink_path)], capture_output=True, text=True)
         assert res.returncode == 0
-        assert "ani-desk launched" in res.stdout
+        assert "any-watch launched" in res.stdout

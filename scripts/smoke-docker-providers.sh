@@ -19,9 +19,9 @@ trap cleanup EXIT
 docker rm -f "$CONTAINER" >/dev/null 2>&1 || true
 docker run --detach --name "$CONTAINER" \
   --publish "127.0.0.1:${PORT}:3000" \
-  --env ANI_DESK_ADMIN_USERNAME=provider_admin \
-  --env "ANI_DESK_ADMIN_PASSWORD=${PASSWORD}" \
-  --env ANI_DESK_SECURE_COOKIES=0 \
+  --env ANY_WATCH_ADMIN_USERNAME=provider_admin \
+  --env "ANY_WATCH_ADMIN_PASSWORD=${PASSWORD}" \
+  --env ANY_WATCH_SECURE_COOKIES=0 \
   "$IMAGE" >/dev/null
 
 for _ in {1..60}; do
@@ -35,7 +35,7 @@ curl --fail --silent "${BASE_URL}/api/health" >/dev/null
 curl --fail --silent \
   --cookie-jar "$COOKIE_JAR" \
   --header 'Content-Type: application/json' \
-  --header 'X-Ani-Desk-Request: 1' \
+  --header 'X-Any-Watch-Request: 1' \
   --data "{\"username\":\"provider_admin\",\"password\":\"${PASSWORD}\"}" \
   "${BASE_URL}/api/login" >/dev/null
 
@@ -66,7 +66,7 @@ PY
 search="$(curl --fail --silent \
   --cookie "$COOKIE_JAR" \
   --header 'Content-Type: application/json' \
-  --header 'X-Ani-Desk-Request: 1' \
+  --header 'X-Any-Watch-Request: 1' \
   --data '{"source":"OPhim","query":"Đảo Hải Tặc"}' \
   "${BASE_URL}/api/source/search")"
 anime_id="$(python3 - "$search" <<'PY'
@@ -80,7 +80,7 @@ PY
 episodes="$(curl --fail --silent \
   --cookie "$COOKIE_JAR" \
   --header 'Content-Type: application/json' \
-  --header 'X-Ani-Desk-Request: 1' \
+  --header 'X-Any-Watch-Request: 1' \
   --data "{\"provider\":\"OPhim\",\"animeId\":\"${anime_id}\"}" \
   "${BASE_URL}/api/anime/episodes")"
 episode_id="$(python3 - "$episodes" <<'PY'
@@ -96,7 +96,7 @@ PY
 playback="$(curl --fail --silent \
   --cookie "$COOKIE_JAR" \
   --header 'Content-Type: application/json' \
-  --header 'X-Ani-Desk-Request: 1' \
+  --header 'X-Any-Watch-Request: 1' \
   --data "{\"provider\":\"OPhim\",\"episodeId\":\"${episode_id}\"}" \
   "${BASE_URL}/api/playback")"
 playback_url="$(python3 - "$playback" <<'PY'
@@ -138,7 +138,7 @@ test "$(wc -c < "$SEGMENT")" -gt 0
 search="$(curl --fail --silent \
   --cookie "$COOKIE_JAR" \
   --header 'Content-Type: application/json' \
-  --header 'X-Ani-Desk-Request: 1' \
+  --header 'X-Any-Watch-Request: 1' \
   --data '{"source":"AniZone","query":"One Piece"}' \
   "${BASE_URL}/api/source/search")"
 anime_id="$(python3 - "$search" <<'PY'
@@ -151,7 +151,7 @@ PY
 episodes="$(curl --fail --silent \
   --cookie "$COOKIE_JAR" \
   --header 'Content-Type: application/json' \
-  --header 'X-Ani-Desk-Request: 1' \
+  --header 'X-Any-Watch-Request: 1' \
   --data "{\"provider\":\"AniZone\",\"animeId\":\"${anime_id}\"}" \
   "${BASE_URL}/api/anime/episodes")"
 episode_id="$(python3 - "$episodes" <<'PY'
@@ -166,7 +166,7 @@ PY
 playback="$(curl --fail --silent \
   --cookie "$COOKIE_JAR" \
   --header 'Content-Type: application/json' \
-  --header 'X-Ani-Desk-Request: 1' \
+  --header 'X-Any-Watch-Request: 1' \
   --data "{\"provider\":\"AniZone\",\"episodeId\":\"${episode_id}\"}" \
   "${BASE_URL}/api/playback")"
 read -r playback_url subtitle_url < <(python3 - "$playback" <<'PY'
@@ -195,7 +195,7 @@ PY
 search="$(curl --fail --silent \
   --cookie "$COOKIE_JAR" \
   --header 'Content-Type: application/json' \
-  --header 'X-Ani-Desk-Request: 1' \
+  --header 'X-Any-Watch-Request: 1' \
   --data '{"source":"AniDB","query":"One Piece"}' \
   "${BASE_URL}/api/source/search")"
 anime_id="$(python3 - "$search" <<'PY'
@@ -208,7 +208,7 @@ PY
 episodes="$(curl --fail --silent \
   --cookie "$COOKIE_JAR" \
   --header 'Content-Type: application/json' \
-  --header 'X-Ani-Desk-Request: 1' \
+  --header 'X-Any-Watch-Request: 1' \
   --data "{\"provider\":\"AniDB\",\"animeId\":\"${anime_id}\"}" \
   "${BASE_URL}/api/anime/episodes")"
 episode_id="$(python3 - "$episodes" <<'PY'
@@ -224,7 +224,7 @@ PY
 playback="$(curl --fail --silent \
   --cookie "$COOKIE_JAR" \
   --header 'Content-Type: application/json' \
-  --header 'X-Ani-Desk-Request: 1' \
+  --header 'X-Any-Watch-Request: 1' \
   --data "{\"provider\":\"AniDB\",\"episodeId\":\"${episode_id}\"}" \
   "${BASE_URL}/api/playback")"
 playback_url="$(python3 - "$playback" <<'PY'

@@ -668,7 +668,7 @@ impl Database {
     }
 
     fn default_db_path() -> Result<PathBuf> {
-        let proj_dirs = ProjectDirs::from("com", "silent9669", "ani-desk")
+        let proj_dirs = ProjectDirs::from("com", "silent9669", "any-watch")
             .context("Failed to determine data directory")?;
         Ok(proj_dirs.data_dir().join("history.db"))
     }

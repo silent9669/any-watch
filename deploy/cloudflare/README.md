@@ -12,9 +12,9 @@ For each request, the Worker:
 3. returns a stable JSON `503` for API calls when the origin is unavailable;
 4. serves navigation and static assets from the independent GitHub Pages
    artifact at `https://silent9669.github.io/any-watch/`;
-5. adds `X-Ani-Desk-Mode: app` or `maintenance` for verification.
+5. adds `X-Any-Watch-Mode: app` or `maintenance` for verification.
 
-Cookies and authorization headers are sent only to the normal ani-desk origin.
+Cookies and authorization headers are sent only to the normal any-watch origin.
 Fallback requests are reconstructed with an `Accept` header and do not disclose
 account credentials to GitHub Pages.
 
@@ -28,7 +28,7 @@ account credentials to GitHub Pages.
 Moving the authoritative nameservers disables Namecheap Dynamic DNS. Install
 `deploy/homelab/cloudflare-ddns.sh` as `/usr/local/sbin/cloudflare-ddns`, install
 the matching service and timer units, and store these values with mode `0600`
-in `/etc/ani-desk-cloudflare-ddns.env`:
+in `/etc/any-watch-cloudflare-ddns.env`:
 
 ```sh
 CLOUDFLARE_API_TOKEN=RESTRICTED_DNS_EDIT_TOKEN
@@ -38,7 +38,7 @@ CLOUDFLARE_DNS_NAME=ani.dangphuc.me
 ```
 
 The token needs only Zone DNS Edit permission for `dangphuc.me`. Run the new
-service successfully before disabling `ani-desk-ddns.timer`. Keep the old unit
+service successfully before disabling `any-watch-ddns.timer`. Keep the old unit
 installed but disabled so rolling the nameservers back to Namecheap is quick.
 
 Do not configure `ani.dangphuc.me` as a Worker Custom Domain: this deployment
@@ -50,11 +50,11 @@ With the origin online:
 
 ```bash
 curl -fsS -D - -o /dev/null https://ani.dangphuc.me/ \
-  | grep -i '^x-ani-desk-mode: app'
+  | grep -i '^x-any-watch-mode: app'
 ```
 
 During a controlled origin stop, `/` must return the maintenance page with
-`X-Ani-Desk-Mode: maintenance`, while `/api/health` returns JSON `503` with the
+`X-Any-Watch-Mode: maintenance`, while `/api/health` returns JSON `503` with the
 same header. Restart the origin and confirm the header returns to `app`.
 
 Worker-only rollback requires removing the Worker Route; the proxied DNS record

@@ -1,7 +1,7 @@
 # Design - any-watch
 
 This is the locked design system for the `any-watch` replacement. Every new
-screen and component follows it. The existing `ani-desk` visual system remains
+screen and component follows it. The existing `any-watch` visual system remains
 legacy reference material only.
 
 ## Product context

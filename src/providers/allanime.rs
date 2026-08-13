@@ -1841,9 +1841,9 @@ https://cdn.example/720/index.m3u8
     }
 
     #[tokio::test]
-    #[ignore = "live provider smoke test; run with ANI_DESK_LIVE_TESTS=1"]
+    #[ignore = "live provider smoke test; run with ANY_WATCH_LIVE_TESTS=1"]
     async fn live_allanime_search_episode_stream_smoke() {
-        if std::env::var("ANI_DESK_LIVE_TESTS").ok().as_deref() != Some("1") {
+        if std::env::var("ANY_WATCH_LIVE_TESTS").ok().as_deref() != Some("1") {
             return;
         }
 

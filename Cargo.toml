@@ -1,18 +1,18 @@
 [package]
-name = "ani-desk-core"
+name = "any-watch-core"
 version = "1.0.9"
 edition = "2021"
 authors = ["silent9669 <dev@silent9669.com>"]
-description = "Core provider, playback, and storage library for ani-desk"
+description = "Core provider, playback, and storage library for any-watch"
 license = "MIT"
-repository = "https://github.com/silent9669/ani-desk"
+repository = "https://github.com/silent9669/any-watch"
 
 [workspace]
 members = ["server"]
 resolver = "2"
 
 [lib]
-name = "ani_desk_core"
+name = "any_watch_core"
 
 [dependencies]
 # Async runtime

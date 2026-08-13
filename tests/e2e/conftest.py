@@ -370,7 +370,7 @@ def mocked_page(page, vite_server):
                     episodeId: args.request.episodeId,
                     episodeNumber: args.request.episodeNumber,
                     episodeTitle: args.request.episodeTitle || null,
-                    filePath: `/Users/test/Downloads/ani-desk/${args.request.animeTitle}/${fileName}`,
+                    filePath: `/Users/test/Downloads/any-watch/${args.request.animeTitle}/${fileName}`,
                     fileName,
                     bytesDownloaded: 2048,
                     mediaKind: "hls-ts",
@@ -381,7 +381,7 @@ def mocked_page(page, vite_server):
                 saveMockState(state);
                 return {
                     id: args.request.id,
-                    filePath: `/Users/test/Downloads/ani-desk/${args.request.animeTitle}/${fileName}`,
+                    filePath: `/Users/test/Downloads/any-watch/${args.request.animeTitle}/${fileName}`,
                     fileName,
                     bytesDownloaded: 2048,
                     mediaKind: "hls-ts"

@@ -34,7 +34,7 @@ async function webRequest<T>(path: string, init?: RequestInit): Promise<T> {
       signal: controller.signal,
       credentials: "same-origin",
       headers: {
-        ...(method !== "GET" && method !== "HEAD" ? { "Content-Type": "application/json", "X-Ani-Desk-Request": "1" } : {}),
+        ...(method !== "GET" && method !== "HEAD" ? { "Content-Type": "application/json", "X-Any-Watch-Request": "1" } : {}),
         ...init?.headers,
       },
     });

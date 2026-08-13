@@ -27,7 +27,7 @@ async function maintenanceResponse(request) {
   if ((request.method !== "GET" && request.method !== "HEAD") || url.pathname.startsWith("/api/")) {
     return new Response(JSON.stringify({
       code: "SERVICE_UNAVAILABLE",
-      message: "ani-desk is temporarily offline for maintenance.",
+      message: "any-watch is temporarily offline for maintenance.",
       retryable: true,
     }), {
       status: 503,
@@ -35,7 +35,7 @@ async function maintenanceResponse(request) {
         "cache-control": "no-store",
         "content-type": "application/json; charset=utf-8",
         "retry-after": "60",
-        "x-ani-desk-mode": "maintenance",
+        "x-any-watch-mode": "maintenance",
       },
     });
   }
@@ -61,7 +61,7 @@ async function maintenanceResponse(request) {
         "cache-control": "no-store",
         "content-type": "text/plain; charset=utf-8",
         "retry-after": "60",
-        "x-ani-desk-mode": "maintenance",
+        "x-any-watch-mode": "maintenance",
       },
     });
   }
@@ -75,7 +75,7 @@ async function maintenanceResponse(request) {
 
 function withMode(response, mode, noStore = false) {
   const headers = new Headers(response.headers);
-  headers.set("x-ani-desk-mode", mode);
+  headers.set("x-any-watch-mode", mode);
   if (noStore) headers.set("cache-control", "no-store");
   return new Response(response.body, {
     status: response.status,

@@ -1,8 +1,8 @@
-# ani-desk configuration file
+# any-watch configuration file
 # Place this file at:
-#   macOS: ~/Library/Application Support/com.silent9669.ani-desk/config.toml
-#   Windows: %APPDATA%\com.silent9669.ani-desk\config.toml
-#   Linux: ~/.config/ani-desk/config.toml
+#   macOS: ~/Library/Application Support/com.silent9669.any-watch/config.toml
+#   Windows: %APPDATA%\com.silent9669.any-watch\config.toml
+#   Linux: ~/.config/any-watch/config.toml
 
 [sources]
 # ani-cli v5 compatible English HLS source.

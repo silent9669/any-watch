@@ -35,7 +35,7 @@ permissions:
   contents: read
 
 concurrency:
-  group: ani-desk-maintenance-pages
+  group: any-watch-maintenance-pages
   cancel-in-progress: false
 
 jobs:
@@ -64,7 +64,7 @@ jobs:
         env:
           EVENT_NAME: ${{ github.event_name }}
           MANUAL_MODE: ${{ inputs.mode }}
-          HEALTHCHECK_URL: ${{ secrets.ANI_DESK_HEALTHCHECK_URL }}
+          HEALTHCHECK_URL: ${{ secrets.ANY_WATCH_HEALTHCHECK_URL }}
         run: |
           set -euo pipefail
           if [ "$EVENT_NAME" = "workflow_dispatch" ]; then
@@ -73,7 +73,7 @@ jobs:
           fi
 
           if [ -z "$HEALTHCHECK_URL" ]; then
-            echo "ANI_DESK_HEALTHCHECK_URL is required when automatic checks are enabled." >&2
+            echo "ANY_WATCH_HEALTHCHECK_URL is required when automatic checks are enabled." >&2
             exit 1
           fi
 
@@ -121,6 +121,7 @@ jobs:
             timeStyle: "short",
             timeZone: "UTC"
           }).format(new Date()) + " UTC";
+          status.lastUpdatedIso = new Date().toISOString();
           await writeFile(path, JSON.stringify(status, null, 2) + "\n");
           NODE
 

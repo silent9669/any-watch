@@ -41,10 +41,10 @@ Run the frontend and API separately during development:
 
 ```bash
 npm run dev
-ANI_DESK_ADMIN_PASSWORD='replace-with-a-long-password' npm run serve:web
+ANY_WATCH_ADMIN_PASSWORD='replace-with-a-long-password' npm run serve:web
 ```
 
-The `ANI_DESK_*` environment variable names and existing SQLite paths are kept
+The `ANY_WATCH_*` environment variable names and existing SQLite paths are kept
 for deployment and data compatibility.
 
 ## Deployment
