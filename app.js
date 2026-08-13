@@ -6,23 +6,42 @@
     mode: "maintenance",
     headline: "The theatre is taking a short break.",
     message:
-      "ani-desk is temporarily offline for maintenance. Your watch history, family accounts, and library remain stored safely on the home server.",
+      "any-watch is temporarily offline for maintenance. Your watch history, family accounts, and library remain stored safely on the home server.",
     statusLabel: "Maintenance in progress",
     expectedReturn: "Shortly",
-    lastUpdated: "22 Jul · 19:30 ICT",
+    detectedAtIso: null,
     privacy: "Account data stays on your home server."
   });
+
+  function detectionTime(value) {
+    if (typeof value !== "string" || !value.trim()) return null;
+    const date = new Date(value);
+    if (!Number.isFinite(date.getTime())) return null;
+    const parts = new Intl.DateTimeFormat("en-GB", {
+      day: "numeric",
+      month: "short",
+      year: "numeric",
+      hour: "2-digit",
+      minute: "2-digit",
+      second: "2-digit",
+      timeZoneName: "short"
+    }).formatToParts(date);
+    const part = (type) => parts.find((item) => item.type === type)?.value ?? "";
+    return {
+      iso: date.toISOString(),
+      display: `${part("day")} ${part("month")} ${part("year")} · ${part("hour")}:${part("minute")}:${part("second")} ${part("timeZoneName")}`
+    };
+  }
 
   const elements = {
     title: document.querySelector("#maintenance-title"),
     message: document.querySelector("#maintenance-message"),
     current: document.querySelector("#current-status"),
     expected: document.querySelector("#expected-return"),
-    updated: document.querySelector("#last-update"),
+    detected: document.querySelector("#down-detected"),
     privacy: document.querySelector("#privacy-note"),
     button: document.querySelector("#check-again"),
-    live: document.querySelector("#status-live"),
-    frame: document.querySelector(".maintenance-frame")
+    live: document.querySelector("#status-live")
   };
 
   let status = defaults;
@@ -43,7 +62,7 @@
         60
       ),
       expectedReturn: safeText(data?.expectedReturn, defaults.expectedReturn, 60),
-      lastUpdated: safeText(data?.lastUpdated, defaults.lastUpdated, 60),
+      detected: detectionTime(data?.detectedAtIso),
       privacy: safeText(data?.privacy, defaults.privacy, 120)
     };
   }
@@ -55,7 +74,9 @@
     elements.message.textContent = next.message;
     elements.current.lastChild.textContent = ` ${next.statusLabel}`;
     elements.expected.textContent = next.expectedReturn;
-    elements.updated.textContent = next.lastUpdated;
+    elements.detected.textContent = next.detected?.display ?? "Detection time unavailable";
+    if (next.detected) elements.detected.dateTime = next.detected.iso;
+    else elements.detected.removeAttribute("datetime");
     elements.privacy.lastChild.textContent = ` ${next.privacy}`;
   }
 
@@ -112,6 +133,6 @@
   }
 
   elements.button.addEventListener("click", () => refresh({ announce: true }));
-  render(defaults);
+  render(normalize(defaults));
   refresh();
 })();

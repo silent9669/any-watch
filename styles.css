@@ -538,13 +538,15 @@ h1 {
   color: var(--color-muted);
 }
 
-.status-board__item strong {
+.status-board__item strong,
+.status-board__item time {
   display: flex;
   align-items: center;
   min-width: 0;
   color: var(--color-cream);
   font-size: clamp(0.68rem, 1vw, 0.9rem);
   font-weight: 600;
+  font-style: normal;
   white-space: nowrap;
 }
 
