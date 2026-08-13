@@ -306,6 +306,7 @@ impl AnimeProvider for AniZoneProvider {
             .map(|number| Episode {
                 id: format!("{anime_id}/{number}"),
                 number,
+                aniskip_episode_number: Some(number),
                 title: None,
                 thumbnail: None,
             })

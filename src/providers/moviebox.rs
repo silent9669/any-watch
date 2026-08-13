@@ -346,6 +346,7 @@ impl AnimeProvider for MovieBoxProvider {
                     episodes.push(Episode {
                         id: serde_json::to_string(&reference)?,
                         number: ordinal,
+                        aniskip_episode_number: None,
                         title: Some(if season_list.len() > 1 {
                             format!("Season {season_number}, Episode {episode_number}")
                         } else {
@@ -365,6 +366,7 @@ impl AnimeProvider for MovieBoxProvider {
                     episode: 0,
                 })?,
                 number: 1,
+                aniskip_episode_number: None,
                 title: Some("Play movie".into()),
                 thumbnail: None,
             });

@@ -1308,6 +1308,7 @@ impl AnimeProvider for AllAnimeProvider {
                         } else {
                             ep_number
                         },
+                        aniskip_episode_number: None,
                         title: None,
                         thumbnail: None,
                     });

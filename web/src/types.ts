@@ -111,6 +111,7 @@ export type AnimeDetails = {
 export type Episode = {
   id: string;
   number: number;
+  aniskipEpisodeNumber?: number | null;
   title?: string | null;
   thumbnail?: string | null;
 };

@@ -15,6 +15,7 @@ WORKDIR /app
 COPY Cargo.toml Cargo.lock ./
 COPY src ./src
 COPY server ./server
+COPY crates ./crates
 RUN cargo build --locked --release -p ani-desk-server
 
 FROM debian:bookworm-slim

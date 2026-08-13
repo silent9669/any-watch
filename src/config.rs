@@ -18,6 +18,9 @@ pub struct Config {
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct SourcesConfig {
     #[serde(default = "default_true")]
+    pub anidb: bool,
+
+    #[serde(default = "default_true")]
     pub anizone: bool,
 
     #[serde(default)]
@@ -63,6 +66,7 @@ mod tests {
         .expect("config should parse");
 
         assert!(!config.sources.allanime);
+        assert!(config.sources.anidb);
         assert!(!config.sources.animegg);
         assert!(!config.sources.animevietsub);
         assert!(!config.sources.animetvn);
@@ -78,6 +82,7 @@ mod tests {
         assert!(sources.ophim);
         assert!(sources.niniyo);
         assert!(sources.anizone);
+        assert!(sources.anidb);
         assert!(!sources.moviebox);
         assert!(!sources.allanime);
         assert!(!sources.animegg);
@@ -113,6 +118,7 @@ fn default_theme() -> ThemeConfig {
 impl Default for SourcesConfig {
     fn default() -> Self {
         Self {
+            anidb: true,
             anizone: true,
             // AllAnime remains available for manual verification, but its
             // current episode sources do not resolve to a playable stream.

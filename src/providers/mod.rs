@@ -1,4 +1,5 @@
 pub mod allanime;
+pub mod anidb;
 pub mod animegg;
 pub mod animevietsub;
 pub mod anizone;
@@ -50,9 +51,12 @@ pub struct Anime {
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
 pub struct Episode {
     pub id: String,
     pub number: u32,
+    #[serde(default)]
+    pub aniskip_episode_number: Option<u32>,
     pub title: Option<String>,
     pub thumbnail: Option<String>,
 }
@@ -315,6 +319,10 @@ impl ProviderRegistry {
         // --- English Sources ---
         if config.sources.anizone {
             providers.push(Arc::new(anizone::AniZoneProvider::new()));
+        }
+
+        if config.sources.anidb {
+            providers.push(Arc::new(anidb::AniDbProvider::new()));
         }
 
         // 1. AllAnime (Anime & Films)

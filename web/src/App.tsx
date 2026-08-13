@@ -3045,12 +3045,13 @@ function VideoPlayer({
     let cancelled = false;
     skippedRangesRef.current.clear();
     setSkipTimes([]);
-    if (!context.anime.catalogId) {
+    const skipNumber = context.episode.aniskipEpisodeNumber;
+    if (!context.anime.catalogId || !skipNumber) {
       setSkipTimingStatus("unavailable");
       return () => { cancelled = true; };
     }
     setSkipTimingStatus("loading");
-    void api.getSkipTimes(context.anime.catalogId, context.episode.number)
+    void api.getSkipTimes(context.anime.catalogId, skipNumber)
       .then((times) => {
         if (!cancelled) {
           setSkipTimes(times);

@@ -131,6 +131,7 @@ impl NiniyoProvider {
                 Some(Episode {
                     id: episode["episodeId"].as_str()?.to_string(),
                     number,
+                    aniskip_episode_number: None,
                     title: Some(format!("Tập {number_text}")),
                     thumbnail: None,
                 })

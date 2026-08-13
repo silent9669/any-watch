@@ -222,6 +222,7 @@ impl AnimeProvider for AnimeVietSubProvider {
                                     episodes.push(Episode {
                                         id: format!("{}:{}", anime_id, ep_num),
                                         number: ep_num,
+                                        aniskip_episode_number: None,
                                         title: Some(
                                             ep["filename"].as_str().unwrap_or("").to_string(),
                                         ),

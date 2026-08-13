@@ -18,9 +18,10 @@ and SQLite persistence.
 
 ## Providers
 
-AniZone, KKPhim, OPhim, and Niniyo are the playback-tested defaults. AniZone's
-English ASS subtitles are converted to browser-native WebVTT by the opaque media
-proxy. MovieBox, AllAnime,
+AniZone, AniDB, KKPhim, OPhim, and Niniyo are the playback-tested defaults.
+AniZone's English ASS subtitles are converted to browser-native WebVTT by the
+opaque media proxy; AniDB contributes the Japanese-audio HLS source used by
+ani-cli v5. MovieBox, AllAnime,
 AnimeGG, AnimeVietSub, and HiAnime remain disabled unless they pass the current
 admission and playback certification requirements. Provider cookies, required
 headers, and upstream media URLs stay server-side behind opaque playback paths.

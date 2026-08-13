@@ -45,7 +45,7 @@ import json
 import sys
 
 names = [source["name"] for source in json.loads(sys.argv[1])]
-assert names == ["AniZone", "KKPhim", "OPhim", "Niniyo"], names
+assert names == ["AniZone", "AniDB", "KKPhim", "OPhim", "Niniyo"], names
 PY
 
 health="$(curl --fail --silent --cookie "$COOKIE_JAR" "${BASE_URL}/api/providers/health")"
@@ -192,4 +192,53 @@ import sys
 assert "-->" in sys.argv[1]
 PY
 
-echo "Docker provider certification passed (opaque proxy plus AniZone English subtitles)."
+search="$(curl --fail --silent \
+  --cookie "$COOKIE_JAR" \
+  --header 'Content-Type: application/json' \
+  --header 'X-Ani-Desk-Request: 1' \
+  --data '{"source":"AniDB","query":"One Piece"}' \
+  "${BASE_URL}/api/source/search")"
+anime_id="$(python3 - "$search" <<'PY'
+import json
+import sys
+
+print(next(item["id"] for item in json.loads(sys.argv[1]) if item["title"].casefold() == "one piece"))
+PY
+)"
+episodes="$(curl --fail --silent \
+  --cookie "$COOKIE_JAR" \
+  --header 'Content-Type: application/json' \
+  --header 'X-Ani-Desk-Request: 1' \
+  --data "{\"provider\":\"AniDB\",\"animeId\":\"${anime_id}\"}" \
+  "${BASE_URL}/api/anime/episodes")"
+episode_id="$(python3 - "$episodes" <<'PY'
+import json
+import sys
+
+episodes = json.loads(sys.argv[1])
+assert len(episodes) > 1000, len(episodes)
+assert episodes[-1]["number"] == len(episodes), episodes[-1]
+print(episodes[-1]["id"])
+PY
+)"
+playback="$(curl --fail --silent \
+  --cookie "$COOKIE_JAR" \
+  --header 'Content-Type: application/json' \
+  --header 'X-Ani-Desk-Request: 1' \
+  --data "{\"provider\":\"AniDB\",\"episodeId\":\"${episode_id}\"}" \
+  "${BASE_URL}/api/playback")"
+playback_url="$(python3 - "$playback" <<'PY'
+import json
+import sys
+
+playback = json.loads(sys.argv[1])
+assert playback["streamKind"] == "hls", playback
+assert playback["playbackUrl"].startswith("/api/media/"), playback
+assert "http" not in playback["playbackUrl"], playback
+print(playback["playbackUrl"])
+PY
+)"
+manifest="$(curl --fail --silent --cookie "$COOKIE_JAR" "${BASE_URL}${playback_url}")"
+test "${manifest:0:7}" = "#EXTM3U"
+
+echo "Docker provider certification passed (opaque proxy plus AniZone English subtitles and AniDB HLS)."

@@ -5,6 +5,9 @@
 #   Linux: ~/.config/ani-desk/config.toml
 
 [sources]
+# ani-cli v5 compatible English HLS source.
+anidb = true
+
 # English soft-sub HLS source. ASS tracks are converted to WebVTT by the web server.
 anizone = true
 

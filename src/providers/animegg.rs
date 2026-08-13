@@ -110,6 +110,7 @@ impl AnimeGgProvider {
                 Some(Episode {
                     id: capture["id"].to_string(),
                     number,
+                    aniskip_episode_number: None,
                     title: Some(clean_html(&capture["title"])),
                     thumbnail: None,
                 })

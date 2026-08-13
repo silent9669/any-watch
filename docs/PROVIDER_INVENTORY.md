@@ -25,6 +25,7 @@ upstream provider or permit transferring browser cookies into the service.
 | HiAnime | English | Stub, not registered | Do not port without a supported integration basis |
 | AnimeTVN | Vietnamese | Configuration only, no adapter | Do not port without an implementation and supported integration basis |
 | AniZone | English | Implemented; HLS and converted English softsubs pass live browser and Docker playback | Enabled by default at user direction; undocumented page integration remains fragile |
+| AniDB | English | Implemented from ani-cli v5 (`92e9d796d23aef3ae94b52852f9c992e2bce4fe3`); search, 1,173 One Piece episodes, Japanese HLS pass live playback | Enabled by default; public frontend endpoints without a documented API contract |
 | Reanime | English | Public catalog API documented; playback integration is undocumented | Defer pending a supported playback API, embed, or handoff |
 | Prowlarr | N/A | Configuration only | Not a playback provider |
 
@@ -97,6 +98,27 @@ production Docker image, and Chromium playback with a same-origin media blob.
 The adapter is operational rather than supported: AniZone page markup or CDN
 policy can change without notice, so failures must remain isolated from login,
 libraries, and the Vietnamese providers.
+
+### AniDB
+
+Evaluated on 2026-08-13 against `anidb.app`, the single playback source used by
+ani-cli v5. Search (`/browse?q=`), details, episode metadata
+(`/api/frontend/anime/{id}/episodes`), language/embed selection
+(`/api/frontend/episode/{id}/languages`), and the HLS master inside the embed
+were verified without imported browser state. Ordinary requests return One
+Piece with 1,173 regular episodes and a Japanese-audio HLS stream.
+
+The site fronts its HTML and API endpoints with Cloudflare bot management. It
+challenges known scraper user agents (including the literal `curl` UA) and
+browser-claiming UAs issued by non-browser TLS stacks. the adapter therefore
+uses a neutral, honest user agent (`ani-desk/1.0`) over the system TLS stack via
+the `secure-http` workspace crate; this signature passes from both residential
+and datacenter networks. No cookies, challenges, or impersonated browser state
+are involved.
+
+The integration has no documented public API contract and upstream page markup,
+embed structure, or bot policy can change without notice. Failures are
+classified and isolated from login, libraries, and the other providers.
 
 ### Reanime
 
