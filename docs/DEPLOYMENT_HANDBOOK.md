@@ -24,7 +24,7 @@
 1. Review a green CI run for the exact 40-character release SHA.
 2. Snapshot `/srv/any-watch/data/web.db` and require `integrity: ok`.
 3. Archive `/srv/any-watch/data` before replacing containers.
-4. Retain the previous application tree or image for rollback.
+4. Retain an archive of the previous application source and the prior image for rollback.
 5. Never use `docker compose down -v`, delete `/srv/any-watch/data`, or remove Caddy volumes during a normal release.
 6. Do not put passwords, SSH private keys, Cloudflare tokens, or cookies in commands, logs, commits, or this handbook.
 
@@ -35,9 +35,11 @@ and the running image describe the same release.
 
 ## Deploy procedure
 
-`/srv/any-watch/app` is a release tree, not a Git checkout. Build an immutable
-archive from the reviewed commit on the workstation, upload it, and extract it
-to a new release directory. Never use `rsync --delete` over the active tree.
+`/srv/any-watch/app` is a user-owned release tree, not a Git checkout. Its parent
+is root-owned, so the deployment does not replace `app` with a symlink. Build an
+immutable archive from the reviewed commit, stage and build it under the
+user-owned `deployer` directory, archive the active source, and only then rsync
+the candidate into `app` while the application container is stopped.
 
 On the workstation:
 
@@ -48,12 +50,11 @@ git diff --quiet
 git diff --cached --quiet
 test "$(git rev-parse "$SHA")" = "$SHA"
 git archive --format=tar.gz --output="/tmp/any-watch-${SHA}.tar.gz" "$SHA"
-ssh dangphuc@192.168.1.181 'install -d -m 0750 /srv/any-watch/releases'
 rsync -av "/tmp/any-watch-${SHA}.tar.gz" \
-  dangphuc@192.168.1.181:/srv/any-watch/releases/
+  dangphuc@192.168.1.181:/srv/any-watch/deployer/
 ```
 
-On the VM, run as an account that can modify `/srv/any-watch`:
+On the VM, run as `dangphuc`, which owns `app`, `backups`, and `deployer`:
 
 ```sh
 set -euo pipefail
@@ -62,14 +63,17 @@ APP="$ROOT/app"
 ENV=/srv/any-watch/config/any-watch.env
 DATA=/srv/any-watch/data
 BACKUPS=/srv/any-watch/backups
-RELEASES=/srv/any-watch/releases
+DEPLOYER=/srv/any-watch/deployer
 SHA=REVIEWED_40_CHARACTER_SHA
-NEXT="$RELEASES/$SHA"
-PREVIOUS="$(readlink -f "$APP" 2>/dev/null || printf '%s' "$APP")"
+NEXT="$DEPLOYER/releases/$SHA"
 COMPOSE="docker compose --project-name homelab --env-file $ENV --file $APP/deploy/homelab/compose.yml"
+CANDIDATE_COMPOSE="docker compose --project-name homelab --env-file $ENV --file $NEXT/deploy/homelab/compose.yml"
 
-install -d -m 0750 "$BACKUPS" "$NEXT"
-tar -xzf "$RELEASES/any-watch-${SHA}.tar.gz" -C "$NEXT"
+install -d -m 0750 "$BACKUPS" "$DEPLOYER/releases"
+test ! -e "$NEXT"
+install -d -m 0750 "$NEXT"
+tar -xzf "$DEPLOYER/any-watch-${SHA}.tar.gz" -C "$NEXT"
+$CANDIDATE_COMPOSE build any-watch
 
 before="$(python3 "$APP/deploy/homelab/data-guard.py" snapshot "$DATA/web.db")"
 test "$(printf '%s' "$before" | jq -r .exists)" = true
@@ -83,11 +87,13 @@ tar -C "$ROOT" -czf "$backup_path" data
 tar -tzf "$backup_path" >/dev/null
 sha256sum "$backup_path" > "$backup_path.sha256"
 
-mv "$APP" "$RELEASES/replaced-${SHA:0:12}-$(date -u +%Y%m%dT%H%M%SZ)"
-ln -s "$NEXT" "$APP"
-COMPOSE="docker compose --project-name homelab --env-file $ENV --file $APP/deploy/homelab/compose.yml"
-$COMPOSE build any-watch
-$COMPOSE up -d any-watch
+source_backup="$BACKUPS/source-$(date -u +%Y%m%dT%H%M%SZ)-${SHA:0:12}.tar.gz"
+tar -C "$APP" -czf "$source_backup" .
+tar -tzf "$source_backup" >/dev/null
+sha256sum "$source_backup" > "$source_backup.sha256"
+
+rsync -a --delete "$NEXT/" "$APP/"
+$COMPOSE up -d --force-recreate any-watch
 $COMPOSE ps
 
 after="$(python3 "$APP/deploy/homelab/data-guard.py" snapshot "$DATA/web.db")"
@@ -96,10 +102,10 @@ printf '%s\n' "$SHA" > "$APP/.release-sha.tmp"
 mv "$APP/.release-sha.tmp" "$APP/.release-sha"
 ```
 
-Retain `$PREVIOUS` or the replaced release until post-deploy verification is
-complete. Copy backups to encrypted off-host storage; `data-guard.py` validates
-SQLite integrity and non-decreasing user/favorite/history counts, but it is not
-a backup tool and does not validate sessions, `catalog.db`, or WAL consistency.
+Retain the source and data archives until post-deploy verification is complete.
+Copy backups to encrypted off-host storage; `data-guard.py` validates SQLite
+integrity and non-decreasing user/favorite/history counts, but it is not a
+backup tool and does not validate sessions, `catalog.db`, or archive contents.
 
 ## Manual restart
 
@@ -216,27 +222,36 @@ addresses; inspect the stored origin value through the Cloudflare API/dashboard.
 4. Verify internal/public health and database integrity/counts.
 5. Restore the data archive only if the application change actually damaged persistent state.
 
-Code-only rollback to a retained release:
+Code-only rollback from the retained source archive:
 
 ```sh
-LAST_KNOWN_GOOD=/srv/any-watch/releases/KNOWN_GOOD_SHA
-$COMPOSE stop any-watch
-mv /srv/any-watch/app \
-  "/srv/any-watch/releases/failed-$(date -u +%Y%m%dT%H%M%SZ)"
-ln -s "$LAST_KNOWN_GOOD" /srv/any-watch/app
+SOURCE_BACKUP=/srv/any-watch/backups/SELECTED_SOURCE_BACKUP.tar.gz
+ROLLBACK=/srv/any-watch/deployer/rollback-$(date -u +%Y%m%dT%H%M%SZ)
 COMPOSE="docker compose --project-name homelab \
   --env-file /srv/any-watch/config/any-watch.env \
   --file /srv/any-watch/app/deploy/homelab/compose.yml"
+install -d -m 0750 "$ROLLBACK"
+tar -xzf "$SOURCE_BACKUP" -C "$ROLLBACK"
+$COMPOSE stop any-watch
+rsync -a --delete "$ROLLBACK/" /srv/any-watch/app/
 $COMPOSE build any-watch
-$COMPOSE up -d any-watch
+$COMPOSE up -d --force-recreate any-watch
 ```
 
-For data restore, first stop `any-watch` and preserve the failed directory:
+For data restore, first stop `any-watch` and archive the failed state:
 
 ```sh
+DATA_BACKUP=/srv/any-watch/backups/SELECTED_DATA_BACKUP.tar.gz
+RESTORE=/srv/any-watch/deployer/data-restore-$(date -u +%Y%m%dT%H%M%SZ)
+COMPOSE="docker compose --project-name homelab \
+  --env-file /srv/any-watch/config/any-watch.env \
+  --file /srv/any-watch/app/deploy/homelab/compose.yml"
 $COMPOSE stop any-watch
-mv /srv/any-watch/data "/srv/any-watch/data.failed.$(date -u +%Y%m%dT%H%M%SZ)"
-tar -C /srv/any-watch -xzf /srv/any-watch/backups/SELECTED_BACKUP.tar.gz
+tar -C /srv/any-watch -czf \
+  "/srv/any-watch/backups/data-failed-$(date -u +%Y%m%dT%H%M%SZ).tar.gz" data
+install -d -m 0750 "$RESTORE"
+tar -xzf "$DATA_BACKUP" -C "$RESTORE"
+rsync -a --delete "$RESTORE/data/" /srv/any-watch/data/
 $COMPOSE up -d any-watch
 python3 /srv/any-watch/app/deploy/homelab/data-guard.py snapshot \
   /srv/any-watch/data/web.db
