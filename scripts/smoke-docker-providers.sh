@@ -10,6 +10,12 @@ COOKIE_JAR="$(mktemp)"
 SEGMENT="$(mktemp)"
 LIVE_PROVIDERS="${ANY_WATCH_SMOKE_LIVE_PROVIDERS:-0}"
 
+PYTHON_BIN="${PYTHON_BIN:-}"
+if [[ -z "$PYTHON_BIN" ]]; then
+  PYTHON_BIN="$(command -v python3 || command -v python || true)"
+  PYTHON_BIN="${PYTHON_BIN:-python3}"
+fi
+
 cleanup() {
   docker rm -f "$CONTAINER" >/dev/null 2>&1 || true
   rm -f "$COOKIE_JAR" "$SEGMENT"
@@ -40,7 +46,7 @@ curl --fail --silent \
   "${BASE_URL}/api/login" >/dev/null
 
 sources="$(curl --fail --silent --cookie "$COOKIE_JAR" "${BASE_URL}/api/sources")"
-python3 - "$sources" <<'PY'
+"$PYTHON_BIN" - "$sources" <<'PY'
 import json
 import sys
 
@@ -54,7 +60,7 @@ if [ "$LIVE_PROVIDERS" != "1" ]; then
   exit 0
 fi
 
-python3 - "$health" <<'PY'
+"$PYTHON_BIN" - "$health" <<'PY'
 import json
 import sys
 
@@ -69,7 +75,7 @@ search="$(curl --fail --silent \
   --header 'X-Any-Watch-Request: 1' \
   --data '{"source":"OPhim","query":"Đảo Hải Tặc"}' \
   "${BASE_URL}/api/source/search")"
-anime_id="$(python3 - "$search" <<'PY'
+anime_id="$("$PYTHON_BIN" - "$search" <<'PY'
 import json
 import sys
 
@@ -83,7 +89,7 @@ episodes="$(curl --fail --silent \
   --header 'X-Any-Watch-Request: 1' \
   --data "{\"provider\":\"OPhim\",\"animeId\":\"${anime_id}\"}" \
   "${BASE_URL}/api/anime/episodes")"
-episode_id="$(python3 - "$episodes" <<'PY'
+episode_id="$("$PYTHON_BIN" - "$episodes" <<'PY'
 import json
 import sys
 
@@ -141,7 +147,7 @@ search="$(curl --fail --silent \
   --header 'X-Any-Watch-Request: 1' \
   --data '{"source":"AniZone","query":"One Piece"}' \
   "${BASE_URL}/api/source/search")"
-anime_id="$(python3 - "$search" <<'PY'
+anime_id="$("$PYTHON_BIN" - "$search" <<'PY'
 import json
 import sys
 
@@ -154,7 +160,7 @@ episodes="$(curl --fail --silent \
   --header 'X-Any-Watch-Request: 1' \
   --data "{\"provider\":\"AniZone\",\"animeId\":\"${anime_id}\"}" \
   "${BASE_URL}/api/anime/episodes")"
-episode_id="$(python3 - "$episodes" <<'PY'
+episode_id="$("$PYTHON_BIN" - "$episodes" <<'PY'
 import json
 import sys
 
@@ -186,7 +192,7 @@ manifest="$(curl --fail --silent --cookie "$COOKIE_JAR" "${BASE_URL}${playback_u
 test "${manifest:0:7}" = "#EXTM3U"
 subtitle="$(curl --fail --silent --cookie "$COOKIE_JAR" "${BASE_URL}${subtitle_url}")"
 test "${subtitle:0:6}" = "WEBVTT"
-python3 - "$subtitle" <<'PY'
+"$PYTHON_BIN" - "$subtitle" <<'PY'
 import sys
 
 assert "-->" in sys.argv[1]
@@ -198,7 +204,7 @@ search="$(curl --fail --silent \
   --header 'X-Any-Watch-Request: 1' \
   --data '{"source":"AniDB","query":"One Piece"}' \
   "${BASE_URL}/api/source/search")"
-anime_id="$(python3 - "$search" <<'PY'
+anime_id="$("$PYTHON_BIN" - "$search" <<'PY'
 import json
 import sys
 
@@ -211,7 +217,7 @@ episodes="$(curl --fail --silent \
   --header 'X-Any-Watch-Request: 1' \
   --data "{\"provider\":\"AniDB\",\"animeId\":\"${anime_id}\"}" \
   "${BASE_URL}/api/anime/episodes")"
-episode_id="$(python3 - "$episodes" <<'PY'
+episode_id="$("$PYTHON_BIN" - "$episodes" <<'PY'
 import json
 import sys
 

@@ -15,12 +15,17 @@ concurrency:
 env:
   CARGO_TERM_COLOR: always
   CARGO_INCREMENTAL: "0"
+  PLAYWRIGHT_BROWSERS_PATH: ${{ github.workspace }}/.ms-playwright
 
 jobs:
   quality:
     name: Quality and server API
-    runs-on: ubuntu-latest
-    timeout-minutes: 28
+    strategy:
+      fail-fast: false
+      matrix:
+        os: [ubuntu-latest, macos-latest, windows-latest]
+    runs-on: ${{ matrix.os }}
+    timeout-minutes: 40
     steps:
       - uses: actions/checkout@v7
         with:
@@ -59,6 +64,10 @@ jobs:
           npm run cloudflare:test
           bash -n deploy/homelab/bootstrap-host.sh
           bash -n deploy/homelab/cloudflare-ddns.sh
+
+      - name: Validate Docker Compose configuration
+        if: matrix.os == 'ubuntu-latest'
+        run: |
           ANY_WATCH_ENV_FILE=.env.example docker compose \
             --env-file deploy/homelab/.env.example \
             --file deploy/homelab/compose.yml \
@@ -76,12 +85,16 @@ jobs:
       - name: Smoke-test hosted authentication and My List
         run: |
           cargo build -p any-watch-server
-          scripts/smoke-web-server.sh
+          bash scripts/smoke-web-server.sh
 
   browser-e2e:
     name: Browser E2E
-    runs-on: ubuntu-latest
-    timeout-minutes: 20
+    strategy:
+      fail-fast: false
+      matrix:
+        os: [ubuntu-latest, macos-latest, windows-latest]
+    runs-on: ${{ matrix.os }}
+    timeout-minutes: 30
     steps:
       - uses: actions/checkout@v7
         with:
@@ -98,13 +111,20 @@ jobs:
       - name: Cache Chromium
         uses: actions/cache@v6
         with:
-          path: ~/.cache/ms-playwright
+          path: ${{ env.PLAYWRIGHT_BROWSERS_PATH }}
           key: ${{ runner.os }}-playwright-${{ hashFiles('tests/e2e/requirements.txt') }}
       - name: Install browser test dependencies
         run: |
           npm ci
           python -m pip install -r tests/e2e/requirements.txt
           python -m playwright install --with-deps chromium
+        if: matrix.os == 'ubuntu-latest'
+      - name: Install browser test dependencies (macOS/Windows)
+        run: |
+          npm ci
+          python -m pip install -r tests/e2e/requirements.txt
+          python -m playwright install chromium
+        if: matrix.os != 'ubuntu-latest'
       - name: Run application behavior and responsive tests
         run: pytest tests/e2e/test_app.py -q
       - name: Run independent maintenance-page tests

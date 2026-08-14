@@ -9,6 +9,17 @@ VIEWER_COOKIE_JAR="$(mktemp)"
 SERVER_LOG="$(mktemp)"
 SERVER_PID=""
 
+PYTHON_BIN="${PYTHON_BIN:-}"
+if [[ -z "$PYTHON_BIN" ]]; then
+  PYTHON_BIN="$(command -v python3 || command -v python || true)"
+  PYTHON_BIN="${PYTHON_BIN:-python3}"
+fi
+
+SERVER_BIN="$ROOT_DIR/target/debug/any-watch-server"
+if [[ -e "${SERVER_BIN}.exe" ]]; then
+  SERVER_BIN="${SERVER_BIN}.exe"
+fi
+
 cleanup() {
   if [[ -n "$SERVER_PID" ]]; then
     kill "$SERVER_PID" 2>/dev/null || true
@@ -25,7 +36,7 @@ export ANY_WATCH_WEB_DIR="$ROOT_DIR/web/dist"
 export ANY_WATCH_SECURE_COOKIES=0
 export PORT
 
-"$ROOT_DIR/target/debug/any-watch-server" >"$SERVER_LOG" 2>&1 &
+"$SERVER_BIN" >"$SERVER_LOG" 2>&1 &
 SERVER_PID=$!
 
 for _ in {1..60}; do
@@ -58,7 +69,7 @@ curl --fail --silent \
   "http://127.0.0.1:$PORT/api/admin/users" >/dev/null
 
 users="$(curl --fail --silent --cookie "$COOKIE_JAR" "http://127.0.0.1:$PORT/api/admin/users")"
-python3 - "$users" <<'PY'
+"$PYTHON_BIN" - "$users" <<'PY'
 import json
 import sys
 
@@ -70,12 +81,12 @@ assert root["protected"] is True
 assert viewer["protected"] is False
 PY
 
-root_id="$(python3 - "$users" <<'PY'
+root_id="$("$PYTHON_BIN" - "$users" <<'PY'
 import json, sys
 print(next(user["id"] for user in json.loads(sys.argv[1]) if user["username"] == "smoke_admin"))
 PY
 )"
-viewer_id="$(python3 - "$users" <<'PY'
+viewer_id="$("$PYTHON_BIN" - "$users" <<'PY'
 import json, sys
 print(next(user["id"] for user in json.loads(sys.argv[1]) if user["username"] == "smoke_viewer"))
 PY
@@ -107,7 +118,7 @@ favorite_status="$(curl --silent --output /dev/null --write-out '%{http_code}' \
 [[ "$favorite_status" == "204" ]]
 
 favorites="$(curl --fail --silent --cookie "$COOKIE_JAR" "http://127.0.0.1:$PORT/api/my-list")"
-python3 - "$favorites" <<'PY'
+"$PYTHON_BIN" - "$favorites" <<'PY'
 import json
 import sys
 
@@ -149,7 +160,7 @@ curl --fail --silent \
   "http://127.0.0.1:$PORT/api/admin/users/$viewer_id" >/dev/null
 
 viewer_favorites="$(curl --fail --silent --cookie "$VIEWER_COOKIE_JAR" "http://127.0.0.1:$PORT/api/my-list")"
-python3 - "$viewer_favorites" <<'PY'
+"$PYTHON_BIN" - "$viewer_favorites" <<'PY'
 import json
 import sys
 
@@ -176,7 +187,7 @@ deleted_session_status="$(curl --silent --output /dev/null --write-out '%{http_c
 [[ "$deleted_session_status" == "401" ]]
 
 users="$(curl --fail --silent --cookie "$COOKIE_JAR" "http://127.0.0.1:$PORT/api/admin/users")"
-python3 - "$users" <<'PY'
+"$PYTHON_BIN" - "$users" <<'PY'
 import json
 import sys
 
