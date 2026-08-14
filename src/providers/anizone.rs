@@ -5,17 +5,17 @@ use super::{
 use anyhow::{Context, Result};
 use async_trait::async_trait;
 use regex::Regex;
-use reqwest::header::{HeaderMap, HeaderValue, REFERER, USER_AGENT};
+use reqwest::header::{REFERER, USER_AGENT};
+use serde_json::Value;
 use std::collections::HashMap;
-use std::time::Duration;
+use tokio::process::Command;
 use url::Url;
 
 const BASE_URL: &str = "https://anizone.to";
-const USER_AGENT_VALUE: &str = "Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/126.0.0.0 Safari/537.36";
+const USER_AGENT_VALUE: &str = "any-watch/1.0";
+const OUTPUT_MARKER: &str = "\n__ANY_WATCH__%{http_code}";
 
-pub struct AniZoneProvider {
-    client: reqwest::Client,
-}
+pub struct AniZoneProvider;
 
 impl Default for AniZoneProvider {
     fn default() -> Self {
@@ -25,83 +25,93 @@ impl Default for AniZoneProvider {
 
 impl AniZoneProvider {
     pub fn new() -> Self {
-        let mut headers = HeaderMap::new();
-        headers.insert(USER_AGENT, HeaderValue::from_static(USER_AGENT_VALUE));
-        Self {
-            client: reqwest::Client::builder()
-                .default_headers(headers)
-                .redirect(reqwest::redirect::Policy::limited(8))
-                .timeout(Duration::from_secs(60))
-                .build()
-                .expect("failed to build AniZone client"),
-        }
+        Self
     }
 
     async fn html(&self, url: Url, operation: &str) -> Result<String> {
         let mut last_error = None;
         for _ in 0..2 {
-            let response = match self.client.get(url.clone()).send().await {
-                Ok(response) => response,
-                Err(error) => {
-                    last_error = Some(
-                        anyhow::Error::new(error).context(format!("{operation} request failed")),
-                    );
-                    continue;
-                }
-            };
-            let status = response.status();
-            let body = match response.text().await {
-                Ok(body) => body,
+            let output = match Command::new("curl")
+                .args([
+                    "-sS",
+                    "-L",
+                    "--max-redirs",
+                    "8",
+                    "--max-time",
+                    "60",
+                    "-A",
+                    USER_AGENT_VALUE,
+                    "-w",
+                    OUTPUT_MARKER,
+                    url.as_str(),
+                ])
+                .output()
+                .await
+            {
+                Ok(output) => output,
                 Err(error) => {
                     last_error = Some(
                         anyhow::Error::new(error)
-                            .context(format!("{operation} returned an unreadable response")),
+                            .context("PROVIDER_UNAVAILABLE: AniZone requires the curl binary"),
                     );
                     continue;
                 }
             };
+            let stdout = String::from_utf8_lossy(&output.stdout).into_owned();
+            let (body, status) = stdout
+                .rsplit_once("__ANY_WATCH__")
+                .unwrap_or((stdout.as_str(), "000"));
+            let status = status.trim().parse::<u16>().unwrap_or(0);
+            if status == 0 {
+                last_error = Some(anyhow::anyhow!(
+                    "PROVIDER_UNAVAILABLE: {operation} request failed: {}",
+                    String::from_utf8_lossy(&output.stderr)
+                ));
+                continue;
+            }
             anyhow::ensure!(
-                status.is_success(),
+                (200..300).contains(&status),
                 "PROVIDER_UNAVAILABLE: {operation} returned HTTP {status}"
             );
             anyhow::ensure!(
                 !body.contains("Just a moment") && !body.contains("cf-chl-"),
                 "PROVIDER_CAPTCHA: AniZone returned a browser challenge"
             );
-            return Ok(body);
+            return Ok(body.to_string());
         }
         Err(last_error
             .unwrap_or_else(|| anyhow::anyhow!("{operation} request failed after retries")))
     }
 
     fn parse_search(html: &str) -> Result<Vec<Anime>> {
-        let card = Regex::new(
-            r#"(?s)anmTitles:\s*JSON\.parse\('.*?getTitle\(this\.anmTitles,\s*'(?P<title>[^']+)'\).*?wire:key="a-(?P<id>[A-Za-z0-9_-]+)".*?<img\s+src="(?P<cover>[^"]+)""#,
-        )?;
-        let episodes = Regex::new(r"(?P<count>[0-9,]+)\s+Eps")?;
-        let mut results = Vec::new();
-        for capture in card.captures_iter(html) {
-            let block_start = capture
-                .get(0)
-                .map(|value| value.start())
-                .unwrap_or_default();
-            let following = &html[block_start..html.len().min(block_start + 8_000)];
-            let total_episodes = episodes
-                .captures(following)
-                .and_then(|value| value.name("count"))
-                .and_then(|value| value.as_str().replace(',', "").parse().ok());
-            results.push(Anime {
-                id: capture["id"].to_string(),
-                provider: "AniZone".into(),
-                title: decode_html(&capture["title"]),
-                cover_url: capture["cover"].to_string(),
-                banner_url: None,
-                language: Language::English,
-                total_episodes,
-                synopsis: None,
-            });
-        }
-        Ok(results)
+        let payload =
+            Regex::new(r#"(?s)items:\s*JSON\.parse\('(?P<payload>.*?)'\),\s*nextCursor:"#)?
+                .captures(html)
+                .and_then(|capture| capture.name("payload"))
+                .context("AniZone search returned no result payload")?;
+        let javascript_string: String = serde_json::from_str(&format!("\"{}\"", payload.as_str()))
+            .context("AniZone search returned an invalid result payload")?;
+        let items: Vec<Value> = serde_json::from_str(&javascript_string)
+            .context("AniZone search returned invalid result JSON")?;
+        Ok(items
+            .into_iter()
+            .filter_map(|item| {
+                let id = item["slug"].as_str()?.to_string();
+                let title = item["main_title"].as_str()?.to_string();
+                Some(Anime {
+                    id,
+                    provider: "AniZone".into(),
+                    title: decode_html(&title),
+                    cover_url: item["cover"].as_str().unwrap_or_default().to_string(),
+                    banner_url: None,
+                    language: Language::English,
+                    total_episodes: item["episode_count"]
+                        .as_u64()
+                        .and_then(|value| u32::try_from(value).ok()),
+                    synopsis: None,
+                })
+            })
+            .collect())
     }
 
     fn parse_details(html: &str, anime_id: &str) -> Result<Anime> {
@@ -233,7 +243,7 @@ impl AniZoneProvider {
             subtitles,
             qualities: vec!["Auto".into()],
             headers,
-            use_curl: false,
+            use_curl: true,
         })
     }
 
@@ -362,10 +372,11 @@ mod tests {
 
     #[test]
     fn parses_search_episode_count_and_ass_playback() {
-        let search = r#"anmTitles: JSON.parse('{}'), get displayAnimeTitle() { return window.getTitle(this.anmTitles, 'One Piece'); } } wire:key="a-uyyyn4kf"><img src="https://anizone.to/images/anime/cover.jpg"><span>1176 Eps</span>"#;
+        let search = r#"items: JSON.parse('[{\u0022slug\u0022:\u0022uyyyn4kf\u0022,\u0022url\u0022:\u0022http:\\/\\/anizone.to\\/anime\\/uyyyn4kf\u0022,\u0022cover\u0022:\u0022https:\\/\\/anizone.to\\/images\\/anime\\/cover.jpg\u0022,\u0022main_title\u0022:\u0022One Piece\u0022,\u0022episode_count\u0022:1176}]'), nextCursor: null"#;
         let results = AniZoneProvider::parse_search(search).unwrap();
         assert_eq!(results[0].id, "uyyyn4kf");
         assert_eq!(results[0].title, "One Piece");
+        assert_eq!(results[0].total_episodes, Some(1176));
 
         let details = r#"Showing <span>1</span> to <span>36</span> of <span>1,173</span> results"#;
         assert_eq!(
@@ -378,6 +389,7 @@ mod tests {
         assert_eq!(stream.video_url, "https://cdn.example/master.m3u8");
         assert_eq!(stream.subtitles[0].format, SubtitleFormat::Ass);
         assert_eq!(stream.subtitles[0].language, "English - Full Subtitles");
+        assert!(stream.use_curl);
 
         let encoded = r#"<div x-data="vidstackPlayer(JSON.parse('{\u0022src\u0022:\u0022https:\\/\\/cdn.example\\/master.m3u8\u0022,\u0022subtitles\u0022:[{\u0022title\u0022:\u0022English\u0022,\u0022format\u0022:\u0022ass\u0022,\u0022file\u0022:\u0022https:\\/\\/cdn.example\\/sub.ass\u0022}]}'))"></div>"#;
         let stream = AniZoneProvider::parse_stream(encoded).unwrap();

@@ -24,7 +24,7 @@ upstream provider or permit transferring browser cookies into the service.
 | AnimeVietSub | Vietnamese | Legacy adapter currently duplicates OPhim's public API | Disabled candidate; replace with a distinct documented web-safe integration before enabling |
 | HiAnime | English | Stub, not registered | Do not port without a supported integration basis |
 | AnimeTVN | Vietnamese | Configuration only, no adapter | Do not port without an implementation and supported integration basis |
-| AniZone | English | Implemented; HLS and converted English softsubs pass live browser and Docker playback | Enabled by default at user direction; undocumented page integration remains fragile |
+| AniZone | English | Implemented; current structured search payload, HLS, and converted English softsubs pass live browser and Docker playback | Enabled by default at user direction; undocumented page integration remains fragile |
 | AniDB | English | Implemented from ani-cli v5 (`92e9d796d23aef3ae94b52852f9c992e2bce4fe3`); search, 1,173 One Piece episodes, Japanese HLS pass live playback | Enabled by default; public frontend endpoints without a documented API contract |
 | Reanime | English | Public catalog API documented; playback integration is undocumented | Defer pending a supported playback API, embed, or handoff |
 | Prowlarr | N/A | Configuration only | Not a playback provider |
@@ -85,12 +85,19 @@ integration permission were found, and the media CDN authorizes browser CORS
 only for AniZone's own origin.
 
 At the user's explicit direction, AniZone is now enabled despite the absence of
-a documented integration contract. The adapter uses public server-rendered
-search, title, and episode pages without imported cookies or challenge bypasses.
+a documented integration contract. The adapter uses public first-party search,
+title, and episode pages without imported cookies or challenge bypasses. Search
+results are read from the page's structured `items` payload because AniZone no
+longer renders one Livewire card per result.
 The authenticated opaque proxy relays HLS manifests, keys, audio, video, and
 segments, and converts English ASS tracks to browser-native WebVTT. This loses
 advanced ASS positioning, fonts, animation, and karaoke styling but preserves
 ordinary dialogue and line breaks.
+
+AniZone page and media requests use the system `curl` binary with the neutral
+`any-watch/1.0` user agent. This avoids the upstream network behavior that
+refuses reqwest connections while accepting ordinary non-browser clients; it
+does not import cookies or impersonate a browser.
 
 Certification passed for exact One Piece search, 1,173 regular episodes, recent
 episode playback, rewritten media resources, converted English subtitles, the
