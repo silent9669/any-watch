@@ -88,11 +88,11 @@ tar -tzf "$backup_path" >/dev/null
 sha256sum "$backup_path" > "$backup_path.sha256"
 
 source_backup="$BACKUPS/source-$(date -u +%Y%m%dT%H%M%SZ)-${SHA:0:12}.tar.gz"
-tar -C "$APP" -czf "$source_backup" .
+tar --exclude=./target -C "$APP" -czf "$source_backup" .
 tar -tzf "$source_backup" >/dev/null
 sha256sum "$source_backup" > "$source_backup.sha256"
 
-rsync -a --delete "$NEXT/" "$APP/"
+rsync -a --delete --exclude target/ "$NEXT/" "$APP/"
 $COMPOSE up -d --force-recreate any-watch
 $COMPOSE ps
 
@@ -106,6 +106,8 @@ Retain the source and data archives until post-deploy verification is complete.
 Copy backups to encrypted off-host storage; `data-guard.py` validates SQLite
 integrity and non-decreasing user/favorite/history counts, but it is not a
 backup tool and does not validate sessions, `catalog.db`, or archive contents.
+The disposable `target/` build cache is excluded because prior containerized
+builds may leave root-owned cache locks in the user-owned release tree.
 
 ## Manual restart
 
@@ -233,7 +235,7 @@ COMPOSE="docker compose --project-name homelab \
 install -d -m 0750 "$ROLLBACK"
 tar -xzf "$SOURCE_BACKUP" -C "$ROLLBACK"
 $COMPOSE stop any-watch
-rsync -a --delete "$ROLLBACK/" /srv/any-watch/app/
+rsync -a --delete --exclude target/ "$ROLLBACK/" /srv/any-watch/app/
 $COMPOSE build any-watch
 $COMPOSE up -d --force-recreate any-watch
 ```
