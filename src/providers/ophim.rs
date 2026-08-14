@@ -225,7 +225,7 @@ impl AnimeProvider for OphimProvider {
 
                                 if ep_num > 0 {
                                     episodes.push(Episode {
-                                        id: format!("{}:{}", anime_id, ep_num),
+                                        id: format!("{}:{}", anime_id, name),
                                         number: ep_num,
                                         aniskip_episode_number: super::aniskip_episode_number(name),
                                         title: Some(
@@ -241,20 +241,16 @@ impl AnimeProvider for OphimProvider {
             }
         }
 
-        episodes.sort_by_key(|a| a.number);
+        episodes.sort_by_key(|episode| (episode.number, episode.aniskip_episode_number.is_none()));
         episodes.dedup_by(|a, b| a.number == b.number);
 
         Ok(episodes)
     }
 
     async fn get_stream_url(&self, episode_id: &str) -> Result<StreamInfo> {
-        let parts: Vec<&str> = episode_id.split(':').collect();
-        if parts.len() != 2 {
-            anyhow::bail!("Invalid episode_id format. Expected 'anime_slug:episode_number'");
-        }
-
-        let anime_slug = parts[0];
-        let episode_number = parts[1];
+        let (anime_slug, episode_name) = episode_id
+            .split_once(':')
+            .context("Invalid episode_id format. Expected 'anime_slug:episode_name'")?;
 
         let detail_url = format!("{}/phim/{}", OPHIM_API, anime_slug);
 
@@ -300,10 +296,7 @@ impl AnimeProvider for OphimProvider {
                         {
                             for ep in server_data {
                                 let name = ep["name"].as_str().unwrap_or("");
-                                let ep_num = super::parse_episode_number(name);
-                                let search_num = episode_number.parse::<u32>().unwrap_or(0);
-
-                                if ep_num == search_num {
+                                if name == episode_name {
                                     if let Some(link) = ep["link_m3u8"].as_str() {
                                         if !link.is_empty() {
                                             stream_url = link.to_string();

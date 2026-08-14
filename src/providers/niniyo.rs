@@ -138,7 +138,7 @@ impl NiniyoProvider {
                 })
             })
             .collect::<Vec<_>>();
-        episodes.sort_by_key(|episode| episode.number);
+        episodes.sort_by_key(|episode| (episode.number, episode.aniskip_episode_number.is_none()));
         episodes.dedup_by_key(|episode| episode.number);
         episodes
     }
@@ -357,9 +357,9 @@ mod tests {
 
         let episodes = NiniyoProvider::episodes_from_value(&serde_json::json!({
             "episodes": [
-                { "episodeNumber": "12", "episodeId": "solo-leveling$12" },
                 { "episodeNumber": "1", "episodeId": "solo-leveling$1" },
-                { "episodeNumber": "12.5", "episodeId": "solo-leveling$12.5" }
+                { "episodeNumber": "12.5", "episodeId": "solo-leveling$12.5" },
+                { "episodeNumber": "12", "episodeId": "solo-leveling$12" }
             ]
         }));
         assert_eq!(episodes[0].number, 1);

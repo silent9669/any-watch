@@ -29,7 +29,7 @@ pub struct SourcesConfig {
     #[serde(default = "default_true")]
     pub animegg: bool,
 
-    #[serde(default = "default_true")]
+    #[serde(default)]
     pub moviebox: bool,
 
     #[serde(default = "default_true")]
@@ -83,7 +83,7 @@ mod tests {
         assert!(sources.niniyo);
         assert!(sources.anizone);
         assert!(sources.anidb);
-        assert!(sources.moviebox);
+        assert!(!sources.moviebox);
         assert!(sources.animegg);
         assert!(!sources.allanime);
         assert!(!sources.animevietsub);
@@ -125,8 +125,9 @@ impl Default for SourcesConfig {
             allanime: false,
             // AnimeGG passes live playback certification and is enabled.
             animegg: true,
-            // MovieBox passes live playback certification and is enabled.
-            moviebox: true,
+            // MovieBox currently returns HEVC-only DASH streams, which are not
+            // browser-safe across the supported Chrome and Firefox clients.
+            moviebox: false,
             kkphim: true,
             ophim: true,
             // AnimeVietSub remains an opt-in OPhim-backed compatibility

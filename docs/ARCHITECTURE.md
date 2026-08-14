@@ -4,12 +4,12 @@
 
 ```text
 Authenticated desktop, mobile, or TV browser
-  -> Cloudflare DNS/TLS edge
+  -> orange-clouded Cloudflare A record and Worker Route
   -> any-watch failover Worker
        -> OUTAGE_STATE Durable Object
        -> dynamic /status.json
        -> GitHub Pages immutable maintenance shell when origin is unavailable
-       -> Caddy
+       -> configured external origin -> Caddy TLS
             -> Rust/Axum service
                  -> React/Vite static assets
                  -> same-origin /api routes
@@ -18,7 +18,8 @@ Authenticated desktop, mobile, or TV browser
                  -> AniList, AniSkip, and admitted providers
 ```
 
-Only the reverse proxy publishes host ports. The application serves the browser
+Only the reverse proxy publishes host ports, and host firewall/router policy is
+the external exposure boundary. The application serves the browser
 client and JSON API from one origin. There is no native runtime, privileged IPC,
 desktop updater, MPV process, or application-managed local filesystem library.
 
@@ -58,19 +59,40 @@ short-lived server session. HLS playlists and DASH manifests are rewritten to
 opaque same-origin resource IDs. Browser JSON, markup, and logs must not expose
 raw signed media URLs or reversible encodings of private upstream material.
 
+The curl-backed proxy appends an HTTP metadata trailer after the response body
+and splits only on the final trailer marker. The delimiter newline is metadata,
+not media; retaining it corrupts encrypted HLS segments. A reachable manifest
+is insufficient certification: HLS keys/segments and DASH codecs must also work
+in the supported browser matrix. MovieBox remains disabled while its upstream
+advertises only `hev1`/HEVC video.
+
+HLS and DASH remain adaptive by default. The browser starts with a moderate
+bandwidth estimate, prefetches the first HLS fragment, permits full-resolution
+ABR instead of capping to CSS player dimensions, and uses a short DASH startup
+buffer with fast quality up-switching. Manual quality selection disables ABR
+until the user returns to Auto.
+
 AniSkip is keyed by a canonical AniList title (resolved to MyAnimeList) plus a
-provider-certified positive integer episode number. AniZone, AniDB, KKPhim,
-OPhim, and integer-numbered Niniyo episodes expose that mapping; decimal
+provider-certified positive integer episode number. AniZone, AniDB, AnimeGG,
+KKPhim, OPhim, and integer-numbered Niniyo episodes expose that mapping; decimal
 specials remain unmapped. Direct search keeps a unique exact catalog/query match
 attached to the chosen provider without switching providers. Skip intro seeks
 only opening ranges whose reported episode length matches the active video
 within 20 seconds or three percent. Missing AniSkip submissions are a normal
 no-marker state.
 
+Catalog availability sends the canonical title, native title, and synonyms to
+provider matching. Direct provider search attaches a catalog ID only after one
+unique exact alias match; result order is never sufficient. Titles without a
+MyAnimeList mapping and AniSkip `found: false` responses are normal empty states,
+while transport/protocol failures remain retryable errors.
+
 `GET /api/providers/health` caches aggregate results for five minutes and
 coalesces concurrent stale refreshes. Provider checks run concurrently with a
 60-second per-check backend timeout. Cloudflare allows this endpoint 70 seconds
 and does not reinterpret provider-health errors as a whole-site outage.
+Compose defines no Docker healthcheck, so operational health means a successful
+HTTP probe rather than a Docker `healthy` state.
 
 ## Persistence compatibility
 

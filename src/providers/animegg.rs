@@ -110,7 +110,7 @@ impl AnimeGgProvider {
                 Some(Episode {
                     id: capture["id"].to_string(),
                     number,
-                    aniskip_episode_number: None,
+                    aniskip_episode_number: Some(number),
                     title: Some(clean_html(&capture["title"])),
                     thumbnail: None,
                 })
@@ -304,5 +304,11 @@ mod tests {
             AnimeGgProvider::parse_sources(embed, "https://www.animegg.org/embed/op").unwrap();
         assert!(stream.video_url.contains("op-720"));
         assert_eq!(stream.qualities, vec!["360p", "720p"]);
+
+        let episodes = AnimeGgProvider::parse_episodes(
+            r#"<a href="/one-piece-episode-12" class="anm_det_pop"><strong>Episode 12</strong></a><i class="anititle">Episode 12</i>"#,
+        )
+        .unwrap();
+        assert_eq!(episodes[0].aniskip_episode_number, Some(12));
     }
 }

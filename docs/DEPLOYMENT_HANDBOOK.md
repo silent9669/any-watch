@@ -35,37 +35,85 @@ and the running image describe the same release.
 
 ## Deploy procedure
 
-Run as an account that can modify every file under `/srv/any-watch/app`, or obtain controlled sudo access for the application checkout only.
+`/srv/any-watch/app` is a release tree, not a Git checkout. Build an immutable
+archive from the reviewed commit on the workstation, upload it, and extract it
+to a new release directory. Never use `rsync --delete` over the active tree.
+
+On the workstation:
 
 ```sh
 set -euo pipefail
-APP=/srv/any-watch/app
+SHA=REVIEWED_40_CHARACTER_SHA
+git diff --quiet
+git diff --cached --quiet
+test "$(git rev-parse "$SHA")" = "$SHA"
+git archive --format=tar.gz --output="/tmp/any-watch-${SHA}.tar.gz" "$SHA"
+ssh dangphuc@192.168.1.181 'install -d -m 0750 /srv/any-watch/releases'
+rsync -av "/tmp/any-watch-${SHA}.tar.gz" \
+  dangphuc@192.168.1.181:/srv/any-watch/releases/
+```
+
+On the VM, run as an account that can modify `/srv/any-watch`:
+
+```sh
+set -euo pipefail
+ROOT=/srv/any-watch
+APP="$ROOT/app"
 ENV=/srv/any-watch/config/any-watch.env
 DATA=/srv/any-watch/data
 BACKUPS=/srv/any-watch/backups
+RELEASES=/srv/any-watch/releases
 SHA=REVIEWED_40_CHARACTER_SHA
+NEXT="$RELEASES/$SHA"
+PREVIOUS="$(readlink -f "$APP" 2>/dev/null || printf '%s' "$APP")"
+COMPOSE="docker compose --project-name homelab --env-file $ENV --file $APP/deploy/homelab/compose.yml"
 
-install -d -m 0750 "$BACKUPS"
-cd "$APP"
-git fetch origin master
-git checkout --detach "$SHA"
+install -d -m 0750 "$BACKUPS" "$NEXT"
+tar -xzf "$RELEASES/any-watch-${SHA}.tar.gz" -C "$NEXT"
 
-before="$(python3 deploy/homelab/data-guard.py snapshot "$DATA/web.db")"
+before="$(python3 "$APP/deploy/homelab/data-guard.py" snapshot "$DATA/web.db")"
+test "$(printf '%s' "$before" | jq -r .exists)" = true
+test "$(printf '%s' "$before" | jq -r .integrity)" = ok
 printf '%s\n' "$before" > "$BACKUPS/pre-deploy-${SHA:0:12}.json"
 
-docker compose --env-file "$ENV" -f deploy/homelab/compose.yml build any-watch
-docker compose --env-file "$ENV" -f deploy/homelab/compose.yml stop any-watch
+$COMPOSE stop any-watch
 
 backup_path="$BACKUPS/manual-$(date -u +%Y%m%dT%H%M%SZ)-${SHA:0:12}.tar.gz"
-tar -C /srv/any-watch -czf "$backup_path" data
-test -s "$backup_path"
+tar -C "$ROOT" -czf "$backup_path" data
+tar -tzf "$backup_path" >/dev/null
+sha256sum "$backup_path" > "$backup_path.sha256"
 
-docker compose --env-file "$ENV" -f deploy/homelab/compose.yml up -d any-watch caddy
-docker compose --env-file "$ENV" -f deploy/homelab/compose.yml ps
+mv "$APP" "$RELEASES/replaced-${SHA:0:12}-$(date -u +%Y%m%dT%H%M%SZ)"
+ln -s "$NEXT" "$APP"
+COMPOSE="docker compose --project-name homelab --env-file $ENV --file $APP/deploy/homelab/compose.yml"
+$COMPOSE build any-watch
+$COMPOSE up -d any-watch
+$COMPOSE ps
 
-after="$(python3 deploy/homelab/data-guard.py snapshot "$DATA/web.db")"
-python3 deploy/homelab/data-guard.py verify "$before" "$after"
+after="$(python3 "$APP/deploy/homelab/data-guard.py" snapshot "$DATA/web.db")"
+python3 "$APP/deploy/homelab/data-guard.py" verify "$before" "$after"
+printf '%s\n' "$SHA" > "$APP/.release-sha.tmp"
+mv "$APP/.release-sha.tmp" "$APP/.release-sha"
 ```
+
+Retain `$PREVIOUS` or the replaced release until post-deploy verification is
+complete. Copy backups to encrypted off-host storage; `data-guard.py` validates
+SQLite integrity and non-decreasing user/favorite/history counts, but it is not
+a backup tool and does not validate sessions, `catalog.db`, or WAL consistency.
+
+## Manual restart
+
+```sh
+COMPOSE="docker compose --project-name homelab \
+  --env-file /srv/any-watch/config/any-watch.env \
+  --file /srv/any-watch/app/deploy/homelab/compose.yml"
+
+$COMPOSE restart any-watch
+$COMPOSE up -d --force-recreate any-watch  # changed image or environment
+```
+
+Do not restart Caddy for an application-only restart or rollback. Stop Caddy
+only for a deliberate failover test, then restore it with `$COMPOSE up -d caddy`.
 
 ## Post-deploy verification
 
@@ -97,7 +145,7 @@ The post-deploy SQLite snapshot must report `integrity: ok` and user, favorite, 
   cargo test --test providers_live test_anidb_live_health -- --ignored --nocapture
   ```
 
-- Production currently enables AniZone, AniDB, MovieBox, and AnimeGG for English and OPhim, KKPhim, and Niniyo for Vietnamese. AniZone and AniDB fetch through the system `curl` binary with a neutral `any-watch/1.0` user agent - never a browser-claiming UA or reqwest TLS stack - because their upstream network policies reject or challenge the reqwest transport. A provider is selectable only while its application health check is healthy.
+- Production defaults enable AniZone, AniDB, and AnimeGG for English and OPhim, KKPhim, and Niniyo for Vietnamese. MovieBox is disabled because its current DASH stream is HEVC-only. AniZone and AniDB fetch through the system `curl` binary with a neutral `any-watch/1.0` user agent - never a browser-claiming UA or reqwest TLS stack - because their upstream network policies reject or challenge the reqwest transport. A provider is selectable only while its application health check is healthy.
 - A provider can become unavailable because of rate limits, regional routing, or upstream changes. Treat that as an operational incident, not a reason to delete user data or bypass access controls.
 - Authenticated `GET /api/providers/health` results are cached for five minutes, and concurrent stale requests share one refresh. Each provider check is bounded to 60 seconds. If the initial UI health request fails while entries are still `unknown`, they become retryable `unavailable` entries instead of remaining indefinitely in `Checking`.
 - AniSkip certification must verify the exact catalog ID, provider episode
@@ -111,8 +159,17 @@ The post-deploy SQLite snapshot must report `integrity: ok` and user, favorite, 
 Deploy the Worker through its checked-in script and Wrangler configuration. Do not reconstruct the deployment with ad hoc flags or paste only the JavaScript into the dashboard; `wrangler.toml` includes the `OUTAGE_STATE` binding and migration:
 
 ```sh
+npm run cloudflare:test
 deploy/cloudflare/deploy-worker.sh
+cd deploy/cloudflare
+npx --yes wrangler@latest deployments list
+npx --yes wrangler@latest tail any-watch-failover
 ```
+
+Worker deployment needs `CLOUDFLARE_API_TOKEN` and
+`CLOUDFLARE_ACCOUNT_ID`. The checked-in Wrangler configuration declares the
+Durable Object binding and migration, but the `ani.dangphuc.me/*` Worker Route
+is managed separately. Do not delete or rewrite migration `v1` during rollback.
 
 Online verification must include `X-Any-Watch-Mode: app`:
 
@@ -136,13 +193,54 @@ Production validation must confirm:
 - AniList `429` and provider `502` errors are upstream failures. Record their time and provider, then retry at a controlled rate.
 - Keep Cloudflare DDNS timer enabled and check its latest service result after networking changes.
 
+DDNS diagnostics:
+
+```sh
+systemctl status any-watch-cloudflare-ddns.timer --no-pager
+systemctl status any-watch-cloudflare-ddns.service --no-pager
+systemctl list-timers any-watch-cloudflare-ddns.timer --all
+journalctl -u any-watch-cloudflare-ddns.service -n 100 --no-pager
+sudo systemctl start any-watch-cloudflare-ddns.service
+curl -fsS --max-time 10 https://api.ipify.org
+```
+
+The timer runs every ten minutes with up to one minute of randomized delay.
+Because the DNS record is proxied, public `dig` output shows Cloudflare edge
+addresses; inspect the stored origin value through the Cloudflare API/dashboard.
+
 ## Rollback
 
 1. Stop only `any-watch`.
 2. Restore the previous known-good application tree or image.
-3. Rebuild and run `docker compose up -d any-watch caddy` without `-v`.
+3. Rebuild and run `docker compose up -d any-watch` without `-v`.
 4. Verify internal/public health and database integrity/counts.
 5. Restore the data archive only if the application change actually damaged persistent state.
+
+Code-only rollback to a retained release:
+
+```sh
+LAST_KNOWN_GOOD=/srv/any-watch/releases/KNOWN_GOOD_SHA
+$COMPOSE stop any-watch
+mv /srv/any-watch/app \
+  "/srv/any-watch/releases/failed-$(date -u +%Y%m%dT%H%M%SZ)"
+ln -s "$LAST_KNOWN_GOOD" /srv/any-watch/app
+COMPOSE="docker compose --project-name homelab \
+  --env-file /srv/any-watch/config/any-watch.env \
+  --file /srv/any-watch/app/deploy/homelab/compose.yml"
+$COMPOSE build any-watch
+$COMPOSE up -d any-watch
+```
+
+For data restore, first stop `any-watch` and preserve the failed directory:
+
+```sh
+$COMPOSE stop any-watch
+mv /srv/any-watch/data "/srv/any-watch/data.failed.$(date -u +%Y%m%dT%H%M%SZ)"
+tar -C /srv/any-watch -xzf /srv/any-watch/backups/SELECTED_BACKUP.tar.gz
+$COMPOSE up -d any-watch
+python3 /srv/any-watch/app/deploy/homelab/data-guard.py snapshot \
+  /srv/any-watch/data/web.db
+```
 
 For a Worker-only rollback, redeploy the previous known-good Worker commit with
 its matching `wrangler.toml`, then repeat the production validation. If a safe

@@ -67,7 +67,7 @@ fi
 
 COMPOSE_FILE="$APP_DIR/deploy/homelab/compose.yml"
 if [ -f "$COMPOSE_FILE" ]; then
-  docker compose -p homelab -f "$COMPOSE_FILE" up -d --build
+  docker compose -p homelab --env-file "$NEW_ROOT/config/any-watch.env" -f "$COMPOSE_FILE" up -d --build
   echo "Recreated homelab stack from $COMPOSE_FILE"
 fi
 

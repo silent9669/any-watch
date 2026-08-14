@@ -105,6 +105,11 @@ async fn probe_stream(stream: &StreamInfo) -> Result<()> {
     {
         let manifest = String::from_utf8(body)?;
         anyhow::ensure!(manifest.contains("<MPD"), "DASH manifest was invalid");
+        let lowercase = manifest.to_ascii_lowercase();
+        anyhow::ensure!(
+            !lowercase.contains("codecs=\"hev1") && !lowercase.contains("codecs=\"hvc1"),
+            "DASH manifest advertises HEVC-only video, which is not browser-safe"
+        );
     } else {
         anyhow::ensure!(!body.is_empty(), "media response was empty");
     }

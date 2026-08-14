@@ -426,9 +426,8 @@ function App() {
       if (catalogOutcome.ok) {
         const items = catalogOutcome.items;
         setCatalogResults(items);
-        const linkedDirectItems = directItems.map((anime, index) => {
-          const catalogMatch = exactCatalogMatch(items, anime)
-            ?? (index === 0 ? exactCatalogTitleMatch(items, cleanQuery) : null);
+        const linkedDirectItems = directItems.map((anime) => {
+          const catalogMatch = exactCatalogMatch(items, anime);
           return catalogMatch ? catalogToAnime(catalogMatch, anime) : anime;
         });
         setProviderResults(linkedDirectItems);
@@ -597,7 +596,12 @@ function App() {
       const cached = availabilityCacheRef.current.get(cacheKey);
       const options = cached && cached.expiresAt > Date.now()
         ? cached.items
-        : await api.resolveAvailability(catalog.catalogId, catalog.title, group);
+        : await api.resolveAvailability(
+            catalog.catalogId,
+            catalog.title,
+            [catalog.nativeTitle ?? "", ...(catalog.synonyms ?? [])],
+            group,
+          );
       if (generation !== availabilityGenerationRef.current) return;
       availabilityCacheRef.current.set(cacheKey, { expiresAt: Date.now() + 5 * 60_000, items: options });
       setAvailability(options);
@@ -3145,6 +3149,17 @@ function VideoPlayer({
         if (disposed) return;
         const player = dashjs.MediaPlayer().create();
         dashRef.current = player;
+        player.updateSettings({
+          streaming: {
+            abr: { initialBitrate: { video: 2500 } },
+            buffer: {
+              fastSwitchEnabled: true,
+              initialBufferLevel: 4,
+              bufferTimeDefault: 12,
+              bufferTimeAtTopQuality: 30,
+            },
+          },
+        });
         player.on(dashjs.MediaPlayer.events.STREAM_INITIALIZED, () => {
           if (disposed) return;
           const representations = player.getRepresentationsByType("video");
@@ -3188,7 +3203,13 @@ function VideoPlayer({
             return;
           }
 
-          const hls = new HlsRuntime({ capLevelToPlayerSize: true, enableWorker: true });
+          const hls = new HlsRuntime({
+            capLevelToPlayerSize: false,
+            enableWorker: true,
+            startFragPrefetch: true,
+            lowLatencyMode: false,
+            abrEwmaDefaultEstimate: 2_500_000,
+          });
           hlsRef.current = hls;
           hls.attachMedia(video);
           hls.loadSource(context.playback.playbackUrl);

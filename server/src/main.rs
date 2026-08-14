@@ -212,6 +212,8 @@ struct CatalogInput {
 struct AvailabilityInput {
     catalog_id: i64,
     title: String,
+    #[serde(default)]
+    title_variants: Vec<String>,
     language_group_filter: Option<String>,
 }
 
@@ -949,7 +951,21 @@ async fn availability(
     Json(input): Json<AvailabilityInput>,
 ) -> ApiResult<Json<Vec<AvailabilityDto>>> {
     require_user(&state, &headers).await?;
-    let _catalog_id = input.catalog_id;
+    let mut titles = Vec::new();
+    for title in std::iter::once(input.title).chain(input.title_variants) {
+        let title = title.trim();
+        if title.is_empty()
+            || titles
+                .iter()
+                .any(|current: &String| current.eq_ignore_ascii_case(title))
+        {
+            continue;
+        }
+        titles.push(title.to_string());
+        if titles.len() == 8 {
+            break;
+        }
+    }
     let mut values = Vec::new();
     for provider in state.providers.list_providers() {
         if input
@@ -959,26 +975,42 @@ async fn availability(
         {
             continue;
         }
-        let result = provider.search(input.title.trim()).await;
-        let (status, failure_code, anime) = match result {
-            Ok(items) => {
-                let selected = best_title_match(items, std::slice::from_ref(&input.title))
-                    .map(|anime| map_anime(anime, Some(input.catalog_id)));
-                if selected.is_some() {
-                    ("available".into(), None, selected)
-                } else {
-                    (
-                        "unavailable".into(),
-                        Some("TITLE_NOT_AVAILABLE".into()),
-                        None,
-                    )
+        let mut selected = None;
+        let mut successful_search = false;
+        let mut last_error = None;
+        for title in &titles {
+            match provider.search(title.trim()).await {
+                Ok(items) => {
+                    successful_search = true;
+                    selected = best_title_match(items, &titles)
+                        .map(|anime| map_anime(anime, Some(input.catalog_id)));
+                    if selected.is_some() {
+                        break;
+                    }
                 }
+                Err(error) => last_error = Some(error),
             }
-            Err(error) => (
+        }
+        let (status, failure_code, anime) = if selected.is_some() {
+            ("available".into(), None, selected)
+        } else if successful_search {
+            (
                 "unavailable".into(),
-                Some(classify_provider_error(&error.to_string()).into()),
+                Some("TITLE_NOT_AVAILABLE".into()),
                 None,
-            ),
+            )
+        } else {
+            (
+                "unavailable".into(),
+                Some(
+                    last_error
+                        .as_ref()
+                        .map(|error| classify_provider_error(&error.to_string()))
+                        .unwrap_or("PROVIDER_UNAVAILABLE")
+                        .into(),
+                ),
+                None,
+            )
         };
         values.push(AvailabilityDto {
             provider: provider.name().into(),
@@ -1170,6 +1202,15 @@ async fn skip_times(
     Json(input): Json<SkipTimesInput>,
 ) -> ApiResult<Json<Vec<SkipTime>>> {
     require_user(&state, &headers).await?;
+    if input.catalog_id <= 0 || input.episode_number == 0 {
+        return Err(ApiError::new(
+            StatusCode::BAD_REQUEST,
+            "INVALID_SKIP_TIMES_INPUT",
+            "skip-times",
+            "A positive catalog ID and episode number are required.",
+            false,
+        ));
+    }
     let times = fetch_skip_times(input.catalog_id, input.episode_number)
         .await
         .map_err(|error| {
@@ -1529,26 +1570,7 @@ async fn curl_fetch(
                 true,
             )
         })?;
-    let stdout = output.stdout;
-    const MARKER: &[u8] = b"__ANY_WATCH__";
-    let (body, meta) = stdout
-        .windows(MARKER.len())
-        .position(|window| window == MARKER)
-        .map_or((stdout.clone(), Vec::new()), |index| {
-            (
-                stdout[..index].to_vec(),
-                stdout[index + MARKER.len()..].to_vec(),
-            )
-        });
-    let meta = String::from_utf8_lossy(&meta).into_owned();
-    let mut fields = meta.split("__");
-    let status = fields
-        .next()
-        .unwrap_or("000")
-        .trim()
-        .parse::<u16>()
-        .unwrap_or(0);
-    let content_type = fields.next().unwrap_or_default().to_string();
+    let (body, status, content_type) = parse_curl_output(output.stdout);
     if status == 0 {
         return Err(ApiError::new(
             StatusCode::BAD_GATEWAY,
@@ -1563,6 +1585,30 @@ async fn curl_fetch(
         ));
     }
     Ok((status, content_type, body))
+}
+
+fn parse_curl_output(stdout: Vec<u8>) -> (Vec<u8>, u16, String) {
+    const MARKER: &[u8] = b"\n__ANY_WATCH__";
+    let marker_index = stdout
+        .windows(MARKER.len())
+        .rposition(|window| window == MARKER);
+    let (body, meta) = match marker_index {
+        Some(index) => (
+            stdout[..index].to_vec(),
+            stdout[index + MARKER.len()..].to_vec(),
+        ),
+        None => (stdout, Vec::new()),
+    };
+    let meta = String::from_utf8_lossy(&meta).into_owned();
+    let mut fields = meta.split("__");
+    let status = fields
+        .next()
+        .unwrap_or("000")
+        .trim()
+        .parse::<u16>()
+        .unwrap_or(0);
+    let content_type = fields.next().unwrap_or_default().to_string();
+    (body, status, content_type)
 }
 
 async fn proxy_ass_subtitle(
@@ -2939,6 +2985,32 @@ mod tests {
             browser_download_file_name(&request, &stream("https://cdn.example/video.mp4")),
             "One Piece - Episode 01.mp4"
         );
+    }
+
+    #[test]
+    fn curl_metadata_is_removed_without_changing_binary_media() {
+        let media = (0_u8..=255).cycle().take(262_144).collect::<Vec<_>>();
+        let mut output = media.clone();
+        output.extend_from_slice(b"\n__ANY_WATCH__206__video/mp2t");
+
+        let (body, status, content_type) = parse_curl_output(output);
+
+        assert_eq!(body, media);
+        assert_eq!(status, 206);
+        assert_eq!(content_type, "video/mp2t");
+    }
+
+    #[test]
+    fn curl_metadata_uses_the_final_marker_in_binary_media() {
+        let media = b"segment\n__ANY_WATCH__bytes".to_vec();
+        let mut output = media.clone();
+        output.extend_from_slice(b"\n__ANY_WATCH__200__video/mp4");
+
+        let (body, status, content_type) = parse_curl_output(output);
+
+        assert_eq!(body, media);
+        assert_eq!(status, 200);
+        assert_eq!(content_type, "video/mp4");
     }
 
     #[test]

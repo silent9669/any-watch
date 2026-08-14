@@ -95,8 +95,8 @@ export const api = {
   getGenreCatalog: (genre: string) => webRequest<CatalogAnime[]>(`/catalog/genre/${encodeURIComponent(genre)}`),
   getCatalog: (filters: CatalogFilters, sort: string, page = 1) => webPost<CatalogPage>("/catalog", { filters, sort, page }),
   searchCatalog: (query: string) => webRequest<CatalogAnime[]>(`/catalog/search?query=${encodeURIComponent(query)}`),
-  resolveAvailability: (catalogId: number, title: string, languageGroupFilter?: string) =>
-    webPost<ProviderAvailability[]>("/availability", { catalogId, title, languageGroupFilter }),
+  resolveAvailability: (catalogId: number, title: string, titleVariants: string[], languageGroupFilter?: string) =>
+    webPost<ProviderAvailability[]>("/availability", { catalogId, title, titleVariants, languageGroupFilter }),
   getContinueWatching: (limit = 20) => webRequest<WatchHistory[]>(`/history?limit=${limit}`),
   getMyList: (limit = 100) => webRequest<Favorite[]>(`/my-list?limit=${limit}`),
   searchSource: (source: string, query: string) => webPost<Anime[]>("/source/search", { source, query }),

@@ -66,7 +66,9 @@ pub async fn fetch_skip_times(catalog_id: i64, episode_number: u32) -> Result<Ve
         .user_agent("any-watch/1.0")
         .build()
         .context("failed to build AniSkip client")?;
-    let id_mal = resolve_mal_id(&client, catalog_id).await?;
+    let Some(id_mal) = resolve_mal_id(&client, catalog_id).await? else {
+        return Ok(Vec::new());
+    };
     let response = client
         .get(format!("{ANISKIP_API}/{id_mal}/{episode_number}"))
         .query(&[("types[]", "op"), ("types[]", "ed")])
@@ -86,10 +88,10 @@ pub async fn fetch_skip_times(catalog_id: i64, episode_number: u32) -> Result<Ve
     Ok(normalize_results(response.results))
 }
 
-async fn resolve_mal_id(client: &Client, catalog_id: i64) -> Result<u64> {
+async fn resolve_mal_id(client: &Client, catalog_id: i64) -> Result<Option<u64>> {
     let cache = MAL_ID_CACHE.get_or_init(|| RwLock::new(HashMap::new()));
     if let Some(id) = cache.read().await.get(&catalog_id).copied() {
-        return Ok(id);
+        return Ok(Some(id));
     }
     let response = client
         .post(ANILIST_API)
@@ -108,9 +110,10 @@ async fn resolve_mal_id(client: &Client, catalog_id: i64) -> Result<u64> {
     let id = response
         .data
         .and_then(|data| data.media)
-        .and_then(|media| media.id_mal)
-        .context("this title has no MyAnimeList id for AniSkip")?;
-    cache.write().await.insert(catalog_id, id);
+        .and_then(|media| media.id_mal);
+    if let Some(id) = id {
+        cache.write().await.insert(catalog_id, id);
+    }
     Ok(id)
 }
 

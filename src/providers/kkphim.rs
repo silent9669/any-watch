@@ -269,7 +269,7 @@ impl AnimeProvider for KkphimProvider {
                                     );
 
                                     episodes.push(Episode {
-                                        id: format!("{}:{}", anime_id, ep_number),
+                                        id: format!("{}:{}", anime_id, name_str),
                                         number: ep_number,
                                         aniskip_episode_number: super::aniskip_episode_number(
                                             name_str,
@@ -294,7 +294,7 @@ impl AnimeProvider for KkphimProvider {
         }
 
         let before_dedup = episodes.len();
-        episodes.sort_by_key(|a| a.number);
+        episodes.sort_by_key(|episode| (episode.number, episode.aniskip_episode_number.is_none()));
         episodes.dedup_by(|a, b| a.number == b.number);
         let after_dedup = episodes.len();
 
@@ -308,18 +308,14 @@ impl AnimeProvider for KkphimProvider {
     }
 
     async fn get_stream_url(&self, episode_id: &str) -> Result<StreamInfo> {
-        let parts: Vec<&str> = episode_id.split(':').collect();
-        if parts.len() != 2 {
-            anyhow::bail!("Invalid episode_id format. Expected 'anime_slug:episode_number'");
-        }
-
-        let anime_slug = parts[0];
-        let episode_number = parts[1];
+        let (anime_slug, episode_name) = episode_id
+            .split_once(':')
+            .context("Invalid episode_id format. Expected 'anime_slug:episode_name'")?;
 
         tracing::info!(
             "Fetching stream URL for KKPhim anime: {}, episode: {}",
             anime_slug,
-            episode_number
+            episode_name
         );
 
         let detail_url = format!("{}/phim/{}?embed=false", KKPHIM_API, anime_slug);
@@ -372,7 +368,7 @@ impl AnimeProvider for KkphimProvider {
 
                     tracing::info!(
                         "Searching for episode {} in {} server entries",
-                        episode_number,
+                        episode_name,
                         sorted_servers.len()
                     );
 
@@ -389,19 +385,10 @@ impl AnimeProvider for KkphimProvider {
 
                             for server_ep in server_data {
                                 let ep_name = server_ep["name"].as_str().unwrap_or("");
-                                // Parse Vietnamese episode name: "Tập 001" -> 1
-                                let ep_num = super::parse_episode_number(ep_name);
-                                let search_num = episode_number.parse::<u32>().unwrap_or(0);
-                                tracing::debug!(
-                                    "Comparing '{}' (parsed: {}) with '{}' (parsed: {})",
-                                    ep_name,
-                                    ep_num,
-                                    episode_number,
-                                    search_num
-                                );
+                                tracing::debug!("Comparing '{}' with '{}'", ep_name, episode_name,);
 
-                                if ep_num == search_num {
-                                    tracing::info!("Found matching episode {}", episode_number);
+                                if ep_name == episode_name {
+                                    tracing::info!("Found matching episode {}", episode_name);
 
                                     if let Some(link) = server_ep["link_m3u8"].as_str() {
                                         if !link.is_empty() {
@@ -450,7 +437,7 @@ impl AnimeProvider for KkphimProvider {
         if stream_url.is_empty() {
             tracing::error!(
                 "No working stream URL found for episode {} of {}",
-                episode_number,
+                episode_name,
                 anime_slug
             );
             anyhow::bail!("No working stream URL found for this episode.");

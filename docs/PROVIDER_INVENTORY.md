@@ -15,7 +15,7 @@ upstream provider or permit transferring browser cookies into the service.
 
 | Provider | Language focus | Current status | any-watch disposition |
 | --- | --- | --- | --- |
-| MovieBox | English | Implemented and certified | Enabled by default |
+| MovieBox | English | Implemented; current playback is HEVC-only DASH | Disabled until an AVC/VP9/AV1 browser-safe stream is certified |
 | KKPhim | Vietnamese | Implemented and certified | Enabled by default |
 | OPhim | Vietnamese | Implemented and certified | Enabled by default |
 | Niniyo | Vietnamese | Implemented and certified | Enabled by default |
@@ -173,8 +173,8 @@ Provider search results remain distinct. Matching a canonical title is a
 confidence-scored mapping; it is never permission to merge source episode IDs or
 to silently switch playback providers.
 
-The current defaults expose AniSkip numbers for AniZone, AniDB, KKPhim, OPhim,
-and integer-numbered Niniyo episodes. Automatic Skip intro still requires a
+The current defaults expose AniSkip numbers for AniZone, AniDB, AnimeGG,
+KKPhim, OPhim, and integer-numbered Niniyo episodes. Automatic Skip intro still requires a
 unique exact catalog match and a compatible episode duration. AniSkip may have
 no submitted timing for an otherwise correct episode (for example, One Piece
 1170 at the time of certification); the application must not borrow timing from
@@ -192,6 +192,8 @@ A provider can be enabled only after a repeatable test verifies:
 6. Login, library, and other providers remain usable when this provider fails.
 7. Browser responses and logs contain no source credentials, cookies, required
    upstream headers, or raw signed media URLs.
+8. HLS/DASH video codecs are supported by the declared browser matrix; a
+   reachable HEVC-only manifest does not qualify as browser playback.
 
 The certification report records timestamp, environment, region, sample titles,
 capabilities, result, and safe error category. A failed check is exposed as

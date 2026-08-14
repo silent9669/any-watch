@@ -1,10 +1,17 @@
 import contextlib
 import socket
 import subprocess
+import sys
 import time
 
 import pytest
 from playwright.sync_api import expect, sync_playwright
+
+
+def _free_port():
+    with socket.socket(socket.AF_INET, socket.SOCK_STREAM) as sock:
+        sock.bind(("127.0.0.1", 0))
+        return sock.getsockname()[1]
 
 
 VIEWPORTS = [
@@ -22,20 +29,28 @@ VIEWPORTS = [
 
 @pytest.fixture(scope="module")
 def maintenance_url():
+    port = _free_port()
+    log = subprocess.DEVNULL
     proc = subprocess.Popen(
-        ["python3", "-m", "http.server", "4174", "--directory", "maintenance", "--bind", "127.0.0.1"],
-        stdout=subprocess.DEVNULL,
-        stderr=subprocess.DEVNULL,
+        [sys.executable, "-m", "http.server", str(port), "--directory", "maintenance", "--bind", "127.0.0.1"],
+        stdout=log,
+        stderr=log,
     )
     try:
-        for _ in range(30):
+        ready = False
+        for _ in range(60):
+            if proc.poll() is not None:
+                break
             with contextlib.suppress(OSError):
-                with socket.create_connection(("127.0.0.1", 4174), timeout=0.25):
+                with socket.create_connection(("127.0.0.1", port), timeout=0.25):
+                    ready = True
                     break
             time.sleep(0.1)
-        else:
-            raise RuntimeError("maintenance preview server did not start")
-        yield "http://127.0.0.1:4174"
+        if not ready:
+            raise RuntimeError(
+                f"maintenance preview server did not start (exit code {proc.poll()})"
+            )
+        yield f"http://127.0.0.1:{port}"
     finally:
         proc.terminate()
         proc.wait(timeout=5)

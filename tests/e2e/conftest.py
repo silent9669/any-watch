@@ -1,9 +1,12 @@
 import os
 import time
 import socket
+import shutil
 import subprocess
 import pytest
 from playwright.sync_api import sync_playwright
+
+NPM_BIN = shutil.which("npm") or "npm"
 
 def _free_port():
     with socket.socket(socket.AF_INET, socket.SOCK_STREAM) as sock:
@@ -16,7 +19,7 @@ def vite_server():
     # runners never collide on a fixed port.
     port = _free_port()
     proc = subprocess.Popen(
-        ["npm", "run", "dev", "--", "--port", str(port)],
+        [NPM_BIN, "run", "dev", "--", "--port", str(port)],
         stdout=subprocess.DEVNULL,
         stderr=subprocess.DEVNULL,
     )
@@ -192,7 +195,7 @@ def mocked_page(page, vite_server):
                     catalogId: index === 0 && onePiece ? 21 : 3000 + index,
                     title: index === 0 ? (onePiece ? "One Piece" : "Naruto Shippuden") : `Sample Anime ${index + 1}`,
                     nativeTitle: null,
-                    synonyms: index === 0 ? (onePiece ? [] : ["Naruto: Shippuden"]) : [],
+                    synonyms: index === 0 ? (onePiece ? ["Đảo Hải Tặc"] : ["Naruto: Shippuden"]) : [],
                     description: index === 0 ? "A story about Naruto." : `Sample synopsis ${index + 1}.`,
                     coverUrl: `https://example.com/search-${index + 1}.jpg`,
                     bannerUrl: `https://example.com/search-banner-${index + 1}.jpg`,
