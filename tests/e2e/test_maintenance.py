@@ -1,17 +1,14 @@
-import contextlib
-import socket
-import subprocess
-import sys
-import time
+import functools
+import http.server
+import threading
 
 import pytest
 from playwright.sync_api import expect, sync_playwright
 
 
-def _free_port():
-    with socket.socket(socket.AF_INET, socket.SOCK_STREAM) as sock:
-        sock.bind(("127.0.0.1", 0))
-        return sock.getsockname()[1]
+class QuietHandler(http.server.SimpleHTTPRequestHandler):
+    def log_message(self, format, *args):
+        pass
 
 
 VIEWPORTS = [
@@ -29,31 +26,19 @@ VIEWPORTS = [
 
 @pytest.fixture(scope="module")
 def maintenance_url():
-    port = _free_port()
-    log = subprocess.DEVNULL
-    proc = subprocess.Popen(
-        [sys.executable, "-m", "http.server", str(port), "--directory", "maintenance", "--bind", "127.0.0.1"],
-        stdout=log,
-        stderr=log,
+    handler = functools.partial(
+        QuietHandler,
+        directory="maintenance",
     )
+    server = http.server.ThreadingHTTPServer(("127.0.0.1", 0), handler)
+    thread = threading.Thread(target=server.serve_forever, daemon=True)
+    thread.start()
     try:
-        ready = False
-        for _ in range(60):
-            if proc.poll() is not None:
-                break
-            with contextlib.suppress(OSError):
-                with socket.create_connection(("127.0.0.1", port), timeout=0.25):
-                    ready = True
-                    break
-            time.sleep(0.1)
-        if not ready:
-            raise RuntimeError(
-                f"maintenance preview server did not start (exit code {proc.poll()})"
-            )
-        yield f"http://127.0.0.1:{port}"
+        yield f"http://127.0.0.1:{server.server_port}"
     finally:
-        proc.terminate()
-        proc.wait(timeout=5)
+        server.shutdown()
+        server.server_close()
+        thread.join(timeout=5)
 
 
 @pytest.mark.parametrize("width,height", VIEWPORTS)
