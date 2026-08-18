@@ -4,7 +4,7 @@
 
   const defaults = Object.freeze({
     mode: "maintenance",
-    headline: "The theatre is taking a short break.",
+    headline: "OFFLINE MAI UPDATE",
     message:
       "any-watch is temporarily offline for maintenance. Your watch history, family accounts, and library remain stored safely on the home server.",
     statusLabel: "Maintenance in progress",
