@@ -1,7 +1,9 @@
 # any-watch homelab deployment
 
-This deployment runs any-watch behind Caddy with automatic HTTPS. Only Caddy
-binds host ports; the application is reachable only on the private Docker
+This deployment runs any-watch on a Debian Stable host (Debian 12 Bookworm / Debian 13)
+behind Caddy with automatic HTTPS. The production container runs on `debian:bookworm-slim`
+with `ffmpeg` pre-installed for server-side fast-start MP4 remuxing and video extraction.
+Only Caddy binds host ports; the application is reachable only on the private Docker
 network.
 
 ## First deployment

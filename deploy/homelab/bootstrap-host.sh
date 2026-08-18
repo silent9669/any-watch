@@ -13,6 +13,7 @@ apt-get -y full-upgrade
 apt-get install -y \
   ca-certificates \
   curl \
+  ffmpeg \
   git \
   gnupg \
   jq \

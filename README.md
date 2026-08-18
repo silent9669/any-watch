@@ -14,6 +14,7 @@ and SQLite persistence.
 - Authentic YouTube viewing experience via Invidious: Trending & Popular feeds, topic chips (`All`, `Trending`, `Music`, `Gaming`, `News`, `Animations`), Theater Watch Room with channel bar and Up Next / Related video queue, and 16:9 continue watching cards.
 - Provider Search Dashboards with provider-specific continue watching shelves, status indicators, and curated quick search tags.
 - Universal Home Dashboard aggregating watch history across all anime providers and YouTube.
+- Multi-source torrent search aggregation (Nyaa.si, AnimeTosho, YTS.mx, The Pirate Bay) with subtitle detection (VietSub & EngSub) and server-side fast-start MP4 remuxing for direct downloads.
 - Browser-native HLS, DASH, subtitle, quality, fullscreen, and picture-in-picture playback across Chrome, Firefox, and Safari.
 - AniSkip opening and ending markers with a persistent Skip intro preference.
 - Browser downloads through short-lived authenticated tickets.
