@@ -376,9 +376,23 @@ async fn main() -> Result<()> {
     db.bootstrap_admin(&admin_username, &admin_password).await?;
 
     let core_db = Arc::new(Database::new_at(data_dir.join("catalog.db")).await?);
+    let mut config = Config::default();
+    if let Ok(instance_url) = env::var("ANY_WATCH_INVIDIOUS_URL") {
+        if !instance_url.trim().is_empty() {
+            config.sources.invidious = true;
+            config.invidious = Some(any_watch_core::config::InvidiousConfig {
+                instance_url,
+                local_proxy: env::var("ANY_WATCH_INVIDIOUS_LOCAL_PROXY").map_or(true, |value| {
+                    value != "0" && !value.eq_ignore_ascii_case("false")
+                }),
+            });
+        }
+    }
+    config.validate()?;
+
     let state = AppState {
         db,
-        providers: Arc::new(ProviderRegistry::new(&Config::default())),
+        providers: Arc::new(ProviderRegistry::new(&config)),
         catalog: CatalogClient::new(),
         metadata: MetadataCache::new(core_db),
         secure_cookies: env::var_os("RAILWAY_ENVIRONMENT").is_some()
@@ -413,6 +427,9 @@ async fn main() -> Result<()> {
         .route("/catalog", post(catalog))
         .route("/availability", post(availability))
         .route("/source/search", post(search_source))
+        .route("/youtube/trending", get(youtube_trending))
+        .route("/youtube/popular", get(youtube_popular))
+        .route("/youtube/related/:id", get(youtube_related))
         .route("/anime/details", post(anime_details))
         .route("/anime/episodes", post(episodes))
         .route("/playback", post(playback))
@@ -1058,6 +1075,109 @@ async fn search_source(
     ))
 }
 
+#[derive(Debug, Deserialize)]
+struct YouTubeTrendingQuery {
+    topic: Option<String>,
+}
+
+async fn youtube_trending(
+    State(state): State<AppState>,
+    headers: HeaderMap,
+    Query(query): Query<YouTubeTrendingQuery>,
+) -> ApiResult<Json<Vec<AnimeDto>>> {
+    require_user(&state, &headers).await?;
+    let provider = state.providers.invidious().ok_or_else(|| {
+        ApiError::new(
+            StatusCode::NOT_FOUND,
+            "PROVIDER_UNAVAILABLE",
+            "youtube-trending",
+            "Invidious provider is not configured or enabled.",
+            false,
+        )
+    })?;
+    let items = provider
+        .trending(query.topic.as_deref())
+        .await
+        .map_err(|error| {
+            ApiError::new(
+                StatusCode::BAD_GATEWAY,
+                classify_provider_error(&error.to_string()),
+                "youtube-trending",
+                "Failed to fetch trending videos from Invidious.",
+                true,
+            )
+        })?;
+    Ok(Json(
+        items
+            .into_iter()
+            .map(|anime| map_anime(anime, None))
+            .collect(),
+    ))
+}
+
+async fn youtube_popular(
+    State(state): State<AppState>,
+    headers: HeaderMap,
+) -> ApiResult<Json<Vec<AnimeDto>>> {
+    require_user(&state, &headers).await?;
+    let provider = state.providers.invidious().ok_or_else(|| {
+        ApiError::new(
+            StatusCode::NOT_FOUND,
+            "PROVIDER_UNAVAILABLE",
+            "youtube-popular",
+            "Invidious provider is not configured or enabled.",
+            false,
+        )
+    })?;
+    let items = provider.popular().await.map_err(|error| {
+        ApiError::new(
+            StatusCode::BAD_GATEWAY,
+            classify_provider_error(&error.to_string()),
+            "youtube-popular",
+            "Failed to fetch popular videos from Invidious.",
+            true,
+        )
+    })?;
+    Ok(Json(
+        items
+            .into_iter()
+            .map(|anime| map_anime(anime, None))
+            .collect(),
+    ))
+}
+
+async fn youtube_related(
+    State(state): State<AppState>,
+    headers: HeaderMap,
+    Path(video_id): Path<String>,
+) -> ApiResult<Json<Vec<AnimeDto>>> {
+    require_user(&state, &headers).await?;
+    let provider = state.providers.invidious().ok_or_else(|| {
+        ApiError::new(
+            StatusCode::NOT_FOUND,
+            "PROVIDER_UNAVAILABLE",
+            "youtube-related",
+            "Invidious provider is not configured or enabled.",
+            false,
+        )
+    })?;
+    let items = provider.related(&video_id).await.map_err(|error| {
+        ApiError::new(
+            StatusCode::BAD_GATEWAY,
+            classify_provider_error(&error.to_string()),
+            "youtube-related",
+            "Failed to fetch related videos from Invidious.",
+            true,
+        )
+    })?;
+    Ok(Json(
+        items
+            .into_iter()
+            .map(|anime| map_anime(anime, None))
+            .collect(),
+    ))
+}
+
 async fn anime_details(
     State(state): State<AppState>,
     headers: HeaderMap,
@@ -1065,13 +1185,18 @@ async fn anime_details(
 ) -> ApiResult<Json<AnimeDetailsDto>> {
     require_user(&state, &headers).await?;
     let mut details = AnimeDetailsDto::default();
+    let mut metadata_allowed = true;
     if let Some(provider) = state.providers.get_provider(&input.provider) {
+        metadata_allowed = provider.language() != Language::Youtube;
         if let Ok(Some(anime)) = provider.get_anime_details(&input.anime_id).await {
             details.cover_url = non_empty(anime.cover_url);
             details.banner_url = anime.banner_url.and_then(non_empty);
             details.total_episodes = anime.total_episodes;
             details.synopsis = anime.synopsis.and_then(non_empty);
         }
+    }
+    if !metadata_allowed {
+        return Ok(Json(details));
     }
     if let Ok(Some(metadata)) = state
         .metadata
@@ -1178,6 +1303,7 @@ fn playback_dto(id: &str, session: &MediaSession) -> PlaybackDto {
             .video_url
             .to_ascii_lowercase()
             .contains(".m3u8")
+            || session.stream.video_url.contains("/api/manifest/hls")
         {
             "hls"
         } else if session
@@ -1185,6 +1311,7 @@ fn playback_dto(id: &str, session: &MediaSession) -> PlaybackDto {
             .video_url
             .to_ascii_lowercase()
             .contains(".mpd")
+            || session.stream.video_url.contains("/api/manifest/dash/")
         {
             "dash"
         } else {
@@ -2825,12 +2952,14 @@ fn language_label(language: Language) -> &'static str {
     match language {
         Language::English => "English",
         Language::Vietnamese => "Vietnamese",
+        Language::Youtube => "YouTube",
     }
 }
 fn language_group(language: Language) -> &'static str {
     match language {
         Language::English => "english",
         Language::Vietnamese => "vietnamese",
+        Language::Youtube => "youtube",
     }
 }
 
@@ -3039,6 +3168,15 @@ mod tests {
                 .as_str(),
             subtitle_url
         );
+    }
+
+    #[test]
+    fn playback_classifies_invidious_extensionless_dash_manifest() {
+        let session =
+            media_session("https://invidious.example/api/manifest/dash/id/abcdefghijk?local=true");
+        let value = serde_json::to_value(playback_dto("session", &session)).unwrap();
+
+        assert_eq!(value["streamKind"], "dash");
     }
 
     #[test]

@@ -4,6 +4,7 @@ pub mod animegg;
 pub mod animevietsub;
 pub mod anizone;
 pub mod hianime;
+pub mod invidious;
 pub mod kkphim;
 pub mod moviebox;
 pub mod niniyo;
@@ -260,6 +261,7 @@ pub fn best_title_match(items: Vec<Anime>, title_variants: &[String]) -> Option<
 pub enum Language {
     English,
     Vietnamese,
+    Youtube,
 }
 
 impl std::fmt::Display for Language {
@@ -267,6 +269,7 @@ impl std::fmt::Display for Language {
         match self {
             Language::English => write!(f, "EN"),
             Language::Vietnamese => write!(f, "VN"),
+            Language::Youtube => write!(f, "YouTube"),
         }
     }
 }
@@ -312,11 +315,23 @@ pub trait AnimeProvider: Send + Sync {
 
 pub struct ProviderRegistry {
     providers: Vec<Arc<dyn AnimeProvider>>,
+    invidious: Option<Arc<invidious::InvidiousProvider>>,
 }
 
 impl ProviderRegistry {
     pub fn new(config: &Config) -> Self {
         let mut providers: Vec<Arc<dyn AnimeProvider>> = Vec::new();
+        let mut invidious = None;
+
+        if config.sources.invidious {
+            if let Some(invidious_config) = &config.invidious {
+                let provider = Arc::new(invidious::InvidiousProvider::new(
+                    invidious_config,
+                ));
+                invidious = Some(Arc::clone(&provider));
+                providers.push(provider);
+            }
+        }
 
         // --- English Sources ---
         if config.sources.anizone {
@@ -364,7 +379,11 @@ impl ProviderRegistry {
             providers.push(Arc::new(niniyo::NiniyoProvider::new()));
         }
 
-        Self { providers }
+        Self { providers, invidious }
+    }
+
+    pub fn invidious(&self) -> Option<Arc<invidious::InvidiousProvider>> {
+        self.invidious.clone()
     }
 
     pub async fn search_all(&self, query: &str) -> Result<Vec<Anime>> {
@@ -435,7 +454,7 @@ mod tests {
         aniskip_episode_number, best_title_match, parse_episode_number, Anime, Language,
         ProviderRegistry,
     };
-    use crate::config::Config;
+    use crate::config::{Config, InvidiousConfig};
 
     #[test]
     fn episode_parser_does_not_merge_decimal_specials() {
@@ -476,6 +495,23 @@ mod tests {
         assert!(names.contains(&"AnimeVietSub"));
         assert!(!names.contains(&"AnimeTVN"));
         assert!(names.contains(&"Niniyo"));
+    }
+
+    #[test]
+    fn registry_keeps_invidious_in_a_distinct_youtube_group() {
+        let mut config = Config::default();
+        config.sources.invidious = true;
+        config.invidious = Some(InvidiousConfig {
+            instance_url: "https://invidious.example".into(),
+            local_proxy: true,
+        });
+
+        let registry = ProviderRegistry::new(&config);
+        let provider = registry
+            .get_provider("Invidious")
+            .expect("configured Invidious provider");
+
+        assert_eq!(provider.language(), Language::Youtube);
     }
 
     #[test]
