@@ -59,6 +59,7 @@ async fn certify(provider: &dyn AnimeProvider) -> Result<()> {
         (Language::English, "MovieBox") => &["One Piece", "Your Name"][..],
         (Language::Vietnamese, "Niniyo") => &["Solo Leveling", "Attack on Titan"][..],
         (Language::English, _) | (Language::Vietnamese, _) => &["One Piece"][..],
+        (Language::Youtube, _) => &["YouTube"][..],
     };
     for query in queries {
         certify_query(provider, query)
@@ -127,8 +128,19 @@ async fn certify_anime(
         .context("episode listing failed")?;
     anyhow::ensure!(!episodes.is_empty(), "episode listing returned no episodes");
 
+    let candidate_episodes = if episodes.len() > 24 {
+        let mut selected = Vec::new();
+        // Check latest episodes first, then earlier archive episodes if recent CDN has transient issues
+        selected.extend(episodes.iter().rev().take(12).cloned());
+        selected.extend(episodes.iter().take(6).cloned());
+        selected.extend(episodes.iter().skip(episodes.len() / 2).take(6).cloned());
+        selected
+    } else {
+        episodes.into_iter().rev().collect()
+    };
+
     let mut last_error = None;
-    for episode in episodes.into_iter().rev().take(24) {
+    for episode in candidate_episodes {
         let stream = match provider.get_stream_url(&episode.id).await {
             Ok(stream) => stream,
             Err(error) => {

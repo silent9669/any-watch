@@ -6,7 +6,7 @@ use std::collections::HashMap;
 use std::time::Duration;
 
 const OPHIM_API: &str = "https://ophim1.com/v1/api";
-const REQUEST_TIMEOUT: Duration = Duration::from_secs(20);
+const REQUEST_TIMEOUT: Duration = Duration::from_secs(45);
 
 pub struct OphimProvider {
     client: reqwest::Client,

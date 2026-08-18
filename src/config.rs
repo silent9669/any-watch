@@ -12,15 +12,21 @@ pub struct Config {
     pub prowlarr: Option<ProwlarrConfig>,
 
     #[serde(default)]
+    pub invidious: Option<InvidiousConfig>,
+
+    #[serde(default)]
     pub theme: ThemeConfig,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct SourcesConfig {
+    #[serde(default)]
+    pub invidious: bool,
+
     #[serde(default = "default_true")]
     pub anidb: bool,
 
-    #[serde(default = "default_true")]
+    #[serde(default)]
     pub anizone: bool,
 
     #[serde(default)]
@@ -71,7 +77,8 @@ mod tests {
         assert!(!config.sources.animevietsub);
         assert!(!config.sources.animetvn);
         assert!(!config.sources.hianime);
-        assert!(config.sources.anizone);
+        assert!(!config.sources.anizone);
+        assert!(!config.sources.invidious);
     }
 
     #[test]
@@ -81,7 +88,7 @@ mod tests {
         assert!(sources.kkphim);
         assert!(sources.ophim);
         assert!(sources.niniyo);
-        assert!(sources.anizone);
+        assert!(!sources.anizone);
         assert!(sources.anidb);
         assert!(!sources.moviebox);
         assert!(sources.animegg);
@@ -89,6 +96,14 @@ mod tests {
         assert!(!sources.animevietsub);
         assert!(!sources.animetvn);
         assert!(!sources.hianime);
+        assert!(!sources.invidious);
+    }
+
+    #[test]
+    fn enabled_invidious_requires_an_instance_url() {
+        let mut config = Config::default();
+        config.sources.invidious = true;
+        assert!(config.validate().is_err());
     }
 }
 
@@ -96,6 +111,14 @@ mod tests {
 pub struct ProwlarrConfig {
     pub url: String,
     pub api_key: String,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct InvidiousConfig {
+    pub instance_url: String,
+
+    #[serde(default = "default_true")]
+    pub local_proxy: bool,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -118,8 +141,9 @@ fn default_theme() -> ThemeConfig {
 impl Default for SourcesConfig {
     fn default() -> Self {
         Self {
+            invidious: false,
             anidb: true,
-            anizone: true,
+            anizone: false,
             // AllAnime remains disabled: its current source API is
             // challenge-gated and cannot pass playback certification.
             allanime: false,
@@ -206,7 +230,18 @@ impl Config {
     }
 
     pub fn validate(&self) -> Result<()> {
-        // Config validation - all providers now work without external dependencies
+        if self.sources.invidious {
+            let config = self
+                .invidious
+                .as_ref()
+                .context("Invidious is enabled but [invidious] is not configured")?;
+            let url = reqwest::Url::parse(config.instance_url.trim())
+                .context("Invidious instance_url is not a valid URL")?;
+            anyhow::ensure!(
+                matches!(url.scheme(), "http" | "https") && url.host_str().is_some(),
+                "Invidious instance_url must be an HTTP or HTTPS URL"
+            );
+        }
         Ok(())
     }
 }
