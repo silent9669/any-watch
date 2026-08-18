@@ -313,6 +313,10 @@ impl AnimeProvider for InvidiousProvider {
         Ok(self.parse_feed_items(items))
     }
 
+    async fn catalog(&self) -> Result<Vec<Anime>> {
+        self.trending(None).await
+    }
+
     async fn get_anime_details(&self, anime_id: &str) -> Result<Option<Anime>> {
         let video = self.video(anime_id).await?;
         let author = video.author.unwrap_or_else(|| "YouTube".to_string());
@@ -359,7 +363,7 @@ impl AnimeProvider for InvidiousProvider {
         } else if let Some(hls_url) = video.hls_url.filter(|value| !value.is_empty()) {
             self.absolute_url(&hls_url)?
         } else {
-            video
+            let candidate = video
                 .format_streams
                 .iter()
                 .filter(|stream| stream.container.as_deref() == Some("mp4"))
@@ -371,8 +375,8 @@ impl AnimeProvider for InvidiousProvider {
                         .unwrap_or_default()
                 })
                 .or_else(|| video.format_streams.first())
-                .map(|stream| stream.url.clone())
-                .context("Invidious returned no browser-playable stream")?
+                .context("Invidious returned no browser-playable stream")?;
+            self.absolute_url(&candidate.url)?
         };
 
         let subtitles = video

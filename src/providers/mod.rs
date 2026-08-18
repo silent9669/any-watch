@@ -307,6 +307,9 @@ pub trait AnimeProvider: Send + Sync {
     }
 
     async fn search(&self, query: &str) -> Result<Vec<Anime>>;
+    async fn catalog(&self) -> Result<Vec<Anime>> {
+        Ok(Vec::new())
+    }
     async fn get_anime_details(&self, _anime_id: &str) -> Result<Option<Anime>> {
         Ok(None)
     }

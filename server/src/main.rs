@@ -319,6 +319,12 @@ struct SourceSearchInput {
 
 #[derive(Debug, Deserialize)]
 #[serde(rename_all = "camelCase")]
+struct ProviderCatalogInput {
+    provider: String,
+}
+
+#[derive(Debug, Deserialize)]
+#[serde(rename_all = "camelCase")]
 struct AnimeDetailsInput {
     provider: String,
     anime_id: String,
@@ -528,6 +534,7 @@ async fn main() -> Result<()> {
         .route("/catalog", post(catalog))
         .route("/availability", post(availability))
         .route("/source/search", post(search_source))
+        .route("/provider/catalog", post(provider_catalog))
         .route("/youtube/trending", get(youtube_trending))
         .route("/youtube/popular", get(youtube_popular))
         .route("/youtube/related/:id", get(youtube_related))
@@ -1202,6 +1209,41 @@ async fn search_source(
             classify_provider_error(&error.to_string()),
             "provider-search",
             "The provider could not complete this search.",
+            true,
+        )
+    })?;
+    Ok(Json(
+        values
+            .into_iter()
+            .map(|anime| map_anime(anime, None))
+            .collect(),
+    ))
+}
+
+async fn provider_catalog(
+    State(state): State<AppState>,
+    headers: HeaderMap,
+    Json(input): Json<ProviderCatalogInput>,
+) -> ApiResult<Json<Vec<AnimeDto>>> {
+    require_user(&state, &headers).await?;
+    let provider = state
+        .providers
+        .get_provider(&input.provider)
+        .ok_or_else(|| {
+            ApiError::new(
+                StatusCode::NOT_FOUND,
+                "PROVIDER_UNAVAILABLE",
+                "provider-catalog",
+                "Provider is not available.",
+                false,
+            )
+        })?;
+    let values = provider.catalog().await.map_err(|error| {
+        ApiError::new(
+            StatusCode::BAD_GATEWAY,
+            classify_provider_error(&error.to_string()),
+            "provider-catalog",
+            "The provider could not load catalog.",
             true,
         )
     })?;

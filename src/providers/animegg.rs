@@ -92,6 +92,35 @@ impl AnimeGgProvider {
             .collect()
     }
 
+    fn parse_popular(html: &str) -> Result<Vec<Anime>> {
+        let pattern = Regex::new(
+            r#"(?s)<li class="fea">.*?<img[^>]+src="(?P<cover>[^"]+)".*?<a href="(?P<id>/series/[^"]+)"[^>]*>(?P<title>[^<]+)</a>(?:.*?disabled">(?P<episodes>\d+)\s+Episodes)?(?:.*?<div class="desfea">(?P<synopsis>.*?)</div>)?"#,
+        )?;
+        pattern
+            .captures_iter(html)
+            .map(|capture| {
+                let synopsis = capture.name("synopsis").map(|m| {
+                    clean_html(m.as_str())
+                        .trim_start_matches("Plot Summary:")
+                        .trim()
+                        .to_string()
+                });
+                Ok(Anime {
+                    id: capture["id"].to_string(),
+                    provider: "AnimeGG".into(),
+                    title: clean_html(&capture["title"]),
+                    cover_url: Self::absolute_url(&capture["cover"])?,
+                    banner_url: None,
+                    language: Language::English,
+                    total_episodes: capture
+                        .name("episodes")
+                        .and_then(|m| m.as_str().parse().ok()),
+                    synopsis,
+                })
+            })
+            .collect()
+    }
+
     fn parse_episodes(html: &str) -> Result<Vec<Episode>> {
         let pattern = Regex::new(
             r#"(?s)<a\s+href=[\"'](?P<id>[^\"']+)[\"'][^>]*class=[\"'][^\"']*anm_det_pop[^\"']*[\"'][^>]*>\s*<strong>(?P<label>.*?)</strong>\s*</a>\s*<i[^>]*class=[\"'][^\"']*anititle[^\"']*[\"'][^>]*>(?P<title>.*?)</i>"#,
@@ -195,6 +224,12 @@ impl AnimeProvider for AnimeGgProvider {
         let mut url = Url::parse(&format!("{BASE_URL}/search/"))?;
         url.query_pairs_mut().append_pair("q", query);
         Self::parse_search(&self.html(url, "AnimeGG search").await?)
+    }
+
+    async fn catalog(&self) -> Result<Vec<Anime>> {
+        let url = Url::parse(&format!("{BASE_URL}/popular-series"))?;
+        let html = self.html(url, "AnimeGG popular series").await?;
+        Self::parse_popular(&html)
     }
 
     async fn get_anime_details(&self, anime_id: &str) -> Result<Option<Anime>> {
