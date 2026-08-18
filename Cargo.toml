@@ -47,9 +47,7 @@ tracing-subscriber = "0.3"
 chrono = { version = "0.4", features = ["serde"] }
 url = "2.5"
 regex = "1.10"
-
-# Image encoding
-base64 = "0.22"
+uuid = { version = "1.8", features = ["v4", "serde"] }
 
 # Crypto for AllAnime decryption
 aes = "0.8"
@@ -58,6 +56,10 @@ ctr = "0.9"
 sha2 = "0.10"
 hmac = "0.12"
 md-5 = "0.10"
+base64 = "0.22"
+
+[dev-dependencies]
+tempfile = "3.8"
 
 [profile.release]
 opt-level = 3

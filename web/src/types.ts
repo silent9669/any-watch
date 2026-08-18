@@ -205,3 +205,73 @@ export type PlayerContext = {
   playback: Playback;
   startTime: number;
 };
+
+export type TorrentSearchResult = {
+  id: string;
+  title: string;
+  magnet_url: string;
+  torrent_url?: string | null;
+  source: string;
+  category: string;
+  size_bytes: number;
+  formatted_size: string;
+  seeds: number;
+  peers: number;
+  quality?: string | null;
+  upload_date?: string | null;
+  has_engsub: boolean;
+  has_vietsub: boolean;
+};
+
+export type TorrentSubtitleMeta = {
+  language: string;
+  language_code: string;
+  format: string;
+  file_name: string;
+};
+
+export type TorrentTaskStatus =
+  | { type: "queued" }
+  | {
+      type: "downloading";
+      data: {
+        progress: number;
+        speed_bytes_per_sec: number;
+        eta_seconds: number;
+        downloaded_bytes: number;
+        total_bytes: number;
+      };
+    }
+  | {
+      type: "remuxing";
+      data: {
+        progress: number;
+        message: string;
+      };
+    }
+  | {
+      type: "ready";
+      data: {
+        file_name: string;
+        file_size: number;
+        has_mp4: boolean;
+        subtitles: TorrentSubtitleMeta[];
+      };
+    }
+  | {
+      type: "failed";
+      data: {
+        reason: string;
+      };
+    };
+
+export type TorrentTask = {
+  id: string;
+  title: string;
+  magnet_url: string;
+  status: TorrentTaskStatus;
+  created_at: number;
+  completed_at?: number | null;
+  sub_pref?: string | null;
+};
+

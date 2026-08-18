@@ -15,6 +15,8 @@ import type {
   SessionUser,
   SkipTime,
   Source,
+  TorrentSearchResult,
+  TorrentTask,
   WatchHistory,
 } from "./types";
 
@@ -155,6 +157,24 @@ export const api = {
   }),
   removeFromMyList: (animeId: string) => webPost<void>("/my-list/remove", { animeId }),
   removeContinueWatching: (animeId: string) => webPost<void>("/history/remove", { animeId }),
+  searchTorrents: (query: string, category?: string, source?: string) => {
+    const params = new URLSearchParams({ query });
+    if (category) params.set("category", category);
+    if (source) params.set("source", source);
+    return webRequest<TorrentSearchResult[]>(`/torrents/search?${params.toString()}`);
+  },
+  searchTorrentSubtitles: (query: string, lang?: string) => {
+    const params = new URLSearchParams({ query });
+    if (lang) params.set("lang", lang);
+    return webRequest<any[]>(`/torrents/subtitles?${params.toString()}`);
+  },
+  createTorrentTask: (title: string, magnetUrl: string, subPref?: string) =>
+    webPost<TorrentTask>("/torrents/download", { title, magnet_url: magnetUrl, sub_pref: subPref }),
+  listTorrentTasks: () => webRequest<TorrentTask[]>("/torrents/tasks"),
+  getTorrentTask: (id: string) => webRequest<TorrentTask>(`/torrents/tasks/${encodeURIComponent(id)}`),
+  deleteTorrentTask: (id: string) => webRequest<void>(`/torrents/tasks/${encodeURIComponent(id)}`, { method: "DELETE" }),
+  getTorrentDownloadUrl: (id: string) => `/api/torrents/tasks/${encodeURIComponent(id)}/file`,
+  getTorrentSubtitleUrl: (id: string, lang: string) => `/api/torrents/tasks/${encodeURIComponent(id)}/subtitles/${encodeURIComponent(lang)}`,
 };
 
 export const animeKey = (provider: string, id: string) => `${provider}:${id}`;
