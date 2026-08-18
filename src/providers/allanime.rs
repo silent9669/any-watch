@@ -1245,6 +1245,49 @@ impl AnimeProvider for AllAnimeProvider {
         Ok(results)
     }
 
+    async fn catalog(&self) -> Result<Vec<Anime>> {
+        let search_gql = r#"query($search: SearchInput $limit: Int $page: Int $translationType: VaildTranslationTypeEnumType $countryOrigin: VaildCountryOriginEnumType) { shows(search: $search limit: $limit page: $page translationType: $translationType countryOrigin: $countryOrigin) { edges { _id name availableEpisodes thumbnail __typename } }}"#;
+        let variables = serde_json::json!({
+            "search": {
+                "allowAdult": false,
+                "allowUnknown": false,
+                "sortBy": "Top"
+            },
+            "limit": 30,
+            "page": 1,
+            "translationType": "sub",
+            "countryOrigin": "ALL"
+        });
+        let response = self.graphql_query(search_gql, variables).await?;
+        let shows = if let Some(data) = response.get("data") {
+            &data["shows"]
+        } else {
+            &response["shows"]
+        };
+        let mut results = Vec::new();
+        if let Some(edges) = shows["edges"].as_array() {
+            for edge in edges {
+                let id = edge["_id"].as_str().unwrap_or_default().to_string();
+                let name = canonical_allanime_title(edge["name"].as_str().unwrap_or_default());
+                let thumbnail = edge["thumbnail"].as_str().unwrap_or_default().to_string();
+                let episodes = edge["availableEpisodes"]["sub"].as_u64().map(|n| n as u32);
+                if !id.is_empty() && !name.is_empty() {
+                    results.push(Anime {
+                        id,
+                        provider: "AllAnime".to_string(),
+                        title: name,
+                        cover_url: thumbnail,
+                        banner_url: None,
+                        language: Language::English,
+                        total_episodes: episodes,
+                        synopsis: None,
+                    });
+                }
+            }
+        }
+        Ok(results)
+    }
+
     async fn get_anime_details(&self, anime_id: &str) -> Result<Option<Anime>> {
         let detail_gql = r#"query($showId: String!) { show(_id: $showId) { _id name thumbnail description availableEpisodes __typename } }"#;
         let variables = serde_json::json!({

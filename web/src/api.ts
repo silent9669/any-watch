@@ -107,6 +107,7 @@ export const api = {
   getYouTubePopular: () => webRequest<Anime[]>("/youtube/popular"),
   getYouTubeRelated: (videoId: string) => webRequest<Anime[]>(`/youtube/related/${encodeURIComponent(videoId)}`),
   searchSource: (source: string, query: string) => webPost<Anime[]>("/source/search", { source, query }),
+  getProviderCatalog: (provider: string) => webPost<Anime[]>("/provider/catalog", { provider }),
   getAnimeDetails: (provider: string, animeId: string, title: string) =>
     webPost<AnimeDetails>("/anime/details", { provider, animeId, title }),
   getEpisodes: (provider: string, animeId: string) => webPost<Episode[]>("/anime/episodes", { provider, animeId }),

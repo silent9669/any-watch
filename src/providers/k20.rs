@@ -254,6 +254,61 @@ impl AnimeProvider for K20Provider {
         Ok(all_results)
     }
 
+    async fn catalog(&self) -> Result<Vec<Anime>> {
+        let catalogs: &[(&str, &str)] = &[
+            ("series", "hh3d-series"),
+            ("series", "nguonc-series"),
+            ("series", "vsmov-series"),
+        ];
+
+        let mut futures = Vec::new();
+
+        for &(media_type, catalog_id) in catalogs {
+            let url = format!(
+                "{}/catalog/{}/{}.json",
+                K20_BASE_URL, media_type, catalog_id
+            );
+            let client = self.client.clone();
+            let media_type = media_type.to_string();
+
+            futures.push(tokio::spawn(async move {
+                let response = client.get(&url).send().await.ok()?;
+                if !response.status().is_success() {
+                    return None;
+                }
+                let payload: K20CatalogResponse = response.json().await.ok()?;
+                Some((media_type, payload.metas))
+            }));
+        }
+
+        let mut all_results = Vec::new();
+        let mut seen_ids = std::collections::HashSet::new();
+
+        for handle in futures {
+            if let Ok(Some((media_type, metas))) = handle.await {
+                for meta in metas {
+                    if !seen_ids.insert(meta.id.clone()) {
+                        continue;
+                    }
+
+                    let id = format!("{}:{}", media_type, meta.id);
+                    all_results.push(Anime {
+                        id,
+                        provider: "K20".to_string(),
+                        title: meta.name,
+                        cover_url: meta.poster.unwrap_or_default(),
+                        banner_url: meta.background,
+                        language: Language::Vietnamese,
+                        total_episodes: None,
+                        synopsis: meta.description,
+                    });
+                }
+            }
+        }
+
+        Ok(all_results)
+    }
+
     async fn get_anime_details(&self, anime_id: &str) -> Result<Option<Anime>> {
         let (media_type, target_id) = Self::split_media_id(anime_id);
         let detail_url = format!("{}/meta/{}/{}.json", K20_BASE_URL, media_type, target_id);

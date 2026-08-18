@@ -61,11 +61,11 @@ def test_t1_unavailable_language_does_not_reuse_another_languages_provider(mocke
     )""")
     assert provider_searches == []
     expect(mocked_page.locator(".search-results-pane .pane-title")).to_contain_text("No English provider available")
-    expect(mocked_page.locator(".search-results-pane")).not_to_contain_text("KKPhim Results")
+    expect(mocked_page.locator(".search-results-pane")).not_to_contain_text("Server 1 Results")
 
     mocked_page.locator(".language-switch button").nth(1).click()
     expect(mocked_page.locator(".availability-strip .provider-chip")).to_have_count(2)
-    expect(mocked_page.locator(".search-results-pane .pane-title")).to_contain_text("KKPhim Results")
+    expect(mocked_page.locator(".search-results-pane .pane-title")).to_contain_text("Server 1 Results")
 
 def test_t1_dashboard_continue_watching_shelf(mocked_page):
     shelf = mocked_page.locator(".content-row:has-text('Continue Watching')")
@@ -216,7 +216,7 @@ def test_t1_search_idle_banner_and_suggestion(mocked_page):
     welcome = mocked_page.locator(".search-welcome")
     expect(welcome).to_be_visible()
     expect(welcome.locator(".search-welcome-provider")).to_be_visible()
-    expect(welcome).to_contain_text("Search AniZone")
+    expect(welcome).to_contain_text("Search Server 1")
     welcome.get_by_role("button", name="One Piece").click()
     expect(mocked_page.locator(".search-input-shell input")).to_have_value("One Piece")
     mocked_page.wait_for_selector(".search-result")
@@ -228,7 +228,7 @@ def test_t1_search_provider_chips(mocked_page):
     expect(chips.first).to_be_visible()
     expect(chips).to_have_count(3)
     expect(chips.first).to_have_attribute("aria-pressed", "true")
-    expect(chips.first).to_have_attribute("aria-label", "AniZone: Search")
+    expect(chips.first).to_have_attribute("aria-label", "Server 1: Search")
     spacing_ok = mocked_page.evaluate("""() => {
         const input = document.querySelector('.search-stage .search-input-shell');
         const source = document.querySelector('.search-stage .search-source-row');
@@ -703,9 +703,9 @@ def test_t2_failed_initial_health_becomes_retryable(mocked_page):
     }""")
     mocked_page.reload()
     mocked_page.locator(".hero-search-trigger").click()
-    provider = mocked_page.locator(".availability-strip .provider-chip:has-text('AniZone')")
+    provider = mocked_page.locator(".availability-strip .provider-chip:has-text('Server 1')")
     expect(provider).to_be_enabled()
-    expect(provider).to_have_attribute("aria-label", "AniZone: Recheck")
+    expect(provider).to_have_attribute("aria-label", "Server 1: Recheck")
     expect(provider).to_have_attribute("title", "SERVICE_UNAVAILABLE")
 
 
@@ -719,16 +719,16 @@ def test_t2_unavailable_provider_stays_offline_until_health_recheck_passes(mocke
     }""")
     mocked_page.reload()
     mocked_page.locator(".hero-search-trigger").click()
-    provider = mocked_page.locator(".availability-strip .provider-chip:has-text('AllAnime')")
+    provider = mocked_page.locator(".availability-strip .provider-chip:has-text('Server 2')")
     expect(provider).to_be_enabled()
-    expect(provider).to_have_attribute("aria-label", "AllAnime: Recheck")
+    expect(provider).to_have_attribute("aria-label", "Server 2: Recheck")
     provider.click()
     mocked_page.wait_for_timeout(100)
     retried = mocked_page.evaluate("""() => window.__API_CALLS__.some(
         (call) => call.cmd === 'retry_provider_health' && call.args.provider === 'AllAnime'
     )""")
     assert retried is True
-    expect(provider).to_have_attribute("aria-label", "AllAnime: Recheck")
+    expect(provider).to_have_attribute("aria-label", "Server 2: Recheck")
 
 def test_t2_search_catalog_rate_limit_keeps_provider_results(mocked_page):
     mocked_page.locator(".hero-search-trigger").click()
@@ -747,7 +747,7 @@ def test_t2_search_catalog_rate_limit_keeps_provider_results(mocked_page):
     mocked_page.locator(".search-input-shell input").fill("mushoku")
     mocked_page.wait_for_selector(".search-result")
     expect(mocked_page.locator(".error-notice")).to_have_count(0)
-    expect(mocked_page.locator(".search-results-pane")).to_contain_text("AniZone Results")
+    expect(mocked_page.locator(".search-results-pane")).to_contain_text("Server 1 Results")
     expect(mocked_page.locator(".search-preview h1")).to_have_text("Naruto Shippuden")
 
 def test_t2_provider_only_film_search_does_not_need_anilist(mocked_page):
@@ -755,7 +755,7 @@ def test_t2_provider_only_film_search_does_not_need_anilist(mocked_page):
     mocked_page.locator(".language-switch button").nth(1).click()
     mocked_page.locator(".search-input-shell input").fill("cinema")
     mocked_page.wait_for_selector(".search-result")
-    expect(mocked_page.locator(".search-results-pane")).to_contain_text("KKPhim Results")
+    expect(mocked_page.locator(".search-results-pane")).to_contain_text("Server 1 Results")
     expect(mocked_page.locator(".search-results-pane")).to_contain_text("Cinema Film")
     expect(mocked_page.locator(".search-preview h1")).to_have_text("Cinema Film")
     expect(mocked_page.locator(".search-results-pane")).not_to_contain_text("AniList Catalog")
@@ -1203,8 +1203,8 @@ def test_t3_search_provider_switch_reloads(mocked_page):
     mocked_page.wait_for_timeout(500)
     expect(mocked_page.locator(".availability-strip .provider-chip")).to_have_count(2)
     expect(mocked_page.locator(".search-input-shell input")).to_have_value("Naruto")
-    mocked_page.locator(".availability-strip .provider-chip:has-text('OPhim')").click()
-    expect(mocked_page.locator(".search-results-pane")).to_contain_text("OPhim Results")
+    mocked_page.locator(".availability-strip .provider-chip:has-text('Server 2')").click()
+    expect(mocked_page.locator(".search-results-pane")).to_contain_text("Server 2 Results")
     expect(mocked_page.locator(".search-preview .eyebrow")).to_contain_text("OPhim")
 
 def test_t3_offline_ophim_requires_health_recheck_before_search(mocked_page):
@@ -1220,8 +1220,8 @@ def test_t3_offline_ophim_requires_health_recheck_before_search(mocked_page):
     mocked_page.locator(".hero-search-trigger").click()
     mocked_page.locator(".language-switch button").nth(1).click()
     mocked_page.wait_for_timeout(500)
-    provider = mocked_page.locator(".availability-strip .provider-chip:has-text('OPhim')")
-    expect(provider).to_have_attribute("aria-label", "OPhim: Recheck")
+    provider = mocked_page.locator(".availability-strip .provider-chip:has-text('Server 2')")
+    expect(provider).to_have_attribute("aria-label", "Server 2: Recheck")
     provider.click()
     mocked_page.wait_for_timeout(100)
     mocked_page.locator(".search-input-shell input").fill("Naruto")
@@ -1235,8 +1235,8 @@ def test_t3_offline_ophim_requires_health_recheck_before_search(mocked_page):
     )""")
     assert retried is True
     assert searched is False
-    expect(mocked_page.locator(".search-results-pane")).to_contain_text("KKPhim Results")
-    expect(provider).to_have_attribute("aria-label", "OPhim: Recheck")
+    expect(mocked_page.locator(".search-results-pane")).to_contain_text("Server 1 Results")
+    expect(provider).to_have_attribute("aria-label", "Server 2: Recheck")
 
 def test_t3_continue_watching_opens_saved_episode_detail(mocked_page):
     # Click continue watching card for One Piece

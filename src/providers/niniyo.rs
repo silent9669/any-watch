@@ -269,6 +269,10 @@ impl AnimeProvider for NiniyoProvider {
         Ok(results)
     }
 
+    async fn catalog(&self) -> Result<Vec<Anime>> {
+        self.search("Anime").await
+    }
+
     async fn get_anime_details(&self, anime_id: &str) -> Result<Option<Anime>> {
         let value = self.metadata(anime_id).await?;
         let result = &value["result"];
