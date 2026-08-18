@@ -12,6 +12,12 @@ use any_watch_core::{
         StreamInfo, SubtitleFormat,
     },
     skip_times::{fetch_skip_times, SkipTime},
+    torrents::{
+        engine::{CreateTaskRequest, TorrentTaskManager},
+        hub::TorrentSearchHub,
+        subtitles::SubtitleFinder,
+        TorrentCategory,
+    },
 };
 use anyhow::{Context, Result};
 use axum::{
@@ -82,6 +88,8 @@ struct AppState {
     provider_health: Arc<Mutex<ProviderHealthCache>>,
     provider_health_refresh: Arc<Mutex<()>>,
     media_client: Client,
+    torrent_hub: Arc<TorrentSearchHub>,
+    torrent_engine: Arc<TorrentTaskManager>,
 }
 
 #[derive(Default)]
@@ -476,6 +484,15 @@ async fn main() -> Result<()> {
     }
     config.validate()?;
 
+    let media_client = Client::builder()
+        .connect_timeout(Duration::from_secs(20))
+        .timeout(Duration::from_secs(6 * 60 * 60))
+        .redirect(reqwest::redirect::Policy::limited(8))
+        .build()?;
+
+    let torrent_downloads_dir = data_dir.join("downloads_tmp");
+    tokio::fs::create_dir_all(&torrent_downloads_dir).await?;
+
     let state = AppState {
         db,
         providers: Arc::new(ProviderRegistry::new(&config)),
@@ -488,11 +505,9 @@ async fn main() -> Result<()> {
         media_sessions: Arc::new(Mutex::new(HashMap::new())),
         provider_health: Arc::new(Mutex::new(ProviderHealthCache::default())),
         provider_health_refresh: Arc::new(Mutex::new(())),
-        media_client: Client::builder()
-            .connect_timeout(Duration::from_secs(20))
-            .timeout(Duration::from_secs(6 * 60 * 60))
-            .redirect(reqwest::redirect::Policy::limited(8))
-            .build()?,
+        media_client: media_client.clone(),
+        torrent_hub: Arc::new(TorrentSearchHub::new()),
+        torrent_engine: Arc::new(TorrentTaskManager::new(torrent_downloads_dir)),
     };
 
     let api = Router::new()
@@ -532,6 +547,20 @@ async fn main() -> Result<()> {
         .route("/my-list/remove", post(remove_favorite))
         .route("/downloads/ticket", post(create_download_ticket))
         .route("/downloads/:id", get(browser_download))
+        .route("/torrents/search", get(search_torrents))
+        .route("/torrents/subtitles", get(search_torrent_subtitles))
+        .route("/torrents/download", post(start_torrent_download))
+        .route("/torrents/tasks", get(list_torrent_tasks))
+        .route(
+            "/torrents/tasks/:id",
+            get(get_torrent_task).delete(delete_torrent_task),
+        )
+        .route("/torrents/tasks/:id/file", get(download_torrent_file))
+        .route("/torrents/tasks/:id/download", get(download_torrent_file))
+        .route(
+            "/torrents/tasks/:id/subtitles/:lang",
+            get(download_torrent_subtitle),
+        )
         .layer(DefaultBodyLimit::max(64 * 1024));
 
     let web_dist = env::var("ANY_WATCH_WEB_DIR").unwrap_or_else(|_| "web/dist".into());
@@ -3215,6 +3244,227 @@ fn classify_provider_error(value: &str) -> &'static str {
 fn non_empty(value: String) -> Option<String> {
     let value = value.trim();
     (!value.is_empty()).then(|| value.to_string())
+}
+
+#[derive(Debug, Deserialize)]
+struct TorrentSearchQuery {
+    query: String,
+    category: Option<String>,
+    source: Option<String>,
+}
+
+#[derive(Debug, Deserialize)]
+struct TorrentSubtitlesQuery {
+    query: String,
+    lang: Option<String>,
+}
+
+async fn search_torrents(
+    State(state): State<AppState>,
+    headers: HeaderMap,
+    Query(params): Query<TorrentSearchQuery>,
+) -> ApiResult<Json<Value>> {
+    let _user = require_user(&state, &headers).await?;
+    let category = match params.category.as_deref() {
+        Some("anime") => TorrentCategory::Anime,
+        Some("movies") => TorrentCategory::Movies,
+        Some("tv") => TorrentCategory::Tv,
+        _ => TorrentCategory::All,
+    };
+    let results = state
+        .torrent_hub
+        .search(&params.query, category, params.source.as_deref())
+        .await
+        .map_err(|e| ApiError::internal("torrent_search", e))?;
+    Ok(Json(json!(results)))
+}
+
+async fn search_torrent_subtitles(
+    State(state): State<AppState>,
+    headers: HeaderMap,
+    Query(params): Query<TorrentSubtitlesQuery>,
+) -> ApiResult<Json<Value>> {
+    let _user = require_user(&state, &headers).await?;
+    let finder = SubtitleFinder::new();
+    let subs = finder
+        .search_subtitles(&params.query, params.lang.as_deref())
+        .await
+        .map_err(|e| ApiError::internal("torrent_subtitles", e))?;
+    Ok(Json(json!(subs)))
+}
+
+async fn start_torrent_download(
+    State(state): State<AppState>,
+    headers: HeaderMap,
+    Json(input): Json<CreateTaskRequest>,
+) -> ApiResult<Json<Value>> {
+    require_app_request(&headers)?;
+    let _user = require_user(&state, &headers).await?;
+    if input.title.trim().is_empty() || input.magnet_url.trim().is_empty() {
+        return Err(ApiError::new(
+            StatusCode::BAD_REQUEST,
+            "INVALID_INPUT",
+            "torrent_download",
+            "Title and magnet URL are required",
+            false,
+        ));
+    }
+    let task = state.torrent_engine.create_task(input).await.map_err(|e| {
+        ApiError::new(
+            StatusCode::BAD_REQUEST,
+            "TASK_CREATION_FAILED",
+            "torrent_download",
+            e.to_string(),
+            false,
+        )
+    })?;
+    Ok(Json(json!(task)))
+}
+
+async fn list_torrent_tasks(
+    State(state): State<AppState>,
+    headers: HeaderMap,
+) -> ApiResult<Json<Value>> {
+    let _user = require_user(&state, &headers).await?;
+    let tasks = state.torrent_engine.list_tasks().await;
+    Ok(Json(json!(tasks)))
+}
+
+async fn get_torrent_task(
+    State(state): State<AppState>,
+    headers: HeaderMap,
+    Path(id): Path<String>,
+) -> ApiResult<Json<Value>> {
+    let _user = require_user(&state, &headers).await?;
+    let task = state.torrent_engine.get_task(&id).await.ok_or_else(|| {
+        ApiError::new(
+            StatusCode::NOT_FOUND,
+            "TASK_NOT_FOUND",
+            "torrent_task",
+            "Task not found",
+            false,
+        )
+    })?;
+    Ok(Json(json!(task)))
+}
+
+async fn delete_torrent_task(
+    State(state): State<AppState>,
+    headers: HeaderMap,
+    Path(id): Path<String>,
+) -> ApiResult<StatusCode> {
+    require_app_request(&headers)?;
+    let _user = require_user(&state, &headers).await?;
+    let deleted = state
+        .torrent_engine
+        .delete_task(&id)
+        .await
+        .map_err(|e| ApiError::internal("torrent_delete", e))?;
+    if deleted {
+        Ok(StatusCode::NO_CONTENT)
+    } else {
+        Err(ApiError::new(
+            StatusCode::NOT_FOUND,
+            "TASK_NOT_FOUND",
+            "torrent_delete",
+            "Task not found",
+            false,
+        ))
+    }
+}
+
+async fn download_torrent_file(
+    State(state): State<AppState>,
+    headers: HeaderMap,
+    Path(id): Path<String>,
+) -> ApiResult<Response> {
+    let _user = require_user(&state, &headers).await?;
+    let (file_path, file_name) = state
+        .torrent_engine
+        .get_task_file_path(&id)
+        .await
+        .ok_or_else(|| {
+            ApiError::new(
+                StatusCode::NOT_FOUND,
+                "FILE_NOT_FOUND",
+                "torrent_file",
+                "The extracted media file is not available yet.",
+                false,
+            )
+        })?;
+
+    let file = tokio::fs::File::open(&file_path)
+        .await
+        .map_err(|e| ApiError::internal("torrent_file_open", e))?;
+    let metadata = file
+        .metadata()
+        .await
+        .map_err(|e| ApiError::internal("torrent_file_meta", e))?;
+    let stream = tokio_util::io::ReaderStream::new(file);
+    let body = Body::from_stream(stream);
+
+    let content_disposition = format!("attachment; filename=\"{}\"", file_name);
+
+    Ok((
+        [
+            (header::CONTENT_TYPE, HeaderValue::from_static("video/mp4")),
+            (
+                header::CONTENT_DISPOSITION,
+                HeaderValue::from_str(&content_disposition)
+                    .unwrap_or_else(|_| HeaderValue::from_static("attachment")),
+            ),
+            (
+                header::CONTENT_LENGTH,
+                HeaderValue::from_str(&metadata.len().to_string())
+                    .unwrap_or_else(|_| HeaderValue::from_static("0")),
+            ),
+        ],
+        body,
+    )
+        .into_response())
+}
+
+async fn download_torrent_subtitle(
+    State(state): State<AppState>,
+    headers: HeaderMap,
+    Path((id, lang)): Path<(String, String)>,
+) -> ApiResult<Response> {
+    let _user = require_user(&state, &headers).await?;
+    let (file_path, file_name) = state
+        .torrent_engine
+        .get_subtitle_file_path(&id, &lang)
+        .await
+        .ok_or_else(|| {
+            ApiError::new(
+                StatusCode::NOT_FOUND,
+                "SUBTITLE_NOT_FOUND",
+                "torrent_subtitle",
+                "Requested subtitle track not found.",
+                false,
+            )
+        })?;
+
+    let content = tokio::fs::read_to_string(&file_path)
+        .await
+        .map_err(|e| ApiError::internal("torrent_sub_read", e))?;
+
+    let content_disposition = format!("attachment; filename=\"{}\"", file_name);
+
+    Ok((
+        [
+            (
+                header::CONTENT_TYPE,
+                HeaderValue::from_static("application/x-subrip; charset=utf-8"),
+            ),
+            (
+                header::CONTENT_DISPOSITION,
+                HeaderValue::from_str(&content_disposition)
+                    .unwrap_or_else(|_| HeaderValue::from_static("attachment")),
+            ),
+        ],
+        content,
+    )
+        .into_response())
 }
 
 #[cfg(test)]

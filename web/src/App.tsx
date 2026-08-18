@@ -57,6 +57,9 @@ import type {
   Source,
   SessionUser,
   SkipTime,
+  TorrentSearchResult,
+  TorrentSubtitleMeta,
+  TorrentTask,
   WatchHistory,
   YouTubeTopic,
 } from "./types";
@@ -73,7 +76,7 @@ const fadeUpVariant = {
   show: { opacity: 1, y: 0 },
 };
 
-type Route = "home" | "my-list" | "continue" | "admin" | "search" | "youtube" | "detail" | "catalog" | "settings";
+type Route = "home" | "my-list" | "continue" | "admin" | "search" | "youtube" | "detail" | "catalog" | "settings" | "download";
 type AppTheme = "obsidian" | "oled" | "ember" | "crimson" | "system";
 type AppScale = "compact" | "comfortable" | "large" | "tv";
 type AppFont = "manrope" | "noto" | "system";
@@ -1140,6 +1143,7 @@ function App() {
                 onResumeHistory={(item) => void openHistoryItem(item)}
                 onShowHistory={continueWatching.length ? () => navigate("continue") : undefined}
                 onShowMyList={() => navigate("my-list")}
+                onShowDownloads={() => navigate("download")}
                 onShowSettings={() => navigate("settings")}
                 session={session}
                 onShowAdmin={session.role === "admin" ? () => navigate("admin") : undefined}
@@ -1310,6 +1314,13 @@ function App() {
               downloadStates={episodeDownloads}
             />
           )}
+
+          {route === "download" && (
+            <DownloadsPage
+              key="download"
+              onBack={goBack}
+            />
+          )}
         </AnimatePresence>
         </LayoutGroup>
       </main>
@@ -1343,6 +1354,7 @@ function AppNavigation({
   const items: Array<{ route: Route; label: string; icon: ReactNode; badge?: number }> = [
     { route: "home", label: "Home", icon: <House size={20} /> },
     { route: "search", label: "Search", icon: <Search size={20} /> },
+    { route: "download", label: "Downloads", icon: <Download size={20} /> },
     { route: "youtube", label: "YouTube", icon: <span className="youtube-nav-mark"><Play size={15} fill="currentColor" /></span> },
     { route: "my-list", label: "My List", icon: <Star size={20} /> },
     { route: "settings", label: "Settings", icon: <Settings2 size={20} /> },
@@ -1369,6 +1381,559 @@ function AppNavigation({
         ))}
       </div>
     </nav>
+  );
+}
+
+function formatSpeed(bytesPerSec: number): string {
+  if (bytesPerSec >= 1024 * 1024) {
+    return `${(bytesPerSec / (1024 * 1024)).toFixed(1)} MB/s`;
+  }
+  return `${(bytesPerSec / 1024).toFixed(0)} KB/s`;
+}
+
+function formatTorrentBytes(bytes: number): string {
+  if (bytes >= 1024 * 1024 * 1024) {
+    return `${(bytes / (1024 * 1024 * 1024)).toFixed(2)} GB`;
+  }
+  if (bytes >= 1024 * 1024) {
+    return `${(bytes / (1024 * 1024)).toFixed(1)} MB`;
+  }
+  return `${(bytes / 1024).toFixed(0)} KB`;
+}
+
+function formatEta(seconds: number): string {
+  if (seconds <= 0) return "0s";
+  if (seconds >= 3600) {
+    const hours = Math.floor(seconds / 3600);
+    const mins = Math.floor((seconds % 3600) / 60);
+    return `${hours}h ${mins}m`;
+  }
+  if (seconds >= 60) {
+    const mins = Math.floor(seconds / 60);
+    const secs = seconds % 60;
+    return `${mins}m ${secs}s`;
+  }
+  return `${seconds}s`;
+}
+
+function DownloadsPage({
+  onBack,
+}: {
+  onBack: () => void;
+}) {
+  const shouldReduceMotion = useReducedMotion();
+  const [tab, setTab] = useState<"search" | "tasks">("search");
+  const [query, setQuery] = useState("");
+  const [category, setCategory] = useState<"all" | "anime" | "movie" | "tv">("all");
+  const [source, setSource] = useState("");
+  const [subPref, setSubPref] = useState<"all" | "vi" | "en">("all");
+  const [results, setResults] = useState<TorrentSearchResult[]>([]);
+  const [loading, setLoading] = useState(false);
+  const [error, setError] = useState<string | null>(null);
+  const [tasks, setTasks] = useState<TorrentTask[]>([]);
+  const [copiedId, setCopiedId] = useState<string | null>(null);
+  const [actionLoadingId, setActionLoadingId] = useState<string | null>(null);
+  const [deletingTaskIds, setDeletingTaskIds] = useState<Set<string>>(new Set());
+
+  const activeTasksCount = useMemo(() => {
+    return tasks.filter(
+      (t) => t.status.type === "queued" || t.status.type === "downloading" || t.status.type === "remuxing"
+    ).length;
+  }, [tasks]);
+
+  const loadTasks = async () => {
+    try {
+      const data = await api.listTorrentTasks();
+      setTasks(data);
+    } catch (err) {
+      console.error("Failed to load torrent tasks:", err);
+    }
+  };
+
+  useEffect(() => {
+    void loadTasks();
+  }, []);
+
+  useEffect(() => {
+    const hasActive = tasks.some(
+      (t) => t.status.type === "queued" || t.status.type === "downloading" || t.status.type === "remuxing"
+    );
+    if (!hasActive && tab !== "tasks") return;
+
+    const interval = setInterval(() => {
+      void loadTasks();
+    }, 2500);
+
+    return () => clearInterval(interval);
+  }, [tasks, tab]);
+
+  const performSearch = async (targetQuery: string, targetCat: "all" | "anime" | "movie" | "tv", targetSource: string) => {
+    const cleanQuery = targetQuery.trim();
+    if (cleanQuery.length < 2) return;
+
+    setLoading(true);
+    setError(null);
+    try {
+      const data = await api.searchTorrents(
+        cleanQuery,
+        targetCat === "all" ? undefined : targetCat,
+        targetSource || undefined
+      );
+      setResults(data);
+    } catch (err: any) {
+      setError(err?.message || "Failed to search torrent providers.");
+      setResults([]);
+    } finally {
+      setLoading(false);
+    }
+  };
+
+  const handleSearch = async (e?: FormEvent) => {
+    if (e) e.preventDefault();
+    await performSearch(query, category, source);
+  };
+
+  const handleCategoryChange = (newCat: "all" | "anime" | "movie" | "tv") => {
+    setCategory(newCat);
+    if (query.trim().length >= 2) {
+      void performSearch(query, newCat, source);
+    }
+  };
+
+  const handleSourceChange = (newSource: string) => {
+    setSource(newSource);
+    if (query.trim().length >= 2) {
+      void performSearch(query, category, newSource);
+    }
+  };
+
+  const handleCreateTask = async (torrent: TorrentSearchResult) => {
+    setActionLoadingId(torrent.id);
+    setError(null);
+    try {
+      await api.createTorrentTask(torrent.title, torrent.magnet_url, subPref === "all" ? undefined : subPref);
+      await loadTasks();
+      setTab("tasks");
+    } catch (err: any) {
+      setError(err?.message || "Failed to create download task.");
+    } finally {
+      setActionLoadingId(null);
+    }
+  };
+
+  const handleDeleteTask = async (id: string) => {
+    if (deletingTaskIds.has(id)) return;
+    setDeletingTaskIds((prev) => new Set(prev).add(id));
+    setTasks((current) => current.filter((t) => t.id !== id));
+
+    try {
+      await api.deleteTorrentTask(id);
+    } catch (err: any) {
+      console.error("Failed to delete task:", err);
+      void loadTasks();
+    } finally {
+      setDeletingTaskIds((prev) => {
+        const next = new Set(prev);
+        next.delete(id);
+        return next;
+      });
+    }
+  };
+
+  const handleCopyMagnet = (id: string, magnet: string) => {
+    void navigator.clipboard.writeText(magnet);
+    setCopiedId(id);
+    setTimeout(() => setCopiedId(null), 2000);
+  };
+
+  const quickSearch = (q: string, cat: "all" | "anime" | "movie" | "tv" = "all") => {
+    setQuery(q);
+    setCategory(cat);
+    void performSearch(q, cat, source);
+  };
+
+  return (
+    <motion.section
+      className="page-stage stage-downloads"
+      initial="hidden"
+      animate="show"
+      exit="hidden"
+      variants={shouldReduceMotion ? { hidden: { opacity: 0 }, show: { opacity: 1 } } : fadeUpVariant}
+    >
+      <div className="page-stage-header">
+        <button className="back-button" onClick={onBack} aria-label="Go back">
+          <ArrowLeft size={18} />
+          <span>Back</span>
+        </button>
+        <div className="page-stage-title-group">
+          <h1>Torrent Downloads & Fast-Start Remux</h1>
+          <p>Search Nyaa, YTS, The Pirate Bay & AnimeTosho. Auto-extracts to MP4 with VietSub & EngSub.</p>
+        </div>
+      </div>
+
+      <div className="download-tabs" role="tablist">
+        <button
+          role="tab"
+          aria-selected={tab === "search"}
+          className={`download-tab-button ${tab === "search" ? "active" : ""}`}
+          onClick={() => setTab("search")}
+        >
+          <Search size={16} />
+          <span>Search Indexers</span>
+        </button>
+        <button
+          role="tab"
+          aria-selected={tab === "tasks"}
+          className={`download-tab-button ${tab === "tasks" ? "active" : ""}`}
+          onClick={() => setTab("tasks")}
+        >
+          <Download size={16} />
+          <span>Tasks Workspace</span>
+          {activeTasksCount > 0 && <span className="download-tab-badge">{activeTasksCount}</span>}
+        </button>
+      </div>
+
+      {error && (
+        <div className="stage-error-banner" style={{ margin: "0 0 1.25rem" }}>
+          <AlertTriangle size={18} />
+          <span>{error}</span>
+        </div>
+      )}
+
+      {tab === "search" && (
+        <>
+          <form className="torrent-search-panel" onSubmit={handleSearch}>
+            <div className="torrent-search-bar">
+              <div className="torrent-search-input-wrap">
+                <Search size={18} />
+                <input
+                  type="text"
+                  placeholder="Search cinema movies, anime, TV series (e.g. Frieren, Oppenheimer)..."
+                  value={query}
+                  onChange={(e) => setQuery(e.target.value)}
+                  autoFocus
+                />
+                {query.length > 0 && (
+                  <button
+                    type="button"
+                    className="torrent-search-clear"
+                    onClick={() => {
+                      setQuery("");
+                      setResults([]);
+                    }}
+                    aria-label="Clear query"
+                  >
+                    <X size={14} />
+                  </button>
+                )}
+              </div>
+              <button
+                type="submit"
+                className="torrent-search-submit"
+                disabled={loading || query.trim().length < 2}
+              >
+                {loading ? <Loader2 size={16} className="spin" /> : <Search size={16} />}
+                <span>Search</span>
+              </button>
+            </div>
+
+            <div className="torrent-filters-row">
+              <div className="torrent-filter-group">
+                <span>Category:</span>
+                <button
+                  type="button"
+                  className={`torrent-filter-chip ${category === "all" ? "active" : ""}`}
+                  onClick={() => handleCategoryChange("all")}
+                >
+                  All
+                </button>
+                <button
+                  type="button"
+                  className={`torrent-filter-chip ${category === "movie" ? "active" : ""}`}
+                  onClick={() => handleCategoryChange("movie")}
+                >
+                  Cinema Movies
+                </button>
+                <button
+                  type="button"
+                  className={`torrent-filter-chip ${category === "anime" ? "active" : ""}`}
+                  onClick={() => handleCategoryChange("anime")}
+                >
+                  Anime
+                </button>
+                <button
+                  type="button"
+                  className={`torrent-filter-chip ${category === "tv" ? "active" : ""}`}
+                  onClick={() => handleCategoryChange("tv")}
+                >
+                  TV Series
+                </button>
+              </div>
+
+              <div className="torrent-filter-group">
+                <span>Source:</span>
+                <select
+                  className="torrent-source-select"
+                  value={source}
+                  onChange={(e) => handleSourceChange(e.target.value)}
+                >
+                  <option value="">All Indexers</option>
+                  <option value="nyaa">Nyaa.si (Anime)</option>
+                  <option value="yts">YTS.mx (Movies)</option>
+                  <option value="piratebay">The Pirate Bay (Multi)</option>
+                  <option value="animetosho">AnimeTosho (Anime)</option>
+                </select>
+              </div>
+
+              <div className="torrent-filter-group">
+                <span>Subtitles:</span>
+                <button
+                  type="button"
+                  className={`torrent-filter-chip ${subPref === "all" ? "active" : ""}`}
+                  onClick={() => setSubPref("all")}
+                >
+                  VietSub & EngSub
+                </button>
+                <button
+                  type="button"
+                  className={`torrent-filter-chip ${subPref === "vi" ? "active" : ""}`}
+                  onClick={() => setSubPref("vi")}
+                >
+                  VietSub Only
+                </button>
+                <button
+                  type="button"
+                  className={`torrent-filter-chip ${subPref === "en" ? "active" : ""}`}
+                  onClick={() => setSubPref("en")}
+                >
+                  EngSub Only
+                </button>
+              </div>
+            </div>
+
+            <div className="torrent-quick-queries">
+              <span>Quick searches:</span>
+              <button type="button" onClick={() => quickSearch("Frieren", "anime")}>Frieren</button>
+              <button type="button" onClick={() => quickSearch("Attack on Titan", "anime")}>Attack on Titan</button>
+              <button type="button" onClick={() => quickSearch("Oppenheimer", "movie")}>Oppenheimer</button>
+              <button type="button" onClick={() => quickSearch("Interstellar", "movie")}>Interstellar</button>
+              <button type="button" onClick={() => quickSearch("Dune", "movie")}>Dune</button>
+              <button type="button" onClick={() => quickSearch("Breaking Bad", "tv")}>Breaking Bad</button>
+            </div>
+          </form>
+
+          {loading ? (
+            <div className="stage-loading-state" style={{ minHeight: "16rem" }}>
+              <Loader2 className="spin" size={32} />
+              <p>Searching across torrent indexers & subtitle archives...</p>
+            </div>
+          ) : results.length > 0 ? (
+            <div className="torrent-results-grid">
+              {results.map((item) => {
+                const isCreating = actionLoadingId === item.id;
+                const isCopied = copiedId === item.id;
+                return (
+                  <div key={item.id} className="torrent-result-card">
+                    <div className="torrent-result-info">
+                      <h3 className="torrent-result-title" title={item.title}>
+                        {item.title}
+                      </h3>
+                      <div className="torrent-meta-badges">
+                        <span className={`badge-source ${item.source}`}>{item.source}</span>
+                        <span className="badge-pill">{item.category}</span>
+                        {item.quality && <span className="badge-pill badge-quality">{item.quality}</span>}
+                        <span className="badge-pill badge-size">{item.formatted_size}</span>
+                        <span className="badge-pill badge-health">
+                          <span className="seeds">▲ {item.seeds}</span>
+                          <span className="peers">▼ {item.peers}</span>
+                        </span>
+                        {item.has_vietsub && <span className="badge-pill badge-sub vi">VietSub</span>}
+                        {item.has_engsub && <span className="badge-pill badge-sub en">EngSub</span>}
+                      </div>
+                    </div>
+
+                    <div className="torrent-result-actions">
+                      <button
+                        type="button"
+                        className="torrent-btn-icon"
+                        onClick={() => handleCopyMagnet(item.id, item.magnet_url)}
+                        title={isCopied ? "Magnet link copied to clipboard" : "Copy Magnet link"}
+                        aria-label={isCopied ? "Magnet link copied to clipboard" : "Copy Magnet link"}
+                      >
+                        {isCopied ? <Check size={16} /> : <Copy size={16} />}
+                      </button>
+                      <button
+                        type="button"
+                        className="torrent-btn-download"
+                        onClick={() => void handleCreateTask(item)}
+                        disabled={isCreating}
+                      >
+                        {isCreating ? <Loader2 size={15} className="spin" /> : <Download size={15} />}
+                        <span>Download & Remux</span>
+                      </button>
+                    </div>
+                  </div>
+                );
+              })}
+            </div>
+          ) : query.trim().length >= 2 ? (
+            <div className="downloads-empty" style={{ margin: "2rem auto", textAlign: "center" }}>
+              <p>No results found for "{query}". Try a different title or search all categories.</p>
+            </div>
+          ) : (
+            <div className="downloads-empty" style={{ margin: "3rem auto", textAlign: "center" }}>
+              <div><Film size={26} /></div>
+              <h3>Search & Download Torrents</h3>
+              <p>Find cinema movies, TV shows, and anime with English and Vietnamese subtitles. Torrent contents are extracted and remuxed into fast-start MP4 format on the server for direct download.</p>
+            </div>
+          )}
+        </>
+      )}
+
+      {tab === "tasks" && (
+        <div className="torrent-tasks-workspace">
+          {tasks.length > 0 ? (
+            <div className="torrent-tasks-list">
+              {tasks.map((task) => (
+                <TorrentTaskItem
+                  key={task.id}
+                  task={task}
+                  isDeleting={deletingTaskIds.has(task.id)}
+                  onDelete={(id) => void handleDeleteTask(id)}
+                />
+              ))}
+            </div>
+          ) : (
+            <div className="downloads-empty" style={{ margin: "3rem auto", textAlign: "center" }}>
+              <div><Download size={26} /></div>
+              <h3>No Active Download Tasks</h3>
+              <p>Your workspace is currently clean. Search torrent indexers and click "Download & Remux" to queue movies or anime episodes.</p>
+            </div>
+          )}
+        </div>
+      )}
+    </motion.section>
+  );
+}
+
+function TorrentTaskItem({
+  task,
+  isDeleting,
+  onDelete,
+}: {
+  task: TorrentTask;
+  isDeleting?: boolean;
+  onDelete: (id: string) => void;
+}) {
+  const status = task.status;
+  const isReady = status.type === "ready";
+  const isFailed = status.type === "failed";
+
+  return (
+    <div className={`torrent-task-card ${isReady ? "ready" : isFailed ? "failed" : ""}`}>
+      <div className="torrent-task-header">
+        <div className="torrent-task-title-group">
+          <h3 className="torrent-task-title" title={task.title}>{task.title}</h3>
+          <span className="torrent-task-date">
+            Task ID: {task.id.slice(0, 8)} • Added {new Date(task.created_at * 1000).toLocaleTimeString()}
+          </span>
+        </div>
+
+        <div className={`torrent-task-status-badge ${status.type}`}>
+          {status.type === "queued" && <span>In Queue</span>}
+          {status.type === "downloading" && (
+            <span>
+              <Loader2 size={13} className="spin" /> Downloading ({Math.round(status.data.progress * 100)}%)
+            </span>
+          )}
+          {status.type === "remuxing" && (
+            <span>
+              <Loader2 size={13} className="spin" /> Remuxing to MP4...
+            </span>
+          )}
+          {status.type === "ready" && <span><Check size={13} /> Ready</span>}
+          {status.type === "failed" && <span><AlertTriangle size={13} /> Failed</span>}
+        </div>
+      </div>
+
+      {status.type === "downloading" && (
+        <div className="torrent-task-progress-shell">
+          <div className="torrent-task-bar">
+            <div
+              className="torrent-task-bar-fill"
+              style={{ width: `${Math.round(status.data.progress * 100)}%` }}
+            />
+          </div>
+          <div className="torrent-task-stats-row">
+            <span>
+              Speed: <strong>{formatSpeed(status.data.speed_bytes_per_sec)}</strong>
+            </span>
+            <span>
+              {formatTorrentBytes(status.data.downloaded_bytes)} / {formatTorrentBytes(status.data.total_bytes)}
+            </span>
+            <span>
+              ETA: <strong>{formatEta(status.data.eta_seconds)}</strong>
+            </span>
+          </div>
+        </div>
+      )}
+
+      {status.type === "remuxing" && (
+        <div className="torrent-task-progress-shell">
+          <div className="torrent-task-bar">
+            <div
+              className="torrent-task-bar-fill"
+              style={{ width: `${Math.round(status.data.progress * 100)}%` }}
+            />
+          </div>
+          <div className="torrent-task-stats-row">
+            <span>{status.data.message}</span>
+          </div>
+        </div>
+      )}
+
+      {status.type === "failed" && (
+        <div className="stage-error-banner" style={{ margin: "0.25rem 0" }}>
+          <AlertTriangle size={16} />
+          <span>{status.data.reason}</span>
+        </div>
+      )}
+
+      <div className="torrent-task-actions-row">
+        {status.type === "ready" && (
+          <>
+            <a
+              href={api.getTorrentDownloadUrl(task.id)}
+              download={status.data.file_name}
+              className="torrent-btn-file-download"
+            >
+              <Download size={15} />
+              <span>Download MP4 ({formatTorrentBytes(status.data.file_size)})</span>
+            </a>
+            {status.data.subtitles.map((sub: TorrentSubtitleMeta) => (
+              <a
+                key={sub.language_code}
+                href={api.getTorrentSubtitleUrl(task.id, sub.language_code)}
+                download={sub.file_name}
+                className="torrent-btn-sub-download"
+              >
+                <Download size={14} />
+                <span>{sub.language} Sub (.srt)</span>
+              </a>
+            ))}
+          </>
+        )}
+        <button
+          type="button"
+          className="torrent-btn-delete"
+          disabled={isDeleting}
+          onClick={() => onDelete(task.id)}
+        >
+          {isDeleting ? <Loader2 size={14} className="spin" /> : <Trash2 size={14} />}
+          <span>{isDeleting ? "Deleting..." : "Delete Task"}</span>
+        </button>
+      </div>
+    </div>
   );
 }
 
@@ -1665,6 +2230,7 @@ function HomeDashboard({
   onResumeHistory,
   onShowHistory,
   onShowMyList,
+  onShowDownloads,
   onShowSettings,
   session,
   onShowAdmin,
@@ -1686,6 +2252,7 @@ function HomeDashboard({
   onResumeHistory: (item: WatchHistory) => void;
   onShowHistory?: () => void;
   onShowMyList: () => void;
+  onShowDownloads: () => void;
   onShowSettings: () => void;
   session: SessionUser;
   onShowAdmin?: () => void;
@@ -1826,6 +2393,7 @@ function HomeDashboard({
           <p className="home-command-hint">Search stays attached to the provider you choose.</p>
           <div className="home-command-shortcuts">
             <button onClick={onShowMyList}><Star size={16} /> My List</button>
+            <button onClick={onShowDownloads}><Download size={16} /> Downloads</button>
             <button onClick={onShowSettings}><Settings2 size={16} /> Settings</button>
             {onShowAdmin && <button onClick={onShowAdmin}><ShieldCheck size={16} /> Users</button>}
             {onSignOut && <button onClick={onSignOut}><LogOut size={16} /> Sign out {session.username}</button>}
