@@ -301,6 +301,11 @@ impl AnimeProvider for AniZoneProvider {
         Self::parse_search(&self.html(url, "AniZone search").await?)
     }
 
+    async fn catalog(&self) -> Result<Vec<Anime>> {
+        let url = Url::parse(&format!("{BASE_URL}/anime"))?;
+        Self::parse_search(&self.html(url, "AniZone catalog").await?)
+    }
+
     async fn get_anime_details(&self, anime_id: &str) -> Result<Option<Anime>> {
         let url = Self::anime_url(anime_id)?;
         Ok(Some(Self::parse_details(

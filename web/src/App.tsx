@@ -68,6 +68,17 @@ const APP_FONT_STORAGE_KEY = "any-watch:font";
 const SKIP_INTRO_STORAGE_KEY = "any-watch:skip-intro";
 const EPISODE_RANGE_SIZE = 50;
 const LOGO_SRC = "/logo.png";
+
+function serverLabel(providerName: string, sources: Source[]): string {
+  if (providerName === "Invidious") return "YouTube";
+  const source = sources.find((s) => s.name === providerName);
+  const group = source?.languageGroup ?? "english";
+  const groupSources = sources.filter(
+    (s) => s.languageGroup === group && s.languageGroup !== "youtube",
+  );
+  const index = groupSources.findIndex((s) => s.name === providerName);
+  return index >= 0 ? `Server ${index + 1}` : providerName;
+}
 const fadeUpVariant = {
   hidden: { opacity: 0, y: 18 },
   show: { opacity: 1, y: 0 },
@@ -1952,7 +1963,7 @@ function ProviderChips({
           aria-pressed={selected?.name === source.name}
           onClick={() => onSelect(source)}
         >
-          <strong>{source.name}</strong>
+          <strong>{serverLabel(source.name, sources)}</strong>
           <span>{source.language}</span>
         </button>
       ))}
@@ -2250,6 +2261,35 @@ function SearchStage({
     [continueWatching, selectedSource],
   );
 
+  const [providerCatalog, setProviderCatalog] = useState<Anime[]>([]);
+  const [providerCatalogLoading, setProviderCatalogLoading] = useState(false);
+
+  useEffect(() => {
+    if (!selectedSource?.name) {
+      setProviderCatalog([]);
+      return;
+    }
+    let active = true;
+    setProviderCatalogLoading(true);
+    api
+      .getProviderCatalog(selectedSource.name)
+      .then((items) => {
+        if (active) {
+          setProviderCatalog(items);
+          setProviderCatalogLoading(false);
+        }
+      })
+      .catch(() => {
+        if (active) {
+          setProviderCatalog([]);
+          setProviderCatalogLoading(false);
+        }
+      });
+    return () => {
+      active = false;
+    };
+  }, [selectedSource?.name]);
+
   function setMobileSearchStep(previewOpen: boolean) {
     setMobilePreviewOpen(previewOpen);
     if (!window.matchMedia("(max-width: 760px)").matches) return;
@@ -2326,14 +2366,14 @@ function SearchStage({
                 <button
                   key={source.name}
                   className={isActive ? "provider-chip active" : "provider-chip"}
-                  aria-label={`${source.name}: ${actionLabel}`}
+                  aria-label={`${serverLabel(source.name, sources)}: ${actionLabel}`}
                   aria-pressed={isActive}
                   disabled={!source.capabilities.search || checking}
                   title={source.failureCode || option?.failureCode || undefined}
                   onClick={() => online ? onProviderSourceSelect(source) : onProviderHealthRetry(source)}
                 >
                   <i className={`health-dot ${source.status}`} />
-                  <strong>{source.name}</strong>
+                  <strong>{serverLabel(source.name, sources)}</strong>
                   <span>{actionLabel}</span>
                 </button>
               );
@@ -2362,7 +2402,7 @@ function SearchStage({
               </div>
               <div className="provider-hero-text">
                 <span className="eyebrow">{languageGroup === "vietnamese" ? "Vietnamese Provider" : "English Provider"}</span>
-                <h1>{selectedSource?.name ? `Search ${selectedSource.name}` : "Provider Dashboard"}</h1>
+                <h1>{selectedSource?.name ? `Search ${serverLabel(selectedSource.name, sources)}` : "Provider Dashboard"}</h1>
                 <p>
                   {selectedSource
                     ? `${selectedSource.language} · ${providerStatusLabel(selectedSource)} · Direct Streams & Media`
@@ -2370,16 +2410,6 @@ function SearchStage({
                 </p>
               </div>
             </div>
-            {selectedSource?.websiteUrl && (
-              <a
-                href={selectedSource.websiteUrl}
-                target="_blank"
-                rel="noopener noreferrer"
-                className="provider-website-link"
-              >
-                Website ↗
-              </a>
-            )}
           </div>
 
           {/* Provider-Specific Continue Watching Shelf */}
@@ -2387,7 +2417,7 @@ function SearchStage({
             <div className="provider-dashboard-shelf">
               <div className="provider-shelf-heading">
                 <div>
-                  <h3>Continue Watching on {selectedSource?.name}</h3>
+                  <h3>Continue Watching on {serverLabel(selectedSource?.name ?? "", sources)}</h3>
                   <p>Resume your series from where you left off</p>
                 </div>
                 <small>{providerContinueWatching.length} items</small>
@@ -2431,12 +2461,56 @@ function SearchStage({
             </div>
           )}
 
+          {/* Provider Live Catalog / Trending Shelf */}
+          <div className="provider-dashboard-shelf">
+            <div className="provider-shelf-heading">
+              <div>
+                <h3>{selectedSource ? `${serverLabel(selectedSource.name, sources)} Catalog & Trending` : "Provider Catalog"}</h3>
+                <p>Trending series and latest releases directly from this server</p>
+              </div>
+              {providerCatalog.length > 0 && <small>{providerCatalog.length} titles</small>}
+            </div>
+            {providerCatalogLoading ? (
+              <div className="provider-catalog-skeleton-grid">
+                {Array.from({ length: 8 }).map((_, i) => (
+                  <div key={i} className="provider-catalog-card-skeleton" />
+                ))}
+              </div>
+            ) : providerCatalog.length > 0 ? (
+              <div className="provider-catalog-grid">
+                {providerCatalog.map((item) => (
+                  <article key={item.id} className="provider-catalog-card">
+                    <button
+                      type="button"
+                      className="provider-catalog-thumb"
+                      onClick={() => onOpenAnime(item)}
+                    >
+                      <img src={item.coverUrl || LOGO_SRC} alt="" onError={useLogoFallback} />
+                      <span className="provider-catalog-play"><Play size={22} fill="currentColor" /></span>
+                      {item.totalEpisodes && (
+                        <span className="provider-episodes-pill">{item.totalEpisodes} eps</span>
+                      )}
+                    </button>
+                    <div className="provider-catalog-copy">
+                      <strong title={item.title}>{item.title}</strong>
+                      {item.synopsis && <p>{item.synopsis}</p>}
+                    </div>
+                  </article>
+                ))}
+              </div>
+            ) : (
+              <div className="provider-catalog-empty">
+                <p>Search above or select quick topics to discover anime on {selectedSource ? serverLabel(selectedSource.name, sources) : "this server"}.</p>
+              </div>
+            )}
+          </div>
+
           {/* Quick Search and Featured Tags on this Provider */}
           <div className="provider-discovery-shelf search-suggestions">
             <div className="provider-shelf-heading">
               <div>
                 <h3>Quick Search & Topics</h3>
-                <p>Popular series and catalogs on {selectedSource?.name ?? "this provider"}</p>
+                <p>Popular series and catalogs on {selectedSource ? serverLabel(selectedSource.name, sources) : "this provider"}</p>
               </div>
             </div>
             <div className="provider-topic-chips" aria-label="Suggested search queries">
@@ -2494,7 +2568,7 @@ function SearchStage({
             <div className="pane-title">
               <span>
                 {selectedSource
-                  ? `${selectedSource.name} Results`
+                  ? `${serverLabel(selectedSource.name, sources)} Results`
                   : `No ${languageGroup === "english" ? "English" : "Vietnamese"} provider available`}
               </span>
               <strong>{providerResults.length}</strong>

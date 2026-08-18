@@ -287,6 +287,11 @@ impl AnimeProvider for AniDbProvider {
         Self::parse_search(&self.text(url, "AniDB search").await?)
     }
 
+    async fn catalog(&self) -> Result<Vec<Anime>> {
+        let url = Url::parse(&format!("{BASE_URL}/browse"))?;
+        Self::parse_search(&self.text(url, "AniDB catalog").await?)
+    }
+
     async fn get_anime_details(&self, anime_id: &str) -> Result<Option<Anime>> {
         let html = self
             .text(Self::anime_url(anime_id)?, "AniDB details")

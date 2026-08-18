@@ -279,6 +279,10 @@ impl AnimeProvider for MovieBoxProvider {
         Ok(Self::parse_search_items(&value))
     }
 
+    async fn catalog(&self) -> Result<Vec<Anime>> {
+        self.search("Anime").await
+    }
+
     async fn get_anime_details(&self, anime_id: &str) -> Result<Option<Anime>> {
         let details = self.details(anime_id).await?;
         let subject = Self::subject(&details);

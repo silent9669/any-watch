@@ -151,6 +151,66 @@ impl AnimeProvider for KkphimProvider {
         Ok(results)
     }
 
+    async fn catalog(&self) -> Result<Vec<Anime>> {
+        let catalog_url = format!("{}/danh-sach/hoat-hinh", KKPHIM_API);
+
+        let response: serde_json::Value = self
+            .client
+            .get(&catalog_url)
+            .query(&[("page", "1")])
+            .send()
+            .await
+            .context("Failed to get KKPhim catalog")?
+            .json()
+            .await
+            .context("Failed to parse KKPhim catalog response")?;
+
+        let mut results = Vec::new();
+
+        if let Some(data) = response.get("data") {
+            if let Some(items) = data.get("items").and_then(|i| i.as_array()) {
+                let cdn = data["APP_DOMAIN_CDN_IMAGE"]
+                    .as_str()
+                    .unwrap_or("https://phimimg.com");
+
+                for item in items {
+                    let slug = item["slug"].as_str().unwrap_or_default().to_string();
+                    let name = item["name"].as_str().unwrap_or_default().to_string();
+
+                    let thumb = item["thumb_url"].as_str().unwrap_or_default();
+                    let poster = item["poster_url"].as_str().unwrap_or_default();
+
+                    let image_url = if thumb.starts_with("http") {
+                        thumb.to_string()
+                    } else if poster.starts_with("http") {
+                        poster.to_string()
+                    } else {
+                        format!("{}/{}", cdn.trim_end_matches('/'), thumb)
+                    };
+
+                    let episode_count = item["episode_total"]
+                        .as_str()
+                        .and_then(|e| e.parse::<u32>().ok());
+
+                    if !slug.is_empty() && !name.is_empty() {
+                        results.push(Anime {
+                            id: slug,
+                            provider: "KKPhim".to_string(),
+                            title: name,
+                            cover_url: image_url,
+                            banner_url: None,
+                            language: Language::Vietnamese,
+                            total_episodes: episode_count,
+                            synopsis: item["content"].as_str().map(|s| s.to_string()),
+                        });
+                    }
+                }
+            }
+        }
+
+        Ok(results)
+    }
+
     async fn get_anime_details(&self, anime_id: &str) -> Result<Option<Anime>> {
         let detail_url = format!("{}/phim/{}?embed=false", KKPHIM_API, anime_id);
         let response: serde_json::Value = self
