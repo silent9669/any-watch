@@ -53,6 +53,9 @@ pub struct SourcesConfig {
     #[serde(default = "default_true")]
     pub niniyo: bool,
 
+    #[serde(default = "default_true")]
+    pub k20: bool,
+
     #[serde(default)]
     pub hianime: bool,
 }
@@ -88,6 +91,7 @@ mod tests {
         assert!(sources.kkphim);
         assert!(sources.ophim);
         assert!(sources.niniyo);
+        assert!(sources.k20);
         assert!(!sources.anizone);
         assert!(sources.anidb);
         assert!(!sources.moviebox);
@@ -159,6 +163,7 @@ impl Default for SourcesConfig {
             animevietsub: false,
             animetvn: false,
             niniyo: true,
+            k20: true,
             hianime: false,
         }
     }

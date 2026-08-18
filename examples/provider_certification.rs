@@ -58,6 +58,7 @@ async fn certify(provider: &dyn AnimeProvider) -> Result<()> {
     let queries = match (provider.language(), provider.name()) {
         (Language::English, "MovieBox") => &["One Piece", "Your Name"][..],
         (Language::Vietnamese, "Niniyo") => &["Solo Leveling", "Attack on Titan"][..],
+        (Language::Vietnamese, "K20") => &["Naruto"][..],
         (Language::English, _) | (Language::Vietnamese, _) => &["One Piece"][..],
         (Language::Youtube, _) => &["YouTube"][..],
     };

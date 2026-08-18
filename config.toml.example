@@ -5,6 +5,10 @@
 #   Linux: ~/.config/any-watch/config.toml
 
 [sources]
+# Keep YouTube separate from language-based anime search. The hosted web server
+# enables it when ANY_WATCH_INVIDIOUS_URL is set.
+invidious = false
+
 # ani-cli v5 compatible English HLS source.
 anidb = true
 
@@ -30,15 +34,20 @@ ophim = true
 # Legacy duplicate of OPhim. Keep disabled unless testing migration behavior.
 animevietsub = false
 
-# Additional documented AniMapper Vietnamese providers. AnimeTVN is not yet
-# certified for direct playback. Niniyo is certified through AniMapper's
-# mapped episode and HLS source APIs.
+# Additional documented Vietnamese providers.
+# Niniyo is certified through AniMapper's mapped episode and HLS source APIs.
+# K20 connects to K20 Phim Tổng Hợp Stremio Addon (NguonC, STP, HH3D, VSMOV, YanHH3D, etc.).
 animetvn = false
 niniyo = true
+k20 = true
 
 # Legacy experimental setting retained for compatibility. The runtime ignores
 # it until a maintained upstream passes direct playback certification.
 hianime = false
+
+[invidious]
+instance_url = "http://invidious:3000"
+local_proxy = true
 
 [theme]
 primary_color = "#FF2934"

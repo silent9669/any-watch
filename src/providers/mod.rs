@@ -5,6 +5,7 @@ pub mod animevietsub;
 pub mod anizone;
 pub mod hianime;
 pub mod invidious;
+pub mod k20;
 pub mod kkphim;
 pub mod moviebox;
 pub mod niniyo;
@@ -377,6 +378,10 @@ impl ProviderRegistry {
 
         if config.sources.niniyo {
             providers.push(Arc::new(niniyo::NiniyoProvider::new()));
+        }
+
+        if config.sources.k20 {
+            providers.push(Arc::new(k20::K20Provider::new()));
         }
 
         Self { providers, invidious }
