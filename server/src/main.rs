@@ -556,6 +556,7 @@ async fn main() -> Result<()> {
             get(get_torrent_task).delete(delete_torrent_task),
         )
         .route("/torrents/tasks/:id/file", get(download_torrent_file))
+        .route("/torrents/tasks/:id/download", get(download_torrent_file))
         .route(
             "/torrents/tasks/:id/subtitles/:lang",
             get(download_torrent_subtitle),
@@ -3453,7 +3454,7 @@ async fn download_torrent_subtitle(
         [
             (
                 header::CONTENT_TYPE,
-                HeaderValue::from_static("text/plain; charset=utf-8"),
+                HeaderValue::from_static("application/x-subrip; charset=utf-8"),
             ),
             (
                 header::CONTENT_DISPOSITION,

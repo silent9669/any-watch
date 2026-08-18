@@ -1433,6 +1433,7 @@ function DownloadsPage({
   const [tasks, setTasks] = useState<TorrentTask[]>([]);
   const [copiedId, setCopiedId] = useState<string | null>(null);
   const [actionLoadingId, setActionLoadingId] = useState<string | null>(null);
+  const [deletingTaskIds, setDeletingTaskIds] = useState<Set<string>>(new Set());
 
   const activeTasksCount = useMemo(() => {
     return tasks.filter(
@@ -1466,9 +1467,8 @@ function DownloadsPage({
     return () => clearInterval(interval);
   }, [tasks, tab]);
 
-  const handleSearch = async (e?: FormEvent) => {
-    if (e) e.preventDefault();
-    const cleanQuery = query.trim();
+  const performSearch = async (targetQuery: string, targetCat: "all" | "anime" | "movie" | "tv", targetSource: string) => {
+    const cleanQuery = targetQuery.trim();
     if (cleanQuery.length < 2) return;
 
     setLoading(true);
@@ -1476,8 +1476,8 @@ function DownloadsPage({
     try {
       const data = await api.searchTorrents(
         cleanQuery,
-        category === "all" ? undefined : category,
-        source || undefined
+        targetCat === "all" ? undefined : targetCat,
+        targetSource || undefined
       );
       setResults(data);
     } catch (err: any) {
@@ -1485,6 +1485,25 @@ function DownloadsPage({
       setResults([]);
     } finally {
       setLoading(false);
+    }
+  };
+
+  const handleSearch = async (e?: FormEvent) => {
+    if (e) e.preventDefault();
+    await performSearch(query, category, source);
+  };
+
+  const handleCategoryChange = (newCat: "all" | "anime" | "movie" | "tv") => {
+    setCategory(newCat);
+    if (query.trim().length >= 2) {
+      void performSearch(query, newCat, source);
+    }
+  };
+
+  const handleSourceChange = (newSource: string) => {
+    setSource(newSource);
+    if (query.trim().length >= 2) {
+      void performSearch(query, category, newSource);
     }
   };
 
@@ -1503,11 +1522,21 @@ function DownloadsPage({
   };
 
   const handleDeleteTask = async (id: string) => {
+    if (deletingTaskIds.has(id)) return;
+    setDeletingTaskIds((prev) => new Set(prev).add(id));
+    setTasks((current) => current.filter((t) => t.id !== id));
+
     try {
       await api.deleteTorrentTask(id);
-      setTasks((current) => current.filter((t) => t.id !== id));
     } catch (err: any) {
       console.error("Failed to delete task:", err);
+      void loadTasks();
+    } finally {
+      setDeletingTaskIds((prev) => {
+        const next = new Set(prev);
+        next.delete(id);
+        return next;
+      });
     }
   };
 
@@ -1520,15 +1549,7 @@ function DownloadsPage({
   const quickSearch = (q: string, cat: "all" | "anime" | "movie" | "tv" = "all") => {
     setQuery(q);
     setCategory(cat);
-    setLoading(true);
-    setError(null);
-    api.searchTorrents(q, cat === "all" ? undefined : cat, source || undefined)
-      .then((data) => setResults(data))
-      .catch((err: any) => {
-        setError(err?.message || "Failed to search torrent providers.");
-        setResults([]);
-      })
-      .finally(() => setLoading(false));
+    void performSearch(q, cat, source);
   };
 
   return (
@@ -1622,28 +1643,28 @@ function DownloadsPage({
                 <button
                   type="button"
                   className={`torrent-filter-chip ${category === "all" ? "active" : ""}`}
-                  onClick={() => setCategory("all")}
+                  onClick={() => handleCategoryChange("all")}
                 >
                   All
                 </button>
                 <button
                   type="button"
                   className={`torrent-filter-chip ${category === "movie" ? "active" : ""}`}
-                  onClick={() => setCategory("movie")}
+                  onClick={() => handleCategoryChange("movie")}
                 >
                   Cinema Movies
                 </button>
                 <button
                   type="button"
                   className={`torrent-filter-chip ${category === "anime" ? "active" : ""}`}
-                  onClick={() => setCategory("anime")}
+                  onClick={() => handleCategoryChange("anime")}
                 >
                   Anime
                 </button>
                 <button
                   type="button"
                   className={`torrent-filter-chip ${category === "tv" ? "active" : ""}`}
-                  onClick={() => setCategory("tv")}
+                  onClick={() => handleCategoryChange("tv")}
                 >
                   TV Series
                 </button>
@@ -1654,7 +1675,7 @@ function DownloadsPage({
                 <select
                   className="torrent-source-select"
                   value={source}
-                  onChange={(e) => setSource(e.target.value)}
+                  onChange={(e) => handleSourceChange(e.target.value)}
                 >
                   <option value="">All Indexers</option>
                   <option value="nyaa">Nyaa.si (Anime)</option>
@@ -1736,8 +1757,8 @@ function DownloadsPage({
                         type="button"
                         className="torrent-btn-icon"
                         onClick={() => handleCopyMagnet(item.id, item.magnet_url)}
-                        title="Copy Magnet link"
-                        aria-label="Copy Magnet link"
+                        title={isCopied ? "Magnet link copied to clipboard" : "Copy Magnet link"}
+                        aria-label={isCopied ? "Magnet link copied to clipboard" : "Copy Magnet link"}
                       >
                         {isCopied ? <Check size={16} /> : <Copy size={16} />}
                       </button>
@@ -1777,6 +1798,7 @@ function DownloadsPage({
                 <TorrentTaskItem
                   key={task.id}
                   task={task}
+                  isDeleting={deletingTaskIds.has(task.id)}
                   onDelete={(id) => void handleDeleteTask(id)}
                 />
               ))}
@@ -1796,9 +1818,11 @@ function DownloadsPage({
 
 function TorrentTaskItem({
   task,
+  isDeleting,
   onDelete,
 }: {
   task: TorrentTask;
+  isDeleting?: boolean;
   onDelete: (id: string) => void;
 }) {
   const status = task.status;
@@ -1902,10 +1926,11 @@ function TorrentTaskItem({
         <button
           type="button"
           className="torrent-btn-delete"
+          disabled={isDeleting}
           onClick={() => onDelete(task.id)}
         >
-          <Trash2 size={14} />
-          <span>Delete Task</span>
+          {isDeleting ? <Loader2 size={14} className="spin" /> : <Trash2 size={14} />}
+          <span>{isDeleting ? "Deleting..." : "Delete Task"}</span>
         </button>
       </div>
     </div>
