@@ -67,6 +67,64 @@ ANY_WATCH_ADMIN_PASSWORD='replace-with-a-long-password' npm run serve:web
 The `ANY_WATCH_*` environment variable names and existing SQLite paths are kept
 for deployment and data compatibility.
 
+## Local Testing Guide
+
+Run tests locally before pushing to ensure all checks pass:
+
+### 1. Code Quality & Unit Tests
+
+```bash
+# Type check and build web frontend
+npm run build
+
+# Rust formatting and linting
+cargo fmt --all -- --check
+cargo clippy --workspace --all-targets --all-features -- -D warnings
+
+# Rust backend tests
+cargo test --workspace
+```
+
+### 2. Web Server Smoke Test
+
+Validates backend authentication, session handling, My List, and API endpoints:
+
+```bash
+cargo build -p any-watch-server
+bash scripts/smoke-web-server.sh
+```
+
+### 3. Browser End-to-End (E2E) Tests
+
+Run responsive layout, navigation, YouTube feed/watch room, and playback tests in Chromium:
+
+```bash
+# Install Python dependencies and Playwright browser (one-time setup)
+pip install -r tests/e2e/requirements.txt
+playwright install chromium
+
+# Run application E2E tests
+pytest tests/e2e/test_app.py --browser chromium -q
+
+# Run maintenance page tests
+pytest tests/e2e/test_maintenance.py -q
+```
+
+### 4. Maintenance & Cloudflare Worker Validation
+
+```bash
+npm run maintenance:validate
+npm run cloudflare:test
+```
+
+### 5. Production Docker Image & Container Smoke Test
+
+Builds the multi-stage image and verifies containerized startup, healthcheck, and provider endpoints:
+
+```bash
+npm run providers:test:docker
+```
+
 ## Deployment
 
 The production image builds the web assets and the Axum service together:
