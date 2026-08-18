@@ -10002,6 +10002,14 @@ select:focus-visible {
   gap: var(--space-md);
 }
 
+@media (max-width: 480px) {
+  .provider-catalog-grid,
+  .provider-catalog-skeleton-grid {
+    grid-template-columns: repeat(2, minmax(0, 1fr));
+    gap: 0.6rem;
+  }
+}
+
 .provider-catalog-card {
   display: flex;
   flex-direction: column;

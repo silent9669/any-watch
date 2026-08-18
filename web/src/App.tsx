@@ -2473,7 +2473,11 @@ function SearchStage({
             {providerCatalogLoading ? (
               <div className="provider-catalog-skeleton-grid">
                 {Array.from({ length: 8 }).map((_, i) => (
-                  <div key={i} className="provider-catalog-card-skeleton" />
+                  <div
+                    key={i}
+                    className="provider-catalog-card-skeleton"
+                    style={{ animationDelay: `${i * 65}ms` }}
+                  />
                 ))}
               </div>
             ) : providerCatalog.length > 0 ? (
@@ -2483,6 +2487,8 @@ function SearchStage({
                     <button
                       type="button"
                       className="provider-catalog-thumb"
+                      aria-label={`Play ${item.title}`}
+                      title={item.title}
                       onClick={() => onOpenAnime(item)}
                     >
                       <img src={item.coverUrl || LOGO_SRC} alt="" onError={useLogoFallback} />
