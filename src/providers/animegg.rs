@@ -99,9 +99,12 @@ impl AnimeGgProvider {
         pattern
             .captures_iter(html)
             .map(|capture| {
-                let synopsis = capture
-                    .name("synopsis")
-                    .map(|m| clean_html(m.as_str()).trim_start_matches("Plot Summary:").trim().to_string());
+                let synopsis = capture.name("synopsis").map(|m| {
+                    clean_html(m.as_str())
+                        .trim_start_matches("Plot Summary:")
+                        .trim()
+                        .to_string()
+                });
                 Ok(Anime {
                     id: capture["id"].to_string(),
                     provider: "AnimeGG".into(),
@@ -109,7 +112,9 @@ impl AnimeGgProvider {
                     cover_url: Self::absolute_url(&capture["cover"])?,
                     banner_url: None,
                     language: Language::English,
-                    total_episodes: capture.name("episodes").and_then(|m| m.as_str().parse().ok()),
+                    total_episodes: capture
+                        .name("episodes")
+                        .and_then(|m| m.as_str().parse().ok()),
                     synopsis,
                 })
             })

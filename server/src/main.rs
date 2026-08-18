@@ -1197,15 +1197,18 @@ async fn provider_catalog(
     Json(input): Json<ProviderCatalogInput>,
 ) -> ApiResult<Json<Vec<AnimeDto>>> {
     require_user(&state, &headers).await?;
-    let provider = state.providers.get_provider(&input.provider).ok_or_else(|| {
-        ApiError::new(
-            StatusCode::NOT_FOUND,
-            "PROVIDER_UNAVAILABLE",
-            "provider-catalog",
-            "Provider is not available.",
-            false,
-        )
-    })?;
+    let provider = state
+        .providers
+        .get_provider(&input.provider)
+        .ok_or_else(|| {
+            ApiError::new(
+                StatusCode::NOT_FOUND,
+                "PROVIDER_UNAVAILABLE",
+                "provider-catalog",
+                "Provider is not available.",
+                false,
+            )
+        })?;
     let values = provider.catalog().await.map_err(|error| {
         ApiError::new(
             StatusCode::BAD_GATEWAY,
