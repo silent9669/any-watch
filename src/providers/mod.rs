@@ -326,9 +326,7 @@ impl ProviderRegistry {
 
         if config.sources.invidious {
             if let Some(invidious_config) = &config.invidious {
-                let provider = Arc::new(invidious::InvidiousProvider::new(
-                    invidious_config,
-                ));
+                let provider = Arc::new(invidious::InvidiousProvider::new(invidious_config));
                 invidious = Some(Arc::clone(&provider));
                 providers.push(provider);
             }
@@ -384,7 +382,10 @@ impl ProviderRegistry {
             providers.push(Arc::new(k20::K20Provider::new()));
         }
 
-        Self { providers, invidious }
+        Self {
+            providers,
+            invidious,
+        }
     }
 
     pub fn invidious(&self) -> Option<Arc<invidious::InvidiousProvider>> {

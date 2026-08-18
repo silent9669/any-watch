@@ -58,6 +58,7 @@ import type {
   SessionUser,
   SkipTime,
   WatchHistory,
+  YouTubeTopic,
 } from "./types";
 
 const SOURCE_STORAGE_KEY = "any-watch:selected-source";
@@ -72,7 +73,7 @@ const fadeUpVariant = {
   show: { opacity: 1, y: 0 },
 };
 
-type Route = "home" | "my-list" | "continue" | "admin" | "search" | "detail" | "catalog" | "settings";
+type Route = "home" | "my-list" | "continue" | "admin" | "search" | "youtube" | "detail" | "catalog" | "settings";
 type AppTheme = "obsidian" | "oled" | "ember" | "crimson" | "system";
 type AppScale = "compact" | "comfortable" | "large" | "tv";
 type AppFont = "manrope" | "noto" | "system";
@@ -104,6 +105,16 @@ function App() {
   const [languageGroup, setLanguageGroup] = useState<"english" | "vietnamese">("english");
   const [discovery, setDiscovery] = useState<DiscoveryCatalog | null>(null);
   const [searchSelection, setSearchSelection] = useState<Anime | null>(null);
+  const [youtubeQuery, setYoutubeQuery] = useState("");
+  const [youtubeResults, setYoutubeResults] = useState<Anime[]>([]);
+  const [youtubeSelection, setYoutubeSelection] = useState<Anime | null>(null);
+  const [youtubeLoading, setYoutubeLoading] = useState(false);
+  const [youtubeTopic, setYoutubeTopic] = useState<YouTubeTopic>("All");
+  const [youtubeFeed, setYoutubeFeed] = useState<Anime[]>([]);
+  const [youtubeFeedLoading, setYoutubeFeedLoading] = useState(false);
+  const [youtubeRelated, setYoutubeRelated] = useState<Anime[]>([]);
+  const [youtubeRelatedLoading, setYoutubeRelatedLoading] = useState(false);
+  const [youtubeWatchMode, setYoutubeWatchMode] = useState(false);
   const [selectedAnime, setSelectedAnime] = useState<Anime | null>(null);
   const [episodes, setEpisodes] = useState<Episode[]>([]);
   const [continueWatching, setContinueWatching] = useState<WatchHistory[]>([]);
@@ -122,6 +133,10 @@ function App() {
   const catalogCooldownUntilRef = useRef(0);
   const availabilityGenerationRef = useRef(0);
   const catalogSearchGenerationRef = useRef(0);
+  const youtubeSearchGenerationRef = useRef(0);
+  const youtubeFeedGenerationRef = useRef(0);
+  const youtubeRelatedGenerationRef = useRef(0);
+  const youtubePlaybackGenerationRef = useRef(0);
   const [providerHealthPending, setProviderHealthPending] = useState<string | null>(null);
   const [theme, setTheme] = useState<AppTheme>(loadSavedTheme);
   const [appScale, setAppScale] = useState<AppScale>(loadSavedScale);
@@ -248,6 +263,27 @@ function App() {
   }, [query, route, languageGroup, selectedSource?.name]);
 
   useEffect(() => {
+    if (route !== "youtube") {
+      youtubeSearchGenerationRef.current += 1;
+      youtubeFeedGenerationRef.current += 1;
+      youtubeRelatedGenerationRef.current += 1;
+      youtubePlaybackGenerationRef.current += 1;
+      return;
+    }
+    const cleanQuery = youtubeQuery.trim();
+    if (cleanQuery.length < 2) {
+      youtubeSearchGenerationRef.current += 1;
+      setYoutubeResults([]);
+      if (!youtubeWatchMode) setYoutubeSelection(null);
+      void loadYoutubeFeed(youtubeTopic);
+      return;
+    }
+    youtubeFeedGenerationRef.current += 1;
+    const handle = window.setTimeout(() => void searchYoutube(cleanQuery), 320);
+    return () => window.clearTimeout(handle);
+  }, [youtubeQuery, route, youtubeTopic]);
+
+  useEffect(() => {
     if (!sources.length) return;
     const current = selectedSource;
     if (
@@ -354,8 +390,20 @@ function App() {
     }
   }
 
+  function leaveYoutubeRoute() {
+    youtubeSearchGenerationRef.current += 1;
+    youtubeFeedGenerationRef.current += 1;
+    youtubeRelatedGenerationRef.current += 1;
+    youtubePlaybackGenerationRef.current += 1;
+    if (!youtubeWatchMode) return;
+    setPlayer(null);
+    setYoutubeWatchMode(false);
+    void refreshShelfData();
+  }
+
   function navigate(nextRoute: Route) {
     if (nextRoute === route) return;
+    if (route === "youtube" && nextRoute !== "youtube") leaveYoutubeRoute();
     setRouteStack((stack) => [...stack, route]);
     setRoute(nextRoute);
     setError(null);
@@ -363,6 +411,7 @@ function App() {
 
   function goBack() {
     const currentRoute = route;
+    if (currentRoute === "youtube") leaveYoutubeRoute();
     setRouteStack((stack) => {
       const nextStack = [...stack];
       const previous = nextStack.pop();
@@ -383,6 +432,110 @@ function App() {
 
   function openSearch() {
     if (route !== "search") navigate("search");
+  }
+
+  function withFavoriteState(items: Anime[]) {
+    const favorites = new Set(myList.map((item) => item.animeId));
+    return items.map((item) => ({
+      ...item,
+      isFavorite: favorites.has(animeKey(item.provider, item.id)),
+    }));
+  }
+
+  async function searchYoutube(nextQuery = youtubeQuery) {
+    const cleanQuery = nextQuery.trim();
+    const generation = ++youtubeSearchGenerationRef.current;
+    if (cleanQuery.length < 2) return;
+    const source = sources.find((item) => item.languageGroup === "youtube");
+    if (!source || source.status === "unavailable" || !source.capabilities.search) {
+      setYoutubeResults([]);
+      setYoutubeSelection(null);
+      setError({
+        code: "INVIDIOUS_UNAVAILABLE",
+        message: "YouTube search is unavailable until an Invidious instance is configured and healthy.",
+        operation: "youtube-search",
+        retryable: true,
+        correlationId: crypto.randomUUID(),
+      });
+      return;
+    }
+
+    setYoutubeLoading(true);
+    setError(null);
+    try {
+      const items = withFavoriteState(await api.searchSource(source.name, cleanQuery));
+      if (generation !== youtubeSearchGenerationRef.current) return;
+      setYoutubeResults(items);
+      setYoutubeSelection((current) => {
+        if (current && items.some((item) => item.id === current.id)) return current;
+        return items[0] ?? null;
+      });
+    } catch (err) {
+      if (generation !== youtubeSearchGenerationRef.current) return;
+      const appError = toAppError(err, "youtube-search");
+      if (providerFailureMakesOffline(appError)) markProviderOffline(source.name, appError.code);
+      setYoutubeResults([]);
+      setYoutubeSelection(null);
+      setError(appError);
+    } finally {
+      if (generation === youtubeSearchGenerationRef.current) setYoutubeLoading(false);
+    }
+  }
+
+  async function loadYoutubeFeed(topic: YouTubeTopic = youtubeTopic) {
+    const generation = ++youtubeFeedGenerationRef.current;
+    const source = sources.find((item) => item.languageGroup === "youtube");
+    if (!source || source.status === "unavailable" || !source.capabilities.search) return;
+    setYoutubeFeed([]);
+    setYoutubeFeedLoading(true);
+    try {
+      let items: Anime[];
+      if (topic === "All" || topic === "Trending") {
+        try {
+          items = await api.getYouTubeTrending();
+          if (!items.length) items = await api.getYouTubePopular();
+        } catch {
+          items = await api.getYouTubePopular();
+        }
+      } else if (topic === "Animations") {
+        items = await api.searchSource(source.name, "animation short film anime");
+      } else {
+        items = await api.getYouTubeTrending(topic);
+      }
+      if (generation !== youtubeFeedGenerationRef.current) return;
+      setYoutubeFeed(withFavoriteState(items));
+    } catch (err) {
+      if (generation !== youtubeFeedGenerationRef.current) return;
+      console.error("Failed to load YouTube feed:", err);
+      setYoutubeFeed([]);
+    } finally {
+      if (generation === youtubeFeedGenerationRef.current) setYoutubeFeedLoading(false);
+    }
+  }
+
+  async function loadYoutubeRelated(videoId: string) {
+    const generation = ++youtubeRelatedGenerationRef.current;
+    setYoutubeRelated([]);
+    setYoutubeRelatedLoading(true);
+    try {
+      const related = withFavoriteState(await api.getYouTubeRelated(videoId));
+      if (generation !== youtubeRelatedGenerationRef.current) return;
+      setYoutubeRelated(related);
+    } catch (err) {
+      if (generation !== youtubeRelatedGenerationRef.current) return;
+      console.error("Failed to load YouTube related:", err);
+      setYoutubeRelated([]);
+    } finally {
+      if (generation === youtubeRelatedGenerationRef.current) setYoutubeRelatedLoading(false);
+    }
+  }
+
+  function selectYoutubeVideo(video: Anime, openWatchRoom = true) {
+    setYoutubeSelection(video);
+    if (openWatchRoom) {
+      setYoutubeWatchMode(true);
+      void loadYoutubeRelated(video.id);
+    }
   }
 
   async function searchCatalog(nextQuery = query, sourceOverride?: Source | null) {
@@ -669,9 +822,20 @@ function App() {
     setSelectedAnime((anime) =>
       anime && animeKey(anime.provider, anime.id) === key ? mergeAnimeDetails(anime, patch) : anime,
     );
+    setYoutubeResults((items) =>
+      items.map((item) => (animeKey(item.provider, item.id) === key ? mergeAnimeDetails(item, patch) : item)),
+    );
+    setYoutubeSelection((anime) =>
+      anime && animeKey(anime.provider, anime.id) === key ? mergeAnimeDetails(anime, patch) : anime,
+    );
   }
 
   async function openAnime(anime: Anime) {
+    if (anime.provider === "Invidious") {
+      navigate("youtube");
+      selectYoutubeVideo(anime, true);
+      return;
+    }
     setSelectedAnime(anime);
     setEpisodes([]);
     setLoadingEpisodes(true);
@@ -757,6 +921,18 @@ function App() {
     setSelectedAnime((anime) =>
       anime && animeKey(anime.provider, anime.id) === key ? { ...anime, isFavorite } : anime,
     );
+    setYoutubeResults((items) =>
+      items.map((item) => animeKey(item.provider, item.id) === key ? { ...item, isFavorite } : item),
+    );
+    setYoutubeFeed((items) =>
+      items.map((item) => animeKey(item.provider, item.id) === key ? { ...item, isFavorite } : item),
+    );
+    setYoutubeRelated((items) =>
+      items.map((item) => animeKey(item.provider, item.id) === key ? { ...item, isFavorite } : item),
+    );
+    setYoutubeSelection((anime) =>
+      anime && animeKey(anime.provider, anime.id) === key ? { ...anime, isFavorite } : anime,
+    );
   }
 
   async function playEpisode(anime: Anime, episode: Episode, startTime = 0, episodeList = episodes) {
@@ -768,6 +944,44 @@ function App() {
       const appError = toAppError(err, "playback");
       if (providerFailureMakesOffline(appError)) markProviderOffline(anime.provider, appError.code);
       setError(appError);
+    }
+  }
+
+  async function playYoutubeVideo(anime: Anime) {
+    const generation = ++youtubePlaybackGenerationRef.current;
+    setPlayer(null);
+    setYoutubeLoading(true);
+    setError(null);
+    try {
+      setYoutubeSelection(anime);
+      setYoutubeWatchMode(true);
+      void loadYoutubeRelated(anime.id);
+      const [details, videoEpisodes] = await Promise.all([
+        api.getAnimeDetails(anime.provider, anime.id, anime.title),
+        api.getEpisodes(anime.provider, anime.id),
+      ]);
+      if (generation !== youtubePlaybackGenerationRef.current) return;
+      const enriched = mergeAnimeDetails(anime, detailPatch(details));
+      const episode = videoEpisodes[0];
+      if (!episode) throw new Error("Invidious returned no playable video.");
+      setYoutubeSelection(enriched);
+      const history = findHistoryForAnime(enriched, continueWatching);
+      const playback = await api.preparePlayback(enriched.provider, episode.id);
+      if (generation !== youtubePlaybackGenerationRef.current) return;
+      setPlayer({
+        anime: enriched,
+        episode,
+        episodes: videoEpisodes,
+        playback,
+        startTime: history?.positionSeconds ?? 0,
+      });
+    } catch (err) {
+      if (generation !== youtubePlaybackGenerationRef.current) return;
+      const appError = toAppError(err, "youtube-playback");
+      if (providerFailureMakesOffline(appError)) markProviderOffline(anime.provider, appError.code);
+      setError(appError);
+    } finally {
+      if (generation === youtubePlaybackGenerationRef.current) setYoutubeLoading(false);
     }
   }
 
@@ -859,6 +1073,8 @@ function App() {
   const heroImage =
     selectedAnime?.bannerUrl ||
     selectedAnime?.coverUrl ||
+    youtubeSelection?.bannerUrl ||
+    youtubeSelection?.coverUrl ||
     searchSelection?.bannerUrl ||
     searchSelection?.coverUrl ||
     featuredAnime?.bannerUrl ||
@@ -867,6 +1083,15 @@ function App() {
     ? selectedAnime.isFavorite || myList.some((item) => item.animeId === animeKey(selectedAnime.provider, selectedAnime.id))
     : false;
   const resumeHistory = selectedAnime ? findHistoryForAnime(selectedAnime, continueWatching) : undefined;
+  const youtubeSource = sources.find((source) => source.languageGroup === "youtube") ?? null;
+  const youtubeResume = youtubeSelection ? findHistoryForAnime(youtubeSelection, continueWatching) : undefined;
+  const youtubeSelectionIsFavorite = youtubeSelection
+    ? youtubeSelection.isFavorite || myList.some((item) => item.animeId === animeKey(youtubeSelection.provider, youtubeSelection.id))
+    : false;
+  const youtubePlayerContext = route === "youtube" && youtubeWatchMode && youtubeSelection && player
+    && animeKey(player.anime.provider, player.anime.id) === animeKey(youtubeSelection.provider, youtubeSelection.id)
+    ? player
+    : null;
 
   if (bootstrapping) {
     return <BootSplash />;
@@ -992,6 +1217,7 @@ function App() {
               selectedSource={selectedSource}
               selectedCatalog={catalogSelection}
               selectedAnime={searchSelection}
+              continueWatching={continueWatching}
               onQueryChange={setQuery}
               onSearch={() => void searchCatalog()}
               onLanguageChange={selectSearchLanguage}
@@ -1006,6 +1232,66 @@ function App() {
               onToggleMyList={(anime) => void toggleMyList(anime)}
               onBack={goBack}
               myList={myList}
+            />
+          )}
+
+          {route === "youtube" && (
+            <YouTubePage
+              key="youtube"
+              query={youtubeQuery}
+              results={youtubeResults}
+              selectedVideo={youtubeSelection}
+              source={youtubeSource}
+              loading={youtubeLoading}
+              topic={youtubeTopic}
+              feedVideos={youtubeFeed}
+              feedLoading={youtubeFeedLoading}
+              relatedVideos={youtubeRelated}
+              relatedLoading={youtubeRelatedLoading}
+              continueWatching={continueWatching}
+              watchMode={youtubeWatchMode}
+              resume={youtubeResume}
+              isFavorite={youtubeSelectionIsFavorite}
+              playerContext={youtubePlayerContext}
+              autoSkip={autoSkip}
+              onAutoSkipChange={setAutoSkip}
+              onPlayPlayerEpisode={(episode) => youtubePlayerContext
+                ? playEpisode(youtubePlayerContext.anime, episode, 0, youtubePlayerContext.episodes)
+                : Promise.resolve()}
+              onClosePlayer={() => {
+                setPlayer(null);
+                void refreshShelfData();
+              }}
+              onQueryChange={(q) => {
+                youtubeSearchGenerationRef.current += 1;
+                setYoutubeQuery(q);
+                if (youtubeWatchMode) {
+                  youtubeRelatedGenerationRef.current += 1;
+                  youtubePlaybackGenerationRef.current += 1;
+                  setPlayer(null);
+                  setYoutubeWatchMode(false);
+                }
+              }}
+              onSearch={() => void searchYoutube()}
+              onTopicChange={(t) => {
+                youtubeRelatedGenerationRef.current += 1;
+                youtubePlaybackGenerationRef.current += 1;
+                setPlayer(null);
+                setYoutubeTopic(t);
+                setYoutubeQuery("");
+                setYoutubeWatchMode(false);
+              }}
+              onSelect={(video) => selectYoutubeVideo(video, true)}
+              onPlay={(video) => void playYoutubeVideo(video)}
+              onCloseWatch={() => {
+                youtubeRelatedGenerationRef.current += 1;
+                youtubePlaybackGenerationRef.current += 1;
+                setPlayer(null);
+                setYoutubeWatchMode(false);
+                void refreshShelfData();
+              }}
+              onToggleMyList={(video) => void toggleMyList(video)}
+              onBack={goBack}
             />
           )}
 
@@ -1029,7 +1315,7 @@ function App() {
       </main>
 
       <AnimatePresence>
-        {player && (
+        {player && !youtubePlayerContext && (
           <VideoPlayer
             key="video-player"
             context={player}
@@ -1057,6 +1343,7 @@ function AppNavigation({
   const items: Array<{ route: Route; label: string; icon: ReactNode; badge?: number }> = [
     { route: "home", label: "Home", icon: <House size={20} /> },
     { route: "search", label: "Search", icon: <Search size={20} /> },
+    { route: "youtube", label: "YouTube", icon: <span className="youtube-nav-mark"><Play size={15} fill="currentColor" /></span> },
     { route: "my-list", label: "My List", icon: <Star size={20} /> },
     { route: "settings", label: "Settings", icon: <Settings2 size={20} /> },
   ];
@@ -1894,6 +2181,7 @@ function SearchStage({
   selectedSource,
   selectedCatalog,
   selectedAnime,
+  continueWatching,
   onQueryChange,
   onSearch,
   onLanguageChange,
@@ -1920,6 +2208,7 @@ function SearchStage({
   selectedSource: Source | null;
   selectedCatalog: CatalogAnime | null;
   selectedAnime: Anime | null;
+  continueWatching: WatchHistory[];
   onQueryChange: (query: string) => void;
   onSearch: () => void;
   onLanguageChange: (language: "english" | "vietnamese") => void;
@@ -1955,6 +2244,11 @@ function SearchStage({
         episodes: selectedAnime?.totalEpisodes,
         category: selectedAnime?.provider ?? "Provider result",
       };
+
+  const providerContinueWatching = useMemo(
+    () => continueWatching.filter((item) => item.provider === selectedSource?.name),
+    [continueWatching, selectedSource],
+  );
 
   function setMobileSearchStep(previewOpen: boolean) {
     setMobilePreviewOpen(previewOpen);
@@ -2055,38 +2349,142 @@ function SearchStage({
 
       {query.trim().length < 2 && (
         <motion.section
-          className="search-welcome"
+          className="search-welcome provider-dashboard-welcome"
           initial={{ opacity: 0 }}
           animate={{ opacity: 1 }}
           exit={{ opacity: 0 }}
           transition={{ duration: 0.18 }}
         >
-          <div className="search-welcome-copy">
-            <h1>Search {selectedSource?.name ?? "a provider"}</h1>
-            <p>Type at least two letters. Your query stays in place when you switch language or source.</p>
-            <div className="search-suggestions" aria-label="Search suggestions">
-              {["One Piece", "Naruto", "Your Name"].map((suggestion) => (
+          <div className="provider-dashboard-hero search-welcome-provider">
+            <div className="provider-hero-main">
+              <div className="provider-hero-badge">
+                <Film size={26} />
+              </div>
+              <div className="provider-hero-text">
+                <span className="eyebrow">{languageGroup === "vietnamese" ? "Vietnamese Provider" : "English Provider"}</span>
+                <h1>{selectedSource?.name ? `Search ${selectedSource.name}` : "Provider Dashboard"}</h1>
+                <p>
+                  {selectedSource
+                    ? `${selectedSource.language} · ${providerStatusLabel(selectedSource)} · Direct Streams & Media`
+                    : "Select a provider above to explore its catalog and resume watching."}
+                </p>
+              </div>
+            </div>
+            {selectedSource?.websiteUrl && (
+              <a
+                href={selectedSource.websiteUrl}
+                target="_blank"
+                rel="noopener noreferrer"
+                className="provider-website-link"
+              >
+                Website ↗
+              </a>
+            )}
+          </div>
+
+          {/* Provider-Specific Continue Watching Shelf */}
+          {providerContinueWatching.length > 0 && (
+            <div className="provider-dashboard-shelf">
+              <div className="provider-shelf-heading">
+                <div>
+                  <h3>Continue Watching on {selectedSource?.name}</h3>
+                  <p>Resume your series from where you left off</p>
+                </div>
+                <small>{providerContinueWatching.length} items</small>
+              </div>
+              <div className="provider-history-grid">
+                {providerContinueWatching.map((item) => {
+                  const progress = item.totalSeconds > 0
+                    ? Math.min(100, (item.positionSeconds / item.totalSeconds) * 100)
+                    : 0;
+                  return (
+                    <article key={item.animeId} className="provider-history-card">
+                      <button
+                        type="button"
+                        className="provider-history-thumb"
+                        onClick={() => onOpenAnime({
+                          id: item.animeId.includes(":") ? item.animeId.split(":").slice(1).join(":") : item.animeId,
+                          provider: item.provider,
+                          catalogId: item.catalogId ?? null,
+                          title: item.title,
+                          coverUrl: item.coverUrl,
+                          bannerUrl: null,
+                          language: selectedSource?.language ?? "Vietnamese",
+                          totalEpisodes: null,
+                          synopsis: null,
+                          isFavorite: false,
+                        })}
+                      >
+                        <img src={item.coverUrl || LOGO_SRC} alt="" onError={useLogoFallback} />
+                        <span className="provider-history-play"><Play size={20} fill="currentColor" /></span>
+                        <div className="progress watch-progress"><i style={{ width: `${progress}%` }} /></div>
+                        <span className="provider-time-pill">{formatTime(item.positionSeconds)}</span>
+                      </button>
+                      <div className="provider-history-copy">
+                        <strong title={item.title}>{item.title}</strong>
+                        <small>{episodeLabel(item.episodeNumber, item.episodeTitle, " · ")}</small>
+                      </div>
+                    </article>
+                  );
+                })}
+              </div>
+            </div>
+          )}
+
+          {/* Quick Search and Featured Tags on this Provider */}
+          <div className="provider-discovery-shelf search-suggestions">
+            <div className="provider-shelf-heading">
+              <div>
+                <h3>Quick Search & Topics</h3>
+                <p>Popular series and catalogs on {selectedSource?.name ?? "this provider"}</p>
+              </div>
+            </div>
+            <div className="provider-topic-chips" aria-label="Suggested search queries">
+              {(languageGroup === "vietnamese"
+                ? [
+                    "One Piece",
+                    "Naruto",
+                    "Solo Leveling",
+                    "Thanh Gươm Diệt Quỷ",
+                    "Kimi no Na wa",
+                    "Đại Chiến Titan",
+                    "Dragon Ball Super",
+                    "Jujutsu Kaisen",
+                    "Thám Tử Conan",
+                    "Hành Động",
+                    "Tình Cảm",
+                    "Phim Mới",
+                  ]
+                : [
+                    "One Piece",
+                    "Attack on Titan",
+                    "Demon Slayer",
+                    "Jujutsu Kaisen",
+                    "Your Name",
+                    "Death Note",
+                    "Naruto Shippuden",
+                    "Bleach",
+                    "Chainsaw Man",
+                    "Action",
+                    "Romance",
+                    "Fantasy",
+                  ]
+              ).map((suggestion) => (
                 <button
                   type="button"
                   key={suggestion}
+                  className="provider-topic-btn"
                   onClick={() => {
                     onQueryChange(suggestion);
                     inputRef.current?.focus();
                   }}
                 >
-                  <Search size={15} />
+                  <Search size={14} />
                   {suggestion}
                 </button>
               ))}
             </div>
           </div>
-          <aside className="search-welcome-provider">
-            <Film size={22} />
-            <div>
-              <strong>{selectedSource?.name ?? "Choose a provider"}</strong>
-              <span>{selectedSource ? `${selectedSource.language} · ${providerStatusLabel(selectedSource)}` : "Select a source above to search its catalog."}</span>
-            </div>
-          </aside>
         </motion.section>
       )}
 
@@ -2208,6 +2606,492 @@ function SearchStage({
               )}
             </motion.div>
           </AnimatePresence>
+        </div>
+      )}
+    </motion.section>
+  );
+}
+
+function parseYouTubeSynopsis(synopsis?: string | null) {
+  if (!synopsis) return { author: "YouTube", meta: "", description: "" };
+  const [firstLine = "", ...rest] = synopsis.split("\n");
+  const parts = firstLine.split(" · ");
+  const author = parts[0] || "YouTube";
+  const meta = parts.slice(1).join(" · ");
+  const description = rest.join("\n").trim();
+  return { author, meta, description };
+}
+
+function YouTubePage({
+  query,
+  results,
+  selectedVideo,
+  source,
+  loading,
+  topic,
+  feedVideos,
+  feedLoading,
+  relatedVideos,
+  relatedLoading,
+  continueWatching,
+  watchMode,
+  resume,
+  isFavorite,
+  playerContext,
+  autoSkip,
+  onAutoSkipChange,
+  onPlayPlayerEpisode,
+  onClosePlayer,
+  onQueryChange,
+  onSearch,
+  onTopicChange,
+  onSelect,
+  onPlay,
+  onCloseWatch,
+  onToggleMyList,
+  onBack,
+}: {
+  query: string;
+  results: Anime[];
+  selectedVideo: Anime | null;
+  source: Source | null;
+  loading: boolean;
+  topic: YouTubeTopic;
+  feedVideos: Anime[];
+  feedLoading: boolean;
+  relatedVideos: Anime[];
+  relatedLoading: boolean;
+  continueWatching: WatchHistory[];
+  watchMode: boolean;
+  resume?: WatchHistory;
+  isFavorite: boolean;
+  playerContext: PlayerContext | null;
+  autoSkip: boolean;
+  onAutoSkipChange: (enabled: boolean) => void;
+  onPlayPlayerEpisode: (episode: Episode) => Promise<void>;
+  onClosePlayer: () => void;
+  onQueryChange: (query: string) => void;
+  onSearch: () => void;
+  onTopicChange: (topic: YouTubeTopic) => void;
+  onSelect: (video: Anime) => void;
+  onPlay: (video: Anime) => void;
+  onCloseWatch: () => void;
+  onToggleMyList: (video: Anime) => void;
+  onBack: () => void;
+}) {
+  const inputRef = useRef<HTMLInputElement | null>(null);
+  const sourceReady = Boolean(source && source.status !== "unavailable" && source.capabilities.search);
+  const [descExpanded, setDescExpanded] = useState(false);
+  const [copied, setCopied] = useState(false);
+
+  const youtubeContinueWatching = useMemo(
+    () => continueWatching.filter((item) => item.provider === "Invidious" || item.provider === "YouTube"),
+    [continueWatching],
+  );
+
+  const topics: YouTubeTopic[] = ["All", "Trending", "Music", "Gaming", "News", "Animations"];
+
+  const copyShareLink = (videoId: string) => {
+    const url = `https://youtube.com/watch?v=${videoId}`;
+    void navigator.clipboard?.writeText(url);
+    setCopied(true);
+    setTimeout(() => setCopied(false), 2000);
+  };
+
+  useEffect(() => {
+    if (!watchMode) {
+      inputRef.current?.focus();
+    }
+  }, [watchMode]);
+
+  return (
+    <motion.section
+      className="youtube-page"
+      initial={{ opacity: 0 }}
+      animate={{ opacity: 1 }}
+      exit={{ opacity: 0 }}
+      transition={{ duration: 0.22, ease: [0.16, 1, 0.3, 1] }}
+    >
+      <header className="youtube-header">
+        <IconButton label="Back" onClick={watchMode ? onCloseWatch : onBack}>
+          <ArrowLeft size={21} />
+        </IconButton>
+        <div className="youtube-heading">
+          <span className="youtube-heading-mark"><Play size={17} fill="currentColor" /></span>
+          <div>
+            <p className="eyebrow">Private video search & streaming</p>
+            <h1>YouTube</h1>
+          </div>
+        </div>
+        <span className={`youtube-source-status ${source?.status ?? "unavailable"}`}>
+          <i className={`health-dot ${source?.status ?? "unavailable"}`} />
+          {source ? `Invidious · ${providerStatusLabel(source)}` : "Invidious not configured"}
+        </span>
+      </header>
+
+      <form
+        className="youtube-search"
+        onSubmit={(event) => {
+          event.preventDefault();
+          onSearch();
+        }}
+      >
+        <Search size={21} />
+        <input
+          ref={inputRef}
+          type="search"
+          value={query}
+          aria-label="Search YouTube through Invidious"
+          placeholder="Search videos, channels, topics..."
+          onChange={(event) => onQueryChange(event.target.value)}
+        />
+        {query.trim().length > 0 && (
+          <button
+            type="button"
+            className="youtube-search-clear"
+            aria-label="Clear search"
+            onClick={() => onQueryChange("")}
+          >
+            <X size={16} />
+          </button>
+        )}
+        {loading ? <Loader2 className="spin" size={20} /> : (
+          <button type="submit" disabled={!sourceReady || query.trim().length < 2}>Search</button>
+        )}
+      </form>
+
+      {!sourceReady && (
+        <section className="youtube-unavailable" role="status">
+          <AlertTriangle size={22} />
+          <div>
+            <strong>YouTube is not connected</strong>
+            <p>Configure <code>ANY_WATCH_INVIDIOUS_URL</code> on the server. Anime language search remains available separately.</p>
+          </div>
+        </section>
+      )}
+
+      {sourceReady && !watchMode && (
+        <div className="youtube-topic-bar" role="tablist" aria-label="YouTube categories">
+          {topics.map((t) => (
+            <button
+              key={t}
+              role="tab"
+              aria-selected={topic === t && query.trim().length < 2}
+              className={`youtube-topic-chip${topic === t && query.trim().length < 2 ? " active" : ""}`}
+              onClick={() => onTopicChange(t)}
+            >
+              {t}
+            </button>
+          ))}
+        </div>
+      )}
+
+      {sourceReady && watchMode && selectedVideo && (
+        <div className="youtube-watch-room">
+          <div className="youtube-watch-main">
+            <div className="youtube-theater-frame">
+              {playerContext ? (
+                <VideoPlayer
+                  key={playerContext.playback.sessionId}
+                  context={playerContext}
+                  autoSkip={autoSkip}
+                  displayMode="inline"
+                  onAutoSkipChange={onAutoSkipChange}
+                  onPlayEpisode={onPlayPlayerEpisode}
+                  onClose={onClosePlayer}
+                />
+              ) : (() => {
+                const progress = resume?.totalSeconds
+                  ? Math.min(100, Math.max(0, (resume.positionSeconds / resume.totalSeconds) * 100))
+                  : 0;
+                return (
+                  <button
+                    type="button"
+                    className="youtube-theater-art"
+                    onClick={() => onPlay(selectedVideo)}
+                    aria-label={`${resume ? "Resume" : "Play"} ${selectedVideo.title}`}
+                  >
+                    <img src={selectedVideo.bannerUrl || selectedVideo.coverUrl || LOGO_SRC} alt="" onError={useLogoFallback} />
+                    <span className="youtube-theater-play"><Play size={36} fill="currentColor" /></span>
+                    {progress > 0 && <i className="youtube-progress" style={{ "--youtube-progress": `${progress}%` } as React.CSSProperties} />}
+                  </button>
+                );
+              })()}
+            </div>
+
+            <h1 className="youtube-watch-title">{selectedVideo.title}</h1>
+
+            {(() => {
+              const { author, meta, description } = parseYouTubeSynopsis(selectedVideo.synopsis);
+              const initial = (author || "Y").trim().charAt(0).toUpperCase();
+              return (
+                <>
+                  <div className="youtube-channel-bar">
+                    <div className="youtube-channel-profile">
+                      <span className="youtube-channel-avatar" aria-hidden="true">{initial}</span>
+                      <div>
+                        <strong className="youtube-channel-name">{author}</strong>
+                        <small className="youtube-channel-sub">Invidious Source · Verified</small>
+                      </div>
+                    </div>
+                    <div className="youtube-channel-actions">
+                      <button className="primary" onClick={() => onPlay(selectedVideo)}>
+                        <Play size={16} fill="currentColor" />
+                        {resume ? `Resume (${formatTime(resume.positionSeconds)})` : "Play Now"}
+                      </button>
+                      <button onClick={() => onToggleMyList(selectedVideo)}>
+                        <Star size={16} fill={isFavorite ? "currentColor" : "none"} />
+                        {isFavorite ? "In My List" : "Save"}
+                      </button>
+                      <button onClick={() => copyShareLink(selectedVideo.id)} title="Copy video link">
+                        {copied ? <Check size={16} /> : <Copy size={16} />}
+                        {copied ? "Copied!" : "Share"}
+                      </button>
+                    </div>
+                  </div>
+
+                  <div className={`youtube-desc-box${descExpanded ? " expanded" : ""}`}>
+                    {meta && <div className="youtube-desc-meta">{meta}</div>}
+                    <p className="youtube-desc-text">
+                      {description ? plainDescription(description) : "No full description provided for this video."}
+                    </p>
+                    {description && description.length > 120 && (
+                      <button
+                        type="button"
+                        className="youtube-desc-toggle"
+                        onClick={() => setDescExpanded(!descExpanded)}
+                      >
+                        {descExpanded ? "Show less" : "...more"}
+                      </button>
+                    )}
+                  </div>
+                </>
+              );
+            })()}
+          </div>
+
+          <aside className="youtube-watch-sidebar">
+            <div className="youtube-sidebar-header">
+              <h3>Up Next & Related</h3>
+              <small>{relatedVideos.length} videos</small>
+            </div>
+            {relatedLoading ? (
+              <div className="youtube-related-skeleton">
+                {Array.from({ length: 6 }).map((_, i) => (
+                  <div key={i} className="youtube-related-skel-item" />
+                ))}
+              </div>
+            ) : relatedVideos.length > 0 ? (
+              <div className="youtube-related-list">
+                {relatedVideos.map((item) => {
+                  const itemSynopsis = parseYouTubeSynopsis(item.synopsis);
+                  return (
+                    <button
+                      key={item.id}
+                      type="button"
+                      className="youtube-related-card"
+                      onClick={() => onPlay(item)}
+                    >
+                      <span className="youtube-related-thumb">
+                        <img src={item.coverUrl || LOGO_SRC} alt="" loading="lazy" onError={useLogoFallback} />
+                        <span className="youtube-related-play"><Play size={14} fill="currentColor" /></span>
+                      </span>
+                      <span className="youtube-related-copy">
+                        <strong>{item.title}</strong>
+                        <small>{itemSynopsis.author}</small>
+                        {itemSynopsis.meta && <span>{itemSynopsis.meta}</span>}
+                      </span>
+                    </button>
+                  );
+                })}
+              </div>
+            ) : (
+              <p className="empty-state">No related videos available.</p>
+            )}
+          </aside>
+        </div>
+      )}
+
+      {sourceReady && !watchMode && query.trim().length >= 2 && (
+        <section className="youtube-results-section" aria-busy={loading}>
+          <div className="youtube-results-heading">
+            <div>
+              <p className="eyebrow">Search results</p>
+              <h2>{query.trim()}</h2>
+            </div>
+            <strong>{results.length} videos</strong>
+          </div>
+          <div className="youtube-search-list">
+            {results.map((video, index) => {
+              const active = selectedVideo?.id === video.id;
+              const { author, meta, description } = parseYouTubeSynopsis(video.synopsis);
+              const initial = (author || "Y").trim().charAt(0).toUpperCase();
+              return (
+                <motion.article
+                  key={animeKey(video.provider, video.id)}
+                  className={`youtube-search-row${active ? " active" : ""}`}
+                  initial={{ opacity: 0, y: 8 }}
+                  animate={{ opacity: 1, y: 0 }}
+                  transition={{ duration: 0.18, delay: Math.min(index * 0.02, 0.12) }}
+                >
+                  <button
+                    type="button"
+                    className="youtube-search-thumbnail"
+                    onClick={() => onPlay(video)}
+                    aria-label={`Play ${video.title}`}
+                  >
+                    <img src={video.coverUrl || LOGO_SRC} alt="" loading="lazy" onError={useLogoFallback} />
+                    <span className="youtube-play-hover">
+                      <Play size={22} fill="currentColor" />
+                    </span>
+                  </button>
+                  <div className="youtube-search-details">
+                    <button
+                      type="button"
+                      className="youtube-search-title"
+                      onClick={() => onSelect(video)}
+                      title={video.title}
+                    >
+                      {video.title}
+                    </button>
+                    <div className="youtube-search-meta-row">
+                      <span className="youtube-channel-avatar small" aria-hidden="true">{initial}</span>
+                      <span className="youtube-channel-name">{author}</span>
+                      {meta && <span className="youtube-video-stats">· {meta}</span>}
+                    </div>
+                    {description && (
+                      <p className="youtube-search-desc">{plainDescription(description)}</p>
+                    )}
+                    <div className="youtube-search-actions">
+                      <button className="primary" onClick={() => onPlay(video)}>
+                        <Play size={15} fill="currentColor" />
+                        Play
+                      </button>
+                      <button onClick={() => onToggleMyList(video)}>
+                        <Star size={15} fill={video.isFavorite ? "currentColor" : "none"} />
+                        {video.isFavorite ? "In My List" : "Save"}
+                      </button>
+                      <button onClick={() => onSelect(video)}>
+                        Watch Room
+                      </button>
+                    </div>
+                  </div>
+                </motion.article>
+              );
+            })}
+          </div>
+          {!loading && !results.length && <EmptyPanel title="No videos found" compact />}
+        </section>
+      )}
+
+      {sourceReady && !watchMode && query.trim().length < 2 && (
+        <div className="youtube-home-feed">
+          {/* YouTube Continue Watching Shelf */}
+          {youtubeContinueWatching.length > 0 && (
+            <section className="youtube-continue-section">
+              <div className="youtube-section-heading">
+                <h2>Continue Watching</h2>
+                <small>{youtubeContinueWatching.length} videos</small>
+              </div>
+              <div className="youtube-continue-grid">
+                {youtubeContinueWatching.map((item) => {
+                  const progress = item.totalSeconds > 0
+                    ? Math.min(100, (item.positionSeconds / item.totalSeconds) * 100)
+                    : 0;
+                  return (
+                    <div key={item.animeId} className="youtube-continue-card">
+                      <button
+                        type="button"
+                        className="youtube-continue-thumb"
+                        onClick={() => onPlay({
+                          id: item.animeId.includes(":") ? item.animeId.split(":").slice(1).join(":") : item.animeId,
+                          provider: item.provider,
+                          catalogId: item.catalogId ?? null,
+                          title: item.title,
+                          coverUrl: item.coverUrl,
+                          bannerUrl: null,
+                          language: "YouTube",
+                          totalEpisodes: null,
+                          synopsis: null,
+                          isFavorite: false,
+                        })}
+                      >
+                        <img src={item.coverUrl || LOGO_SRC} alt="" onError={useLogoFallback} />
+                        <span className="youtube-play-hover"><Play size={20} fill="currentColor" /></span>
+                        <i className="youtube-progress" style={{ "--youtube-progress": `${progress}%` } as React.CSSProperties} />
+                        <span className="youtube-duration-pill">{formatTime(item.positionSeconds)}</span>
+                      </button>
+                      <div className="youtube-continue-copy">
+                        <strong title={item.title}>{item.title}</strong>
+                        <small>Watched {Math.round(progress)}%</small>
+                      </div>
+                    </div>
+                  );
+                })}
+              </div>
+            </section>
+          )}
+
+          {/* YouTube Feed Grid */}
+          <section className="youtube-feed-section" aria-busy={feedLoading}>
+            <div className="youtube-section-heading">
+              <h2>{topic === "All" ? "Recommended & Trending" : `${topic} Feed`}</h2>
+              <small>{feedVideos.length} videos</small>
+            </div>
+            {feedLoading && !feedVideos.length ? (
+              <div className="youtube-feed-grid">
+                {Array.from({ length: 8 }).map((_, i) => (
+                  <div key={i} className="youtube-card-skeleton" />
+                ))}
+              </div>
+            ) : feedVideos.length > 0 ? (
+              <div className="youtube-feed-grid">
+                {feedVideos.map((video, index) => {
+                  const active = selectedVideo?.id === video.id;
+                  const { author, meta } = parseYouTubeSynopsis(video.synopsis);
+                  const initial = (author || "Y").trim().charAt(0).toUpperCase();
+                  return (
+                    <motion.article
+                      key={animeKey(video.provider, video.id)}
+                      className={`youtube-feed-card${active ? " active" : ""}`}
+                      initial={{ opacity: 0, y: 10 }}
+                      animate={{ opacity: 1, y: 0 }}
+                      transition={{ duration: 0.18, delay: Math.min(index * 0.015, 0.12) }}
+                    >
+                      <button
+                        type="button"
+                        className="youtube-feed-thumbnail"
+                        onClick={() => onPlay(video)}
+                        aria-label={`Play ${video.title}`}
+                      >
+                        <img src={video.coverUrl || LOGO_SRC} alt="" loading="lazy" onError={useLogoFallback} />
+                        <span className="youtube-play-hover">
+                          <Play size={20} fill="currentColor" />
+                        </span>
+                      </button>
+                      <div className="youtube-feed-meta">
+                        <span className="youtube-channel-avatar" aria-hidden="true">{initial}</span>
+                        <div className="youtube-feed-copy">
+                          <button
+                            type="button"
+                            className="youtube-feed-title"
+                            onClick={() => onSelect(video)}
+                            title={video.title}
+                          >
+                            {video.title}
+                          </button>
+                          <span className="youtube-channel-name">{author}</span>
+                          {meta && <span className="youtube-video-stats">{meta}</span>}
+                        </div>
+                      </div>
+                    </motion.article>
+                  );
+                })}
+              </div>
+            ) : (
+              <EmptyPanel title="No videos available in this category" compact />
+            )}
+          </section>
         </div>
       )}
     </motion.section>
@@ -3026,12 +3910,14 @@ function DetailPage({
 function VideoPlayer({
   context,
   autoSkip,
+  displayMode = "overlay",
   onAutoSkipChange,
   onPlayEpisode,
   onClose,
 }: {
   context: PlayerContext;
   autoSkip: boolean;
+  displayMode?: "overlay" | "inline";
   onAutoSkipChange: (enabled: boolean) => void;
   onPlayEpisode: (episode: Episode) => Promise<void>;
   onClose: () => void;
@@ -3506,9 +4392,15 @@ function VideoPlayer({
     ? skipTimes.filter((item) => item.startTime < markerDuration && item.endTime > 0)
     : [];
 
+  const playerClassName = [
+    "player-overlay",
+    displayMode === "inline" ? "inline-player" : "",
+    showControls ? "controls-visible" : "",
+  ].filter(Boolean).join(" ");
+
   return (
     <motion.div
-      className={showControls ? "player-overlay controls-visible" : "player-overlay"}
+      className={playerClassName}
       initial={{ opacity: 0 }}
       animate={{ opacity: 1 }}
       exit={{ opacity: 0 }}

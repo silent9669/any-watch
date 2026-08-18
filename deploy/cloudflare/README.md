@@ -13,7 +13,14 @@ For each request, the Worker:
 3. returns a stable JSON `503` for ordinary API calls when the origin is unavailable;
 4. serves navigation and static assets from the independent GitHub Pages
    artifact at `https://silent9669.github.io/any-watch/`;
-5. adds `X-Any-Watch-Mode: app` or `maintenance` for verification.
+5. returns a controlled plain-text `503` when that maintenance origin also fails,
+   or returns a non-OK response for navigation;
+6. adds `X-Any-Watch-Mode: app` or `maintenance` for verification.
+
+The double-outage response uses `Cache-Control: no-store`, `Retry-After: 60`,
+`Content-Type: text/plain; charset=utf-8`, and
+`X-Any-Watch-Mode: maintenance`. Its body is
+`Maintenance page is temporarily unavailable.`
 
 The hostname-scoped `OUTAGE_STATE` Durable Object globally records the first
 failure observed by any Worker location. Worker-served `/status.json` probes
@@ -83,9 +90,12 @@ curl -fsS -D - -o /dev/null https://ani.dangphuc.me/ \
 Also validate authenticated provider health through the public route. During a
 controlled origin stop, `/` must return the maintenance page with
 `X-Any-Watch-Mode: maintenance`, ordinary API routes must return JSON `503`, and
-repeated `/status.json` requests must preserve one `detectedAtIso`. Restart the
-origin and confirm `/status.json` returns `mode: online` with a null
-`detectedAtIso`, then confirm `/` returns app mode.
+repeated `/status.json` requests must preserve one `detectedAtIso`. Test the
+double-failure path separately: when both the application and GitHub Pages
+maintenance origins are unavailable, navigation must return the controlled
+plain-text `503` with `X-Any-Watch-Mode: maintenance`, `Retry-After: 60`, and
+`Cache-Control: no-store`. Restart the origin and confirm `/status.json` returns
+`mode: online` with a null `detectedAtIso`, then confirm `/` returns app mode.
 
 Normal Worker rollback redeploys the previous known-good Worker commit with its
 matching `wrangler.toml`. Removing the Worker Route is the emergency bypass; the

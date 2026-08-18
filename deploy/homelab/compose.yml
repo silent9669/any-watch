@@ -5,10 +5,12 @@ services:
       dockerfile: Dockerfile
     image: any-watch-homelab:local
     restart: unless-stopped
-    env_file:
-      - ${ANY_WATCH_ENV_FILE:-/srv/any-watch/config/any-watch.env}
     environment:
+      ANY_WATCH_ADMIN_USERNAME: ${ANY_WATCH_ADMIN_USERNAME:-admin}
+      ANY_WATCH_ADMIN_PASSWORD: ${ANY_WATCH_ADMIN_PASSWORD:?Set ANY_WATCH_ADMIN_PASSWORD in the Compose env file}
       ANY_WATCH_DATA_DIR: /data
+      ANY_WATCH_INVIDIOUS_URL: ${ANY_WATCH_INVIDIOUS_URL:-}
+      ANY_WATCH_INVIDIOUS_LOCAL_PROXY: ${ANY_WATCH_INVIDIOUS_LOCAL_PROXY:-1}
       ANY_WATCH_WEB_DIR: /app/web/dist
       ANY_WATCH_SECURE_COOKIES: "1"
       PORT: "3000"
@@ -16,12 +18,19 @@ services:
       - ${ANY_WATCH_DATA_PATH:-/srv/any-watch/data}:/data
     networks:
       - web
+    healthcheck:
+      test: ["CMD", "curl", "--fail", "--silent", "--show-error", "http://127.0.0.1:3000/api/health"]
+      interval: 10s
+      timeout: 5s
+      retries: 12
+      start_period: 10s
 
   caddy:
     image: caddy:2.10-alpine
     restart: unless-stopped
     depends_on:
-      - any-watch
+      any-watch:
+        condition: service_healthy
     environment:
       ANY_WATCH_DOMAIN: ${ANY_WATCH_DOMAIN}
     ports:

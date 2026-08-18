@@ -99,6 +99,11 @@ export const api = {
     webPost<ProviderAvailability[]>("/availability", { catalogId, title, titleVariants, languageGroupFilter }),
   getContinueWatching: (limit = 20) => webRequest<WatchHistory[]>(`/history?limit=${limit}`),
   getMyList: (limit = 100) => webRequest<Favorite[]>(`/my-list?limit=${limit}`),
+  getYouTubeTrending: (topic?: string) => webRequest<Anime[]>(
+    `/youtube/trending${topic ? `?topic=${encodeURIComponent(topic)}` : ""}`,
+  ),
+  getYouTubePopular: () => webRequest<Anime[]>("/youtube/popular"),
+  getYouTubeRelated: (videoId: string) => webRequest<Anime[]>(`/youtube/related/${encodeURIComponent(videoId)}`),
   searchSource: (source: string, query: string) => webPost<Anime[]>("/source/search", { source, query }),
   getAnimeDetails: (provider: string, animeId: string, title: string) =>
     webPost<AnimeDetails>("/anime/details", { provider, animeId, title }),

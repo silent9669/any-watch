@@ -283,6 +283,15 @@ impl AnimeProvider for InvidiousProvider {
             .context("Failed to reach Invidious")?
             .error_for_status()
             .context("Invidious health endpoint returned an error")?;
+        let probe = self
+            .trending(None)
+            .await?
+            .into_iter()
+            .next()
+            .context("Invidious trending returned no playable videos")?;
+        self.get_stream_url(&probe.id)
+            .await
+            .context("Invidious could not resolve a playable trending video")?;
         Ok(())
     }
 
@@ -394,7 +403,87 @@ impl AnimeProvider for InvidiousProvider {
 
 #[cfg(test)]
 mod tests {
-    use super::{preferred_thumbnail, SearchItem, VideoResponse};
+    use super::{preferred_thumbnail, InvidiousProvider, SearchItem, VideoResponse};
+    use crate::{config::InvidiousConfig, providers::AnimeProvider};
+    use tokio::io::{AsyncReadExt, AsyncWriteExt};
+
+    #[tokio::test]
+    async fn health_check_rejects_instance_with_broken_feed_api() {
+        let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
+        let address = listener.local_addr().unwrap();
+        let server = tokio::spawn(async move {
+            loop {
+                let (mut socket, _) = listener.accept().await.unwrap();
+                let mut request = vec![0; 4096];
+                let length = socket.read(&mut request).await.unwrap();
+                let request = String::from_utf8_lossy(&request[..length]);
+                let (status, body) = if request.contains("GET /api/v1/stats ") {
+                    ("200 OK", "{}")
+                } else if request.contains("GET /api/v1/trending") {
+                    ("503 Service Unavailable", "{}")
+                } else {
+                    ("404 Not Found", "{}")
+                };
+                let response = format!(
+                    "HTTP/1.1 {status}\r\nContent-Type: application/json\r\nContent-Length: {}\r\nConnection: close\r\n\r\n{body}",
+                    body.len()
+                );
+                socket.write_all(response.as_bytes()).await.unwrap();
+            }
+        });
+        let provider = InvidiousProvider::new(&InvidiousConfig {
+            instance_url: format!("http://{address}/"),
+            local_proxy: true,
+        });
+
+        let result = provider.health_check().await;
+        server.abort();
+
+        assert!(result.is_err(), "a broken feed API must fail health checks");
+    }
+
+    #[tokio::test]
+    async fn health_check_rejects_instance_without_playable_video_details() {
+        let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
+        let address = listener.local_addr().unwrap();
+        let server = tokio::spawn(async move {
+            loop {
+                let (mut socket, _) = listener.accept().await.unwrap();
+                let mut request = vec![0; 4096];
+                let length = socket.read(&mut request).await.unwrap();
+                let request = String::from_utf8_lossy(&request[..length]);
+                let (status, body) = if request.contains("GET /api/v1/stats ") {
+                    ("200 OK", "{}")
+                } else if request.contains("GET /api/v1/trending") {
+                    (
+                        "200 OK",
+                        r#"[{"type":"video","title":"Health Probe","videoId":"probe123","author":"Channel"}]"#,
+                    )
+                } else if request.contains("GET /api/v1/videos/probe123") {
+                    ("200 OK", r#"{"title":"Health Probe","author":"Channel"}"#)
+                } else {
+                    ("404 Not Found", "{}")
+                };
+                let response = format!(
+                    "HTTP/1.1 {status}\r\nContent-Type: application/json\r\nContent-Length: {}\r\nConnection: close\r\n\r\n{body}",
+                    body.len()
+                );
+                socket.write_all(response.as_bytes()).await.unwrap();
+            }
+        });
+        let provider = InvidiousProvider::new(&InvidiousConfig {
+            instance_url: format!("http://{address}/"),
+            local_proxy: true,
+        });
+
+        let result = provider.health_check().await;
+        server.abort();
+
+        assert!(
+            result.is_err(),
+            "video details without a playable stream must fail health checks"
+        );
+    }
 
     #[test]
     fn parses_video_search_results_and_prefers_large_thumbnail() {
@@ -437,7 +526,13 @@ mod tests {
         .expect("video response should parse");
 
         assert_eq!(response.recommended_videos.len(), 1);
-        assert_eq!(response.recommended_videos[0].video_id.as_deref(), Some("rec123"));
-        assert_eq!(response.recommended_videos[0].author.as_deref(), Some("Creator 2"));
+        assert_eq!(
+            response.recommended_videos[0].video_id.as_deref(),
+            Some("rec123")
+        );
+        assert_eq!(
+            response.recommended_videos[0].author.as_deref(),
+            Some("Creator 2")
+        );
     }
 }

@@ -60,6 +60,13 @@ try {
   assert.doesNotMatch(await fallback.text(), /ani-desk|ani_desk/i);
 
   globalThis.fetch = async () => { throw new TypeError("origin offline"); };
+  const unavailableFallback = await worker.fetch(new Request("https://ani.dangphuc.me/watch/21", {
+    headers: { accept: "text/html" },
+  }), env, context);
+  assert.equal(unavailableFallback.status, 503);
+  assert.equal(unavailableFallback.headers.get("x-any-watch-mode"), "maintenance");
+  assert.equal(await unavailableFallback.text(), "Maintenance page is temporarily unavailable.");
+
   const apiFallback = await worker.fetch(new Request("https://ani.dangphuc.me/api/health"), env, context);
   assert.equal(apiFallback.status, 503);
   assert.equal(apiFallback.headers.get("x-any-watch-mode"), "maintenance");

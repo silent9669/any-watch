@@ -183,6 +183,21 @@ export type EpisodeDownloadState = {
   fileName?: string;
 };
 
+export type YouTubeVideoItem = {
+  id: string;
+  title: string;
+  author: string;
+  authorId?: string;
+  authorUrl?: string;
+  thumbnail: string;
+  viewCount?: number;
+  publishedText?: string;
+  lengthSeconds?: number;
+  description?: string;
+};
+
+export type YouTubeTopic = "All" | "Trending" | "Music" | "Gaming" | "News" | "Animations";
+
 export type PlayerContext = {
   anime: Anime;
   episode: Episode;

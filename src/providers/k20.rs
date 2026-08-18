@@ -125,18 +125,40 @@ impl K20Provider {
     }
 
     fn parse_episode_number(video: &K20VideoItem, index: usize) -> u32 {
-        if let Some(ep) = video.episode {
-            if ep > 0 {
-                return ep;
-            }
-        }
         if let Some(title) = &video.title {
             let parsed = super::parse_episode_number(title);
             if parsed > 0 {
                 return parsed;
             }
         }
+        if let Some(ep) = video.episode {
+            if ep > 0 {
+                return ep;
+            }
+        }
         (index + 1) as u32
+    }
+
+    fn subtitle_format(value: &str) -> SubtitleFormat {
+        let path = url::Url::parse(value)
+            .ok()
+            .map(|url| url.path().to_ascii_lowercase())
+            .unwrap_or_else(|| {
+                value
+                    .split(['?', '#'])
+                    .next()
+                    .unwrap_or(value)
+                    .to_ascii_lowercase()
+            });
+        if path.ends_with(".vtt") {
+            SubtitleFormat::WebVtt
+        } else if path.ends_with(".srt") {
+            SubtitleFormat::Srt
+        } else if path.ends_with(".ass") {
+            SubtitleFormat::Ass
+        } else {
+            SubtitleFormat::Unknown
+        }
     }
 }
 
@@ -348,7 +370,12 @@ impl AnimeProvider for K20Provider {
         let best_stream = payload
             .streams
             .into_iter()
-            .find(|s| s.url.as_ref().map(|u| !u.trim().is_empty()).unwrap_or(false))
+            .find(|s| {
+                s.url
+                    .as_ref()
+                    .map(|u| !u.trim().is_empty())
+                    .unwrap_or(false)
+            })
             .context("No playable stream URL found in K20 stream response")?;
 
         let video_url = best_stream.url.unwrap();
@@ -356,22 +383,10 @@ impl AnimeProvider for K20Provider {
         let subtitles = best_stream
             .subtitles
             .into_iter()
-            .map(|sub| {
-                let format = if sub.url.ends_with(".vtt") {
-                    SubtitleFormat::WebVtt
-                } else if sub.url.ends_with(".srt") {
-                    SubtitleFormat::Srt
-                } else if sub.url.ends_with(".ass") {
-                    SubtitleFormat::Ass
-                } else {
-                    SubtitleFormat::Unknown
-                };
-
-                Subtitle {
-                    language: sub.lang.unwrap_or_else(|| "Default".to_string()),
-                    url: sub.url,
-                    format,
-                }
+            .map(|sub| Subtitle {
+                language: sub.lang.unwrap_or_else(|| "Default".to_string()),
+                format: Self::subtitle_format(&sub.url),
+                url: sub.url,
             })
             .collect();
 
@@ -414,6 +429,22 @@ mod tests {
     }
 
     #[test]
+    fn test_subtitle_format_uses_url_path() {
+        assert_eq!(
+            K20Provider::subtitle_format("https://cdn.example/subtitle.vtt?token=secret"),
+            SubtitleFormat::WebVtt,
+        );
+        assert_eq!(
+            K20Provider::subtitle_format("https://cdn.example/subtitle.srt?token=secret"),
+            SubtitleFormat::Srt,
+        );
+        assert_eq!(
+            K20Provider::subtitle_format("https://cdn.example/subtitle.ass#track"),
+            SubtitleFormat::Ass,
+        );
+    }
+
+    #[test]
     fn test_parse_episode_number() {
         let video = K20VideoItem {
             id: "nguonc:naruto:tap-5".to_string(),
@@ -422,6 +453,17 @@ mod tests {
             episode: Some(5),
         };
         assert_eq!(K20Provider::parse_episode_number(&video, 0), 5);
+
+        let later_season_video = K20VideoItem {
+            id: "nguonc:show:2:1".to_string(),
+            title: Some("13".to_string()),
+            season: Some(2),
+            episode: Some(1),
+        };
+        assert_eq!(
+            K20Provider::parse_episode_number(&later_season_video, 12),
+            13
+        );
 
         let video2 = K20VideoItem {
             id: "nguonc:naruto:tap-full".to_string(),

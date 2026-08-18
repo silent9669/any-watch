@@ -120,21 +120,20 @@ async function maintenanceResponse(request, detectedAtIso) {
     : `${MAINTENANCE_PREFIX}${url.pathname}`;
   const fallbackUrl = new URL(fallbackPath, MAINTENANCE_ORIGIN);
   fallbackUrl.search = url.search;
-  const fallbackResponse = await fetch(fallbackUrl, {
-    method: request.method,
-    headers: { accept: request.headers.get("accept") || "*/*" },
-    redirect: "follow",
-    cf: { cacheTtl: 300 },
-  });
+  let fallbackResponse;
+  try {
+    fallbackResponse = await fetch(fallbackUrl, {
+      method: request.method,
+      headers: { accept: request.headers.get("accept") || "*/*" },
+      redirect: "follow",
+      cf: { cacheTtl: 300 },
+    });
+  } catch {
+    return unavailableMaintenancePageResponse();
+  }
 
   if (!fallbackResponse.ok && isNavigation) {
-    const headers = new Headers({
-      "cache-control": "no-store",
-      "content-type": "text/plain; charset=utf-8",
-      "retry-after": "60",
-      "x-any-watch-mode": "maintenance",
-    });
-    return new Response("Maintenance page is temporarily unavailable.", { status: 503, headers });
+    return unavailableMaintenancePageResponse();
   }
 
   const response = withMode(
@@ -143,6 +142,16 @@ async function maintenanceResponse(request, detectedAtIso) {
     url.pathname === "/" || isNavigation,
   );
   return response;
+}
+
+function unavailableMaintenancePageResponse() {
+  const headers = new Headers({
+    "cache-control": "no-store",
+    "content-type": "text/plain; charset=utf-8",
+    "retry-after": "60",
+    "x-any-watch-mode": "maintenance",
+  });
+  return new Response("Maintenance page is temporarily unavailable.", { status: 503, headers });
 }
 
 async function recordOutage(env, hostname, mode) {

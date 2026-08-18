@@ -254,15 +254,15 @@ def test_t1_narrow_mobile_search_scrolls_without_overlap(mobile_mocked_page):
             page: document.documentElement.scrollWidth,
             shellClientHeight: shell?.clientHeight ?? 0,
             shellScrollHeight: shell?.scrollHeight ?? 0,
-            suggestionsBottom: suggestions?.getBoundingClientRect().bottom ?? 0,
-            providerTop: provider?.getBoundingClientRect().top ?? 0,
+            providerBottom: provider?.getBoundingClientRect().bottom ?? 0,
+            suggestionsTop: suggestions?.getBoundingClientRect().top ?? 0,
         };
     }""")
 
     assert metrics["viewport"] == 330
     assert metrics["page"] <= metrics["viewport"]
     assert metrics["shellScrollHeight"] >= metrics["shellClientHeight"]
-    assert metrics["suggestionsBottom"] <= metrics["providerTop"]
+    assert metrics["providerBottom"] <= metrics["suggestionsTop"] + 1
 
 def test_t1_search_results_pane(mocked_page):
     mocked_page.locator(".hero-search-trigger").click()
@@ -1060,7 +1060,7 @@ def test_t3_player_matches_apple_style_control_composition(mocked_page):
     assert safe_zone["titleSize"] <= 24
 
 
-def test_t3_chromium_hls_uses_media_source_instead_of_native_m3u8(mocked_page):
+def test_t3_hls_uses_browser_appropriate_playback_path(mocked_page, browser_name):
     mocked_page.locator(".hero-search-trigger").click()
     mocked_page.locator(".search-input-shell input").fill("Naruto")
     mocked_page.wait_for_selector(".search-result")
@@ -1071,11 +1071,14 @@ def test_t3_chromium_hls_uses_media_source_instead_of_native_m3u8(mocked_page):
 
     mocked_page.wait_for_function("""() => {
         const video = document.querySelector('video');
-        return video?.currentSrc.startsWith('blob:');
+        return Boolean(video?.currentSrc);
     }""")
     current_src = mocked_page.locator("video").evaluate("video => video.currentSrc")
-    assert current_src.startswith("blob:")
-    assert not current_src.endswith(".m3u8")
+    if browser_name == "webkit":
+        assert current_src.endswith(".m3u8")
+    else:
+        assert current_src.startswith("blob:")
+        assert not current_src.endswith(".m3u8")
 
 
 def test_t3_aniskip_is_on_by_default_and_persists(mocked_page):
@@ -1245,6 +1248,30 @@ def test_t3_continue_watching_opens_saved_episode_detail(mocked_page):
     expect(mocked_page.locator(".episode-range-button.resume-range")).to_contain_text("1-50")
     expect(mocked_page.locator(".episode-list-row.highlighted")).to_contain_text("Episode 5")
 
+
+def test_t3_home_continue_watching_opens_youtube_watch_room(mocked_page):
+    mocked_page.evaluate("""() => {
+        const state = JSON.parse(localStorage.getItem('__API_MOCK_STATE__') || '{}');
+        state.continue_watching = [{
+            animeId: 'Invidious:yt-continue-1',
+            catalogId: null,
+            provider: 'Invidious',
+            title: 'YouTube Continue Video',
+            coverUrl: 'https://example.com/youtube-continue-1.jpg',
+            episodeNumber: 1,
+            episodeTitle: 'YouTube Continue Video',
+            positionSeconds: 120,
+            totalSeconds: 600,
+            updatedAt: '2026-08-18T10:00:00Z',
+        }];
+        localStorage.setItem('__API_MOCK_STATE__', JSON.stringify(state));
+    }""")
+    mocked_page.reload()
+    card = mocked_page.locator(".content-row:has-text('Continue Watching') .poster-card").first
+    card.click()
+    expect(mocked_page.locator(".youtube-watch-room")).to_be_visible()
+    expect(mocked_page.locator(".youtube-watch-title")).to_have_text("YouTube Continue Video")
+
 def test_t3_detail_pagination_sorting(mocked_page):
     mocked_page.locator(".hero-search-trigger").click()
     mocked_page.locator(".search-input-shell input").fill("Naruto")
@@ -1260,6 +1287,321 @@ def test_t3_detail_pagination_sorting(mocked_page):
     mocked_page.wait_for_timeout(300)
 
     expect(mocked_page.locator(".episode-list-row").first.locator("strong")).to_have_text("Episode 100")
+
+
+def test_t3_youtube_route_scrolls_long_feeds(mocked_page):
+    mocked_page.get_by_role("button", name="YouTube").click()
+    mocked_page.wait_for_selector(".youtube-feed-card")
+
+    metrics = mocked_page.locator(".app-shell").evaluate("""shell => ({
+        overflowY: getComputedStyle(shell).overflowY,
+        clientHeight: shell.clientHeight,
+        scrollHeight: shell.scrollHeight,
+    })""")
+
+    assert metrics["overflowY"] == "auto"
+    assert metrics["scrollHeight"] > metrics["clientHeight"]
+
+
+def test_t3_youtube_search_controls_share_one_desktop_row(mocked_page):
+    mocked_page.get_by_role("button", name="YouTube").click()
+    search = mocked_page.get_by_role("searchbox", name="Search YouTube through Invidious")
+    search.fill("layout")
+    mocked_page.wait_for_selector(".youtube-search-row")
+
+    positions = mocked_page.locator(".youtube-search").evaluate("""form => {
+        const clear = form.querySelector('.youtube-search-clear').getBoundingClientRect();
+        const submit = form.querySelector('button[type="submit"]').getBoundingClientRect();
+        return {
+            clearTop: clear.top,
+            clearBottom: clear.bottom,
+            submitTop: submit.top,
+            submitBottom: submit.bottom,
+            clearRight: clear.right,
+            submitLeft: submit.left,
+        };
+    }""")
+
+    assert abs(positions["clearTop"] - positions["submitTop"]) <= 2
+    assert abs(positions["clearBottom"] - positions["submitBottom"]) <= 2
+    assert positions["clearRight"] <= positions["submitLeft"]
+
+
+def test_t3_youtube_search_hides_duplicate_native_clear_button(mocked_page):
+    mocked_page.get_by_role("button", name="YouTube").click()
+    search = mocked_page.get_by_role("searchbox", name="Search YouTube through Invidious")
+    search.fill("layout")
+
+    has_cancel_rule = mocked_page.evaluate("""() => {
+        return Array.from(document.styleSheets).some((sheet) => {
+            try {
+                return Array.from(sheet.cssRules).some((rule) =>
+                    rule.cssText && rule.cssText.includes("-webkit-search-cancel-button")
+                );
+            } catch (e) {
+                return false;
+            }
+        });
+    }""")
+    assert has_cancel_rule
+
+    clear_button = mocked_page.locator(".youtube-search-clear")
+    expect(clear_button).to_be_visible()
+    clear_button.click()
+    expect(search).to_have_value("")
+
+
+def test_t3_youtube_search_preserves_saved_state(mocked_page):
+    mocked_page.evaluate("""() => {
+        const state = JSON.parse(localStorage.getItem('__API_MOCK_STATE__') || '{}');
+        state.my_list = [{
+            animeId: 'Invidious:saved-1',
+            provider: 'Invidious',
+            title: 'Saved Video',
+            coverUrl: 'https://example.com/youtube-saved-1.jpg',
+        }];
+        localStorage.setItem('__API_MOCK_STATE__', JSON.stringify(state));
+    }""")
+    mocked_page.reload()
+    mocked_page.get_by_role("button", name="YouTube").click()
+    mocked_page.get_by_role("searchbox", name="Search YouTube through Invidious").fill("saved")
+    row = mocked_page.locator(".youtube-search-row").first
+    expect(row).to_be_visible()
+
+    saved_button = row.locator(".youtube-search-actions button").nth(1)
+    expect(saved_button).to_have_text("In My List")
+    assert row.locator(".youtube-search-title").evaluate("element => element.tagName") == "BUTTON"
+
+
+def test_t3_youtube_search_latest_query_wins(mocked_page):
+    mocked_page.evaluate("""() => {
+        const state = JSON.parse(localStorage.getItem('__API_MOCK_STATE__') || '{}');
+        state.youtube_search_delays = { slow: 900, fast: 10 };
+        localStorage.setItem('__API_MOCK_STATE__', JSON.stringify(state));
+    }""")
+    mocked_page.reload()
+    mocked_page.get_by_role("button", name="YouTube").click()
+    search = mocked_page.get_by_role("searchbox", name="Search YouTube through Invidious")
+    search.fill("slow")
+    mocked_page.wait_for_timeout(400)
+    search.fill("fast")
+    expect(mocked_page.locator(".youtube-search-row").first).to_contain_text("fast Video 1")
+    mocked_page.wait_for_timeout(700)
+
+    expect(mocked_page.locator(".youtube-search-row").first).to_contain_text("fast Video 1")
+
+
+def test_t3_youtube_topic_uses_one_topic_feed_request(mocked_page):
+    mocked_page.get_by_role("button", name="YouTube").click()
+    mocked_page.wait_for_selector(".youtube-feed-card")
+    mocked_page.evaluate("window.__API_CALLS__ = []")
+
+    mocked_page.get_by_role("tab", name="Music").click()
+    expect(mocked_page.locator(".youtube-feed-card").first).to_contain_text("Music Video 1")
+
+    calls = mocked_page.evaluate("""() => window.__API_CALLS__.filter(
+        (call) => call.cmd === 'get_youtube_trending' && call.args.topic === 'Music'
+    ).length""")
+    search_calls = mocked_page.evaluate("""() => window.__API_CALLS__.filter(
+        (call) => call.cmd === 'search_source' && call.args.source === 'Invidious'
+    ).length""")
+    assert calls == 1
+    assert search_calls == 0
+
+
+def test_t3_youtube_latest_topic_feed_wins(mocked_page):
+    mocked_page.evaluate("""() => {
+        const state = JSON.parse(localStorage.getItem('__API_MOCK_STATE__') || '{}');
+        state.youtube_feed_delays = { Music: 900, Gaming: 10 };
+        localStorage.setItem('__API_MOCK_STATE__', JSON.stringify(state));
+    }""")
+    mocked_page.reload()
+    mocked_page.get_by_role("button", name="YouTube").click()
+    mocked_page.wait_for_selector(".youtube-feed-card")
+
+    mocked_page.get_by_role("tab", name="Music").click()
+    mocked_page.wait_for_timeout(100)
+    mocked_page.get_by_role("tab", name="Gaming").click()
+    expect(mocked_page.locator(".youtube-feed-card").first).to_contain_text("Gaming Video 1")
+    mocked_page.wait_for_timeout(900)
+
+    expect(mocked_page.locator(".youtube-feed-card").first).to_contain_text("Gaming Video 1")
+
+
+def test_t3_youtube_latest_related_request_wins(mocked_page):
+    mocked_page.evaluate("""() => {
+        const state = JSON.parse(localStorage.getItem('__API_MOCK_STATE__') || '{}');
+        state.youtube_related_delays = { 'all-1': 900, 'all-2': 10 };
+        localStorage.setItem('__API_MOCK_STATE__', JSON.stringify(state));
+    }""")
+    mocked_page.reload()
+    mocked_page.get_by_role("button", name="YouTube").click()
+    mocked_page.wait_for_selector(".youtube-feed-card")
+
+    mocked_page.locator(".youtube-feed-title").nth(0).click()
+    mocked_page.locator(".youtube-header").get_by_role("button", name="Back").click()
+    mocked_page.locator(".youtube-feed-title").nth(1).click()
+    expect(mocked_page.locator(".youtube-related-card").first).to_contain_text("all-2 Related 1")
+    mocked_page.wait_for_timeout(900)
+
+    expect(mocked_page.locator(".youtube-related-card").first).to_contain_text("all-2 Related 1")
+
+
+def test_t3_youtube_latest_playback_request_wins(mocked_page):
+    mocked_page.evaluate("""() => {
+        const state = JSON.parse(localStorage.getItem('__API_MOCK_STATE__') || '{}');
+        state.youtube_playback_delays = { 'all-1': 900, 'all-2': 10 };
+        localStorage.setItem('__API_MOCK_STATE__', JSON.stringify(state));
+    }""")
+    mocked_page.reload()
+    mocked_page.get_by_role("button", name="YouTube").click()
+    mocked_page.wait_for_selector(".youtube-feed-card")
+
+    mocked_page.locator(".youtube-feed-title").nth(0).click()
+    mocked_page.get_by_role("button", name="Play Now").click()
+    mocked_page.wait_for_timeout(100)
+    mocked_page.locator(".youtube-header").get_by_role("button", name="Back").click()
+    mocked_page.locator(".youtube-feed-title").nth(1).click()
+    mocked_page.get_by_role("button", name="Play Now").click()
+    expect(mocked_page.locator(".youtube-theater-frame .player-now-playing strong")).to_have_text("All Video 2")
+    mocked_page.wait_for_timeout(900)
+
+    expect(mocked_page.locator(".youtube-theater-frame .player-now-playing strong")).to_have_text("All Video 2")
+    expect(mocked_page.locator(".app-shell > .player-overlay")).to_have_count(0)
+
+
+def test_t3_youtube_related_playback_does_not_reopen_old_global_player(mocked_page):
+    mocked_page.evaluate("""() => {
+        const state = JSON.parse(localStorage.getItem('__API_MOCK_STATE__') || '{}');
+        state.youtube_playback_delays = { 'all-1-related-1': 900 };
+        localStorage.setItem('__API_MOCK_STATE__', JSON.stringify(state));
+    }""")
+    mocked_page.reload()
+    mocked_page.get_by_role("button", name="YouTube").click()
+    mocked_page.wait_for_selector(".youtube-feed-card")
+    mocked_page.locator(".youtube-feed-title").first.click()
+    mocked_page.get_by_role("button", name="Play Now").click()
+    expect(mocked_page.locator(".youtube-theater-frame .inline-player")).to_be_visible()
+    mocked_page.wait_for_selector(".youtube-related-card")
+
+    mocked_page.locator(".youtube-related-card").first.click()
+    mocked_page.wait_for_timeout(100)
+
+    expect(mocked_page.locator(".app-shell > .player-overlay")).to_have_count(0)
+    assert mocked_page.locator("video").count() == 0
+    expect(mocked_page.locator(".youtube-watch-room")).to_be_visible()
+
+
+def test_t3_youtube_searching_from_watch_room_closes_playback(mocked_page):
+    mocked_page.get_by_role("button", name="YouTube").click()
+    mocked_page.wait_for_selector(".youtube-feed-card")
+    mocked_page.locator(".youtube-feed-title").first.click()
+    mocked_page.get_by_role("button", name="Play Now").click()
+    expect(mocked_page.locator(".youtube-theater-frame .inline-player")).to_be_visible()
+
+    mocked_page.get_by_role(
+        "searchbox",
+        name="Search YouTube through Invidious",
+    ).fill("next video")
+
+    expect(mocked_page.locator(".youtube-watch-room")).to_have_count(0)
+    expect(mocked_page.locator(".app-shell > .player-overlay")).to_have_count(0)
+
+
+def test_t3_leaving_youtube_closes_inline_playback(mocked_page):
+    mocked_page.get_by_role("button", name="YouTube").click()
+    mocked_page.wait_for_selector(".youtube-feed-card")
+    mocked_page.locator(".youtube-feed-title").first.click()
+    mocked_page.get_by_role("button", name="Play Now").click()
+    expect(mocked_page.locator(".youtube-theater-frame .inline-player")).to_be_visible()
+
+    mocked_page.get_by_label("Primary navigation").get_by_role(
+        "button",
+        name="Home",
+        exact=True,
+    ).click()
+
+    expect(mocked_page.locator(".youtube-watch-room")).to_have_count(0)
+    expect(mocked_page.locator(".app-shell > .player-overlay")).to_have_count(0)
+    assert mocked_page.locator("video").count() == 0
+
+
+def test_t3_youtube_watch_room_contains_the_player(mocked_page):
+    mocked_page.get_by_role("button", name="YouTube").click()
+    mocked_page.wait_for_selector(".youtube-feed-card")
+    mocked_page.locator(".youtube-feed-title").first.click()
+    expect(mocked_page.locator(".youtube-watch-room")).to_be_visible()
+
+    mocked_page.get_by_role("button", name="Play Now").click()
+    expect(mocked_page.locator(".youtube-theater-frame video")).to_be_visible()
+    expect(mocked_page.locator(".youtube-theater-frame .inline-player")).to_be_visible()
+    expect(mocked_page.locator(".app-shell > .player-overlay")).to_have_count(0)
+
+
+def test_t3_youtube_closing_watch_room_closes_inline_player(mocked_page):
+    mocked_page.get_by_role("button", name="YouTube").click()
+    mocked_page.wait_for_selector(".youtube-feed-card")
+    mocked_page.locator(".youtube-feed-title").first.click()
+    mocked_page.get_by_role("button", name="Play Now").click()
+    expect(mocked_page.locator(".youtube-theater-frame video")).to_be_visible()
+
+    mocked_page.locator(".youtube-header").get_by_role("button", name="Back").click()
+
+    expect(mocked_page.locator(".youtube-watch-room")).to_have_count(0)
+    expect(mocked_page.locator(".app-shell > .player-overlay")).to_have_count(0)
+
+
+def test_t3_youtube_inline_player_fits_mobile_viewport(mobile_mocked_page):
+    mobile_mocked_page.get_by_role("button", name="YouTube").click()
+    mobile_mocked_page.wait_for_selector(".youtube-feed-card")
+    mobile_mocked_page.locator(".youtube-feed-title").first.click()
+    mobile_mocked_page.get_by_role("button", name="Play Now").click()
+    player = mobile_mocked_page.locator(".youtube-theater-frame .inline-player")
+    expect(player).to_be_visible()
+
+    geometry = player.evaluate("""node => {
+        const frame = node.parentElement.getBoundingClientRect();
+        const playerRect = node.getBoundingClientRect();
+        const buttons = [...node.querySelectorAll('button')]
+            .map((button) => button.getBoundingClientRect())
+            .filter((rect) => rect.width > 0 && rect.height > 0)
+            .map((rect) => ({
+                left: rect.left,
+                right: rect.right,
+                width: rect.width,
+                height: rect.height,
+            }));
+        return {
+            viewportWidth: window.innerWidth,
+            pageScrollWidth: document.documentElement.scrollWidth,
+            frame: {
+                left: frame.left,
+                right: frame.right,
+                width: frame.width,
+                height: frame.height,
+                scrollWidth: node.scrollWidth,
+                clientWidth: node.clientWidth,
+            },
+            player: {
+                left: playerRect.left,
+                right: playerRect.right,
+                width: playerRect.width,
+                height: playerRect.height,
+            },
+            buttons,
+        };
+    }""")
+
+    assert geometry["pageScrollWidth"] <= geometry["viewportWidth"]
+    assert geometry["frame"]["left"] >= 0
+    assert geometry["frame"]["right"] <= geometry["viewportWidth"]
+    assert abs(geometry["frame"]["width"] / geometry["frame"]["height"] - 16 / 9) < 0.03
+    assert geometry["frame"]["scrollWidth"] <= geometry["frame"]["clientWidth"]
+    assert geometry["player"]["left"] >= geometry["frame"]["left"]
+    assert geometry["player"]["right"] <= geometry["frame"]["right"]
+    assert all(button["left"] >= geometry["frame"]["left"] for button in geometry["buttons"])
+    assert all(button["right"] <= geometry["frame"]["right"] for button in geometry["buttons"])
+    assert all(button["width"] >= 44 and button["height"] >= 44 for button in geometry["buttons"])
 
 
 # --- TIER 4 TESTS (3 Tests in test_app.py) ---

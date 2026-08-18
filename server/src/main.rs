@@ -24,7 +24,7 @@ use axum::{
 };
 use bytes::Bytes;
 use db::{NewFavorite, NewHistory, SessionUser, WebDatabase};
-use futures_util::{future::join_all, FutureExt, TryStreamExt};
+use futures_util::{stream, FutureExt, StreamExt, TryStreamExt};
 use hmac::{Hmac, Mac};
 use rand_core::{OsRng, RngCore};
 use reqwest::{header::HeaderMap as ReqwestHeaderMap, Client, Url};
@@ -32,15 +32,21 @@ use serde::{Deserialize, Serialize};
 use serde_json::{json, Value};
 use sha2::Sha256;
 use std::{
-    collections::HashMap,
+    collections::{HashMap, VecDeque},
     env,
+    future::Future,
     net::SocketAddr,
     panic::AssertUnwindSafe,
     path::PathBuf,
+    pin::Pin,
+    process::Stdio,
     sync::{Arc, Mutex as StdMutex},
     time::{Duration, Instant},
 };
-use tokio::sync::Mutex;
+use tokio::{
+    io::{AsyncRead, AsyncReadExt},
+    sync::Mutex,
+};
 use tower_http::{
     compression::CompressionLayer,
     services::{ServeDir, ServeFile},
@@ -51,11 +57,17 @@ use uuid::Uuid;
 
 const SESSION_COOKIE: &str = "any_watch_session";
 const MAX_MEDIA_SESSIONS: usize = 2_048;
+const MAX_MEDIA_RESOURCES_PER_SESSION: usize = 8_192;
+const MAX_MEDIA_MANIFEST_BYTES: usize = 4 * 1024 * 1024;
+const MAX_SUBTITLE_BYTES: usize = 4 * 1024 * 1024;
+const MAX_CURL_PROXY_BYTES: usize = 64 * 1024 * 1024;
+const MAX_CURL_METADATA_BYTES: usize = 8 * 1024;
 const LOGIN_ATTEMPT_WINDOW: Duration = Duration::from_secs(15 * 60);
 const LOGIN_ATTEMPT_LIMIT: usize = 8;
 const LOGIN_ATTEMPT_KEY_LIMIT: usize = 10_000;
 const PROVIDER_HEALTH_TTL: Duration = Duration::from_secs(5 * 60);
 const PROVIDER_HEALTH_TIMEOUT: Duration = Duration::from_secs(60);
+const PROVIDER_HEALTH_CONCURRENCY: usize = 4;
 
 #[derive(Clone)]
 struct AppState {
@@ -76,6 +88,46 @@ struct AppState {
 struct ProviderHealthCache {
     checked_at: Option<Instant>,
     health: Vec<SourceDto>,
+    full_refresh_version: u64,
+    provider_refresh_versions: HashMap<String, u64>,
+}
+
+impl ProviderHealthCache {
+    fn refresh_version(&self, selected: Option<&str>) -> u64 {
+        selected.map_or(self.full_refresh_version, |provider| {
+            self.provider_refresh_versions
+                .get(provider)
+                .copied()
+                .unwrap_or_default()
+        })
+    }
+
+    fn selected_health(&self, selected: Option<&str>) -> Vec<SourceDto> {
+        self.health
+            .iter()
+            .filter(|item| selected.is_none_or(|provider| item.name == provider))
+            .cloned()
+            .collect()
+    }
+
+    fn apply_refresh(&mut self, selected: Option<&str>, health: &[SourceDto]) {
+        for update in health {
+            if let Some(current) = self.health.iter_mut().find(|item| item.name == update.name) {
+                *current = update.clone();
+            } else {
+                self.health.push(update.clone());
+            }
+            let version = self
+                .provider_refresh_versions
+                .entry(update.name.clone())
+                .or_default();
+            *version = version.wrapping_add(1);
+        }
+        if selected.is_none() {
+            self.checked_at = Some(Instant::now());
+            self.full_refresh_version = self.full_refresh_version.wrapping_add(1);
+        }
+    }
 }
 
 #[derive(Clone)]
@@ -92,7 +144,40 @@ struct MediaSession {
     expires_at: Instant,
     stream: StreamInfo,
     secret: [u8; 32],
-    resources: Arc<StdMutex<HashMap<String, MediaResource>>>,
+    resources: Arc<StdMutex<MediaResourceCache>>,
+}
+
+#[derive(Default)]
+struct MediaResourceCache {
+    entries: HashMap<String, MediaResource>,
+    insertion_order: VecDeque<String>,
+}
+
+impl MediaResourceCache {
+    fn insert(&mut self, id: String, resource: MediaResource) {
+        if let Some(entry) = self.entries.get_mut(&id) {
+            *entry = resource;
+            return;
+        }
+        while self.entries.len() >= MAX_MEDIA_RESOURCES_PER_SESSION {
+            let Some(oldest) = self.insertion_order.pop_front() else {
+                self.entries.clear();
+                break;
+            };
+            self.entries.remove(&oldest);
+        }
+        self.insertion_order.push_back(id.clone());
+        self.entries.insert(id, resource);
+    }
+
+    fn get(&self, id: &str) -> Option<&MediaResource> {
+        self.entries.get(id)
+    }
+
+    #[cfg(test)]
+    fn len(&self) -> usize {
+        self.entries.len()
+    }
 }
 
 #[derive(Clone)]
@@ -106,6 +191,7 @@ struct MediaResource {
 enum MediaTransform {
     None,
     AssToWebVtt,
+    SrtToWebVtt,
 }
 
 #[derive(Debug, Clone, Serialize)]
@@ -756,8 +842,7 @@ async fn list_provider_health(
     drop(cache);
     let health = check_provider_health(&state, None).await?;
     let mut cache = state.provider_health.lock().await;
-    cache.checked_at = Some(Instant::now());
-    cache.health = health.clone();
+    cache.apply_refresh(None, &health);
     Ok(Json(health))
 }
 
@@ -768,23 +853,46 @@ async fn retry_provider_health(
 ) -> ApiResult<Json<Vec<SourceDto>>> {
     require_app_request(&headers)?;
     require_user(&state, &headers).await?;
-    let health = check_provider_health(&state, input.provider.as_deref()).await?;
-    let mut cache = state.provider_health.lock().await;
-    for update in &health {
-        if let Some(current) = cache
-            .health
-            .iter_mut()
-            .find(|item| item.name == update.name)
-        {
-            *current = update.clone();
-        } else {
-            cache.health.push(update.clone());
+    let selected = input.provider.as_deref();
+    let health = refresh_provider_health_coalesced(
+        state.provider_health.as_ref(),
+        state.provider_health_refresh.as_ref(),
+        selected,
+        check_provider_health(&state, selected),
+    )
+    .await?;
+    Ok(Json(health))
+}
+
+async fn refresh_provider_health_coalesced(
+    cache: &Mutex<ProviderHealthCache>,
+    refresh: &Mutex<()>,
+    selected: Option<&str>,
+    check: impl std::future::Future<Output = ApiResult<Vec<SourceDto>>>,
+) -> ApiResult<Vec<SourceDto>> {
+    let initial_version = cache.lock().await.refresh_version(selected);
+    let _refresh = refresh.lock().await;
+    {
+        let cache = cache.lock().await;
+        if cache.refresh_version(selected) != initial_version {
+            return Ok(cache.selected_health(selected));
         }
     }
-    if input.provider.is_none() {
-        cache.checked_at = Some(Instant::now());
-    }
-    Ok(Json(health))
+
+    let health = check.await?;
+    cache.lock().await.apply_refresh(selected, &health);
+    Ok(health)
+}
+
+async fn run_provider_health_checks<I, F, T>(checks: I) -> Vec<T>
+where
+    I: IntoIterator<Item = F>,
+    F: std::future::Future<Output = T>,
+{
+    stream::iter(checks)
+        .buffered(PROVIDER_HEALTH_CONCURRENCY)
+        .collect()
+        .await
 }
 
 async fn check_provider_health(
@@ -801,13 +909,13 @@ async fn check_provider_health(
         ));
     }
 
-    let checks = state
-        .providers
-        .list_providers()
-        .iter()
-        .filter(|provider| selected.is_none_or(|name| name == provider.name()))
-        .cloned()
-        .map(|provider| async move {
+    let mut checks: Vec<Pin<Box<dyn Future<Output = SourceDto> + Send>>> = Vec::new();
+    for provider in state.providers.list_providers() {
+        if selected.is_some_and(|name| name != provider.name()) {
+            continue;
+        }
+        let provider: Arc<dyn AnimeProvider> = Arc::clone(provider);
+        checks.push(Box::pin(async move {
             let result = tokio::time::timeout(
                 PROVIDER_HEALTH_TIMEOUT,
                 AssertUnwindSafe(provider.health_check()).catch_unwind(),
@@ -831,9 +939,10 @@ async fn check_provider_health(
                     Some("NETWORK_TIMEOUT".into()),
                 ),
             }
-        });
+        }));
+    }
 
-    Ok(join_all(checks).await)
+    Ok(run_provider_health_checks(checks).await)
 }
 
 async fn discovery(State(state): State<AppState>, headers: HeaderMap) -> ApiResult<Json<Value>> {
@@ -1264,7 +1373,7 @@ async fn playback(
         expires_at: now + Duration::from_secs(6 * 60 * 60),
         stream: stream.clone(),
         secret,
-        resources: Arc::new(StdMutex::new(HashMap::new())),
+        resources: Arc::new(StdMutex::new(MediaResourceCache::default())),
     };
     let response = playback_dto(&id, &session);
     let mut sessions = state.media_sessions.lock().await;
@@ -1385,8 +1494,11 @@ async fn media_resource(
     let user = require_user(&state, &headers).await?;
     let session = get_media_session(&state, &id, &user.id).await?;
     let resource = resolve_media_resource(&session, &resource_id)?;
-    if resource.transform == MediaTransform::AssToWebVtt {
-        return proxy_ass_subtitle(&state, &session, resource.url).await;
+    if matches!(
+        resource.transform,
+        MediaTransform::AssToWebVtt | MediaTransform::SrtToWebVtt
+    ) {
+        return proxy_text_subtitle(&state, &id, &session, resource.url, resource.transform).await;
     }
     proxy_media_url(&state, &id, &session, resource.url, &headers).await
 }
@@ -1457,6 +1569,126 @@ async fn get_media_session(state: &AppState, id: &str, user_id: &str) -> ApiResu
     Ok(session)
 }
 
+fn download_proxy_failure(url: &Url, failure_kind: &str) -> ApiError {
+    tracing::warn!(
+        upstream_host = url.host_str().unwrap_or("unknown"),
+        failure_kind,
+        "upstream download request failed"
+    );
+    ApiError::new(
+        StatusCode::BAD_GATEWAY,
+        "DOWNLOAD_FAILED",
+        "download",
+        "The upstream download is temporarily unavailable.",
+        true,
+    )
+}
+
+fn media_proxy_failure(session_id: &str, url: &Url, failure_kind: &str) -> ApiError {
+    tracing::warn!(
+        session_id,
+        upstream_host = url.host_str().unwrap_or("unknown"),
+        failure_kind,
+        "upstream media request failed"
+    );
+    ApiError::new(
+        StatusCode::BAD_GATEWAY,
+        "PROXY_FAILED",
+        "playback",
+        "The upstream media resource is temporarily unavailable.",
+        true,
+    )
+}
+
+#[derive(Debug, PartialEq, Eq)]
+enum ResponseBodyError {
+    Read,
+    TooLarge,
+}
+
+async fn read_limited_response_body(
+    response: reqwest::Response,
+    maximum_bytes: usize,
+) -> Result<Bytes, ResponseBodyError> {
+    if response
+        .content_length()
+        .is_some_and(|length| length > maximum_bytes as u64)
+    {
+        return Err(ResponseBodyError::TooLarge);
+    }
+
+    let mut body = Vec::new();
+    let mut chunks = response.bytes_stream();
+    while let Some(chunk) = chunks
+        .try_next()
+        .await
+        .map_err(|_| ResponseBodyError::Read)?
+    {
+        if chunk.len() > maximum_bytes.saturating_sub(body.len()) {
+            return Err(ResponseBodyError::TooLarge);
+        }
+        body.extend_from_slice(&chunk);
+    }
+    Ok(Bytes::from(body))
+}
+
+async fn read_limited_async<R>(
+    mut reader: R,
+    maximum_bytes: usize,
+) -> Result<Vec<u8>, ResponseBodyError>
+where
+    R: AsyncRead + Unpin,
+{
+    let mut body = Vec::new();
+    let mut chunk = [0_u8; 16 * 1024];
+    loop {
+        let read = reader
+            .read(&mut chunk)
+            .await
+            .map_err(|_| ResponseBodyError::Read)?;
+        if read == 0 {
+            return Ok(body);
+        }
+        if read > maximum_bytes.saturating_sub(body.len()) {
+            return Err(ResponseBodyError::TooLarge);
+        }
+        body.extend_from_slice(&chunk[..read]);
+    }
+}
+
+fn enforce_body_limit(body: Vec<u8>, maximum_bytes: usize) -> Result<Vec<u8>, ResponseBodyError> {
+    if body.len() > maximum_bytes {
+        return Err(ResponseBodyError::TooLarge);
+    }
+    Ok(body)
+}
+
+fn manifest_body_error(session_id: &str, url: &Url, error: ResponseBodyError) -> ApiError {
+    match error {
+        ResponseBodyError::Read => media_proxy_failure(session_id, url, "body"),
+        ResponseBodyError::TooLarge => ApiError::new(
+            StatusCode::BAD_GATEWAY,
+            "INVALID_MANIFEST",
+            "playback",
+            "The upstream media manifest is too large.",
+            false,
+        ),
+    }
+}
+
+fn subtitle_body_error(session_id: &str, url: &Url, error: ResponseBodyError) -> ApiError {
+    match error {
+        ResponseBodyError::Read => media_proxy_failure(session_id, url, "subtitle-body"),
+        ResponseBodyError::TooLarge => ApiError::new(
+            StatusCode::BAD_GATEWAY,
+            "INVALID_SUBTITLE",
+            "playback",
+            "The subtitle track is too large.",
+            false,
+        ),
+    }
+}
+
 async fn proxy_media_url(
     state: &AppState,
     session_id: &str,
@@ -1477,15 +1709,10 @@ async fn proxy_media_url(
     {
         request = request.header(reqwest::header::RANGE, range);
     }
-    let response = request.send().await.map_err(|error| {
-        ApiError::new(
-            StatusCode::BAD_GATEWAY,
-            "PROXY_FAILED",
-            "playback",
-            error.to_string(),
-            true,
-        )
-    })?;
+    let response = request
+        .send()
+        .await
+        .map_err(|_| media_proxy_failure(session_id, &url, "request"))?;
     let status =
         StatusCode::from_u16(response.status().as_u16()).unwrap_or(StatusCode::BAD_GATEWAY);
     let content_type = response
@@ -1498,28 +1725,14 @@ async fn proxy_media_url(
             .as_deref()
             .is_some_and(|value| value.contains("mpegurl"));
     if hls {
-        let text = response
+        let response = response
             .error_for_status()
-            .map_err(|error| {
-                ApiError::new(
-                    StatusCode::BAD_GATEWAY,
-                    "PROXY_FAILED",
-                    "playback",
-                    error.to_string(),
-                    true,
-                )
-            })?
-            .text()
+            .map_err(|_| media_proxy_failure(session_id, &url, "status"))?;
+        let bytes = read_limited_response_body(response, MAX_MEDIA_MANIFEST_BYTES)
             .await
-            .map_err(|error| {
-                ApiError::new(
-                    StatusCode::BAD_GATEWAY,
-                    "PROXY_FAILED",
-                    "playback",
-                    error.to_string(),
-                    true,
-                )
-            })?;
+            .map_err(|error| manifest_body_error(session_id, &url, error))?;
+        let text = String::from_utf8(bytes.to_vec())
+            .map_err(|_| media_proxy_failure(session_id, &url, "body"))?;
         let rewritten = rewrite_hls_manifest(session_id, session, &url, &text);
         return Response::builder()
             .status(StatusCode::OK)
@@ -1534,28 +1747,14 @@ async fn proxy_media_url(
             .as_deref()
             .is_some_and(|value| value.contains("dash+xml"));
     if dash {
-        let text = response
+        let response = response
             .error_for_status()
-            .map_err(|error| {
-                ApiError::new(
-                    StatusCode::BAD_GATEWAY,
-                    "PROXY_FAILED",
-                    "playback",
-                    error.to_string(),
-                    true,
-                )
-            })?
-            .text()
+            .map_err(|_| media_proxy_failure(session_id, &url, "status"))?;
+        let bytes = read_limited_response_body(response, MAX_MEDIA_MANIFEST_BYTES)
             .await
-            .map_err(|error| {
-                ApiError::new(
-                    StatusCode::BAD_GATEWAY,
-                    "PROXY_FAILED",
-                    "playback",
-                    error.to_string(),
-                    true,
-                )
-            })?;
+            .map_err(|error| manifest_body_error(session_id, &url, error))?;
+        let text = String::from_utf8(bytes.to_vec())
+            .map_err(|_| media_proxy_failure(session_id, &url, "body"))?;
         let rewritten = rewrite_dash_manifest(session_id, session, &url, &text);
         return Response::builder()
             .status(StatusCode::OK)
@@ -1615,8 +1814,10 @@ async fn proxy_media_url_via_curl(
     }
     let hls = url.path().to_ascii_lowercase().contains(".m3u8") || content_type.contains("mpegurl");
     if hls {
+        let body = enforce_body_limit(body, MAX_MEDIA_MANIFEST_BYTES)
+            .map_err(|error| manifest_body_error(session_id, &url, error))?;
         let text =
-            String::from_utf8(body).map_err(|error| ApiError::internal("playback", error))?;
+            String::from_utf8(body).map_err(|_| media_proxy_failure(session_id, &url, "body"))?;
         let rewritten = rewrite_hls_manifest(session_id, session, &url, &text);
         return Response::builder()
             .status(StatusCode::OK)
@@ -1628,8 +1829,10 @@ async fn proxy_media_url_via_curl(
     let dash =
         url.path().to_ascii_lowercase().contains(".mpd") || content_type.contains("dash+xml");
     if dash {
+        let body = enforce_body_limit(body, MAX_MEDIA_MANIFEST_BYTES)
+            .map_err(|error| manifest_body_error(session_id, &url, error))?;
         let text =
-            String::from_utf8(body).map_err(|error| ApiError::internal("playback", error))?;
+            String::from_utf8(body).map_err(|_| media_proxy_failure(session_id, &url, "body"))?;
         let rewritten = rewrite_dash_manifest(session_id, session, &url, &text);
         return Response::builder()
             .status(StatusCode::OK)
@@ -1684,32 +1887,38 @@ async fn curl_fetch(
     args.push("-w".into());
     args.push("\n__ANY_WATCH__%{http_code}__%{content_type}".into());
     args.push(url.as_str().into());
-    let output = tokio::process::Command::new("curl")
+    let mut child = tokio::process::Command::new("curl")
         .args(&args)
-        .output()
+        .stdout(Stdio::piped())
+        .stderr(Stdio::null())
+        .spawn()
+        .map_err(|_| media_proxy_failure("curl", url, "curl-start"))?;
+    let stdout = child
+        .stdout
+        .take()
+        .ok_or_else(|| media_proxy_failure("curl", url, "curl-stdout"))?;
+    let output = match read_limited_async(
+        stdout,
+        MAX_CURL_PROXY_BYTES.saturating_add(MAX_CURL_METADATA_BYTES),
+    )
+    .await
+    {
+        Ok(output) => output,
+        Err(_) => {
+            let _ = child.kill().await;
+            let _ = child.wait().await;
+            return Err(media_proxy_failure("curl", url, "curl-body"));
+        }
+    };
+    let exit_status = child
+        .wait()
         .await
-        .map_err(|error| {
-            ApiError::new(
-                StatusCode::BAD_GATEWAY,
-                "PROXY_FAILED",
-                "playback",
-                format!("curl failed: {error}"),
-                true,
-            )
-        })?;
-    let (body, status, content_type) = parse_curl_output(output.stdout);
-    if status == 0 {
-        return Err(ApiError::new(
-            StatusCode::BAD_GATEWAY,
-            "PROXY_FAILED",
-            "playback",
-            format!(
-                "curl exited with {}: {}",
-                output.status,
-                String::from_utf8_lossy(&output.stderr)
-            ),
-            true,
-        ));
+        .map_err(|_| media_proxy_failure("curl", url, "curl-wait"))?;
+    let (body, status, content_type) = parse_curl_output(output);
+    let body = enforce_body_limit(body, MAX_CURL_PROXY_BYTES)
+        .map_err(|_| media_proxy_failure("curl", url, "curl-body"))?;
+    if !exit_status.success() || status == 0 {
+        return Err(media_proxy_failure("curl", url, "curl-exit"));
     }
     Ok((status, content_type, body))
 }
@@ -1738,67 +1947,26 @@ fn parse_curl_output(stdout: Vec<u8>) -> (Vec<u8>, u16, String) {
     (body, status, content_type)
 }
 
-async fn proxy_ass_subtitle(
+async fn proxy_text_subtitle(
     state: &AppState,
+    session_id: &str,
     session: &MediaSession,
     url: Url,
+    transform: MediaTransform,
 ) -> ApiResult<Response> {
     let response = state
         .media_client
-        .get(url)
+        .get(url.clone())
         .headers(stream_headers(&session.stream)?)
         .send()
         .await
-        .map_err(|error| {
-            ApiError::new(
-                StatusCode::BAD_GATEWAY,
-                "PROXY_FAILED",
-                "playback",
-                error.to_string(),
-                true,
-            )
-        })?
+        .map_err(|_| media_proxy_failure(session_id, &url, "subtitle-request"))?
         .error_for_status()
-        .map_err(|error| {
-            ApiError::new(
-                StatusCode::BAD_GATEWAY,
-                "PROXY_FAILED",
-                "playback",
-                error.to_string(),
-                true,
-            )
-        })?;
-    if response
-        .content_length()
-        .is_some_and(|length| length > 4 * 1024 * 1024)
-    {
-        return Err(ApiError::new(
-            StatusCode::BAD_GATEWAY,
-            "INVALID_SUBTITLE",
-            "playback",
-            "The subtitle track is too large.",
-            false,
-        ));
-    }
-    let bytes = response.bytes().await.map_err(|error| {
-        ApiError::new(
-            StatusCode::BAD_GATEWAY,
-            "PROXY_FAILED",
-            "playback",
-            error.to_string(),
-            true,
-        )
-    })?;
-    if bytes.len() > 4 * 1024 * 1024 {
-        return Err(ApiError::new(
-            StatusCode::BAD_GATEWAY,
-            "INVALID_SUBTITLE",
-            "playback",
-            "The subtitle track is too large.",
-            false,
-        ));
-    }
-    let ass = String::from_utf8(bytes.to_vec()).map_err(|_| {
+        .map_err(|_| media_proxy_failure(session_id, &url, "subtitle-status"))?;
+    let bytes = read_limited_response_body(response, MAX_SUBTITLE_BYTES)
+        .await
+        .map_err(|error| subtitle_body_error(session_id, &url, error))?;
+    let subtitle = String::from_utf8(bytes.to_vec()).map_err(|_| {
         ApiError::new(
             StatusCode::BAD_GATEWAY,
             "INVALID_SUBTITLE",
@@ -1807,7 +1975,14 @@ async fn proxy_ass_subtitle(
             false,
         )
     })?;
-    let webvtt = ass_to_webvtt(&ass).map_err(|error| {
+    let converted = match transform {
+        MediaTransform::AssToWebVtt => ass_to_webvtt(&subtitle),
+        MediaTransform::SrtToWebVtt => srt_to_webvtt(&subtitle),
+        MediaTransform::None => {
+            return Err(invalid_media_resource());
+        }
+    };
+    let webvtt = converted.map_err(|error| {
         ApiError::new(
             StatusCode::BAD_GATEWAY,
             "INVALID_SUBTITLE",
@@ -1822,6 +1997,77 @@ async fn proxy_ass_subtitle(
         .header(header::CACHE_CONTROL, "private, no-store")
         .body(Body::from(webvtt))
         .map_err(|error| ApiError::internal("playback", error))
+}
+
+fn srt_to_webvtt(srt: &str) -> Result<String> {
+    let normalized = srt
+        .trim_start_matches('\u{feff}')
+        .replace("\r\n", "\n")
+        .replace('\r', "\n");
+    let mut cues = Vec::new();
+    for block in normalized.split("\n\n") {
+        let mut lines = block
+            .lines()
+            .map(str::trim_end)
+            .filter(|line| !line.is_empty());
+        let Some(first) = lines.next() else {
+            continue;
+        };
+        let timing = if first.chars().all(|character| character.is_ascii_digit()) {
+            let Some(timing) = lines.next() else {
+                continue;
+            };
+            timing
+        } else {
+            first
+        };
+        let Some((start, end_and_settings)) = timing.split_once("-->") else {
+            continue;
+        };
+        let start = start.trim().replace(',', ".");
+        let mut end_parts = end_and_settings.split_whitespace();
+        let Some(end) = end_parts.next() else {
+            continue;
+        };
+        let end = end.replace(',', ".");
+        if !valid_webvtt_timestamp(&start) || !valid_webvtt_timestamp(&end) {
+            continue;
+        }
+        let text = lines.collect::<Vec<_>>().join("\n");
+        if text.trim().is_empty() {
+            continue;
+        }
+        let text = text
+            .replace('&', "&amp;")
+            .replace('<', "&lt;")
+            .replace('>', "&gt;");
+        let settings = end_parts.collect::<Vec<_>>().join(" ");
+        let timing = if settings.is_empty() {
+            format!("{start} --> {end}")
+        } else {
+            format!("{start} --> {end} {settings}")
+        };
+        cues.push(format!("{timing}\n{text}"));
+    }
+    anyhow::ensure!(
+        !cues.is_empty(),
+        "The SRT subtitle contained no usable dialogue cues."
+    );
+    Ok(format!("WEBVTT\n\n{}\n\n", cues.join("\n\n")))
+}
+
+fn valid_webvtt_timestamp(value: &str) -> bool {
+    let mut parts = value.split(':');
+    let Some(hours) = parts.next().and_then(|part| part.parse::<u32>().ok()) else {
+        return false;
+    };
+    let Some(minutes) = parts.next().and_then(|part| part.parse::<u32>().ok()) else {
+        return false;
+    };
+    let Some(seconds) = parts.next().and_then(|part| part.parse::<f64>().ok()) else {
+        return false;
+    };
+    parts.next().is_none() && hours <= 999 && minutes < 60 && (0.0..60.0).contains(&seconds)
 }
 
 fn ass_to_webvtt(ass: &str) -> Result<String> {
@@ -2121,10 +2367,10 @@ fn opaque_subtitle_url(
     url: Url,
     format: SubtitleFormat,
 ) -> String {
-    let transform = if format == SubtitleFormat::Ass {
-        MediaTransform::AssToWebVtt
-    } else {
-        MediaTransform::None
+    let transform = match format {
+        SubtitleFormat::Ass => MediaTransform::AssToWebVtt,
+        SubtitleFormat::Srt => MediaTransform::SrtToWebVtt,
+        _ => MediaTransform::None,
     };
     opaque_resource_url_with_transform(session_id, session, url, false, transform)
 }
@@ -2169,6 +2415,7 @@ fn opaque_resource_id_with_transform(
     mac.update(&[match transform {
         MediaTransform::None => 0,
         MediaTransform::AssToWebVtt => 1,
+        MediaTransform::SrtToWebVtt => 2,
     }]);
     mac.update(url.as_str().as_bytes());
     mac.finalize()
@@ -2193,6 +2440,15 @@ fn resolve_opaque_resource(
         Some(_) => Err(invalid_media_resource()),
         None => Ok(resource.url),
     }
+}
+
+#[cfg(test)]
+fn media_resource_count(session: &MediaSession) -> usize {
+    session
+        .resources
+        .lock()
+        .expect("media resource cache lock poisoned")
+        .len()
 }
 
 fn resolve_media_resource(session: &MediaSession, resource_id: &str) -> ApiResult<MediaResource> {
@@ -2462,29 +2718,13 @@ async fn proxy_download_response(
         Body::from(body)
     } else {
         let response = client
-            .get(source)
+            .get(source.clone())
             .headers(upstream_headers)
             .send()
             .await
-            .map_err(|error| {
-                ApiError::new(
-                    StatusCode::BAD_GATEWAY,
-                    "DOWNLOAD_FAILED",
-                    "download",
-                    error.to_string(),
-                    true,
-                )
-            })?
+            .map_err(|_| download_proxy_failure(&source, "request"))?
             .error_for_status()
-            .map_err(|error| {
-                ApiError::new(
-                    StatusCode::BAD_GATEWAY,
-                    "DOWNLOAD_FAILED",
-                    "download",
-                    error.to_string(),
-                    true,
-                )
-            })?;
+            .map_err(|_| download_proxy_failure(&source, "status"))?;
         Body::from_stream(response.bytes_stream().map_err(std::io::Error::other))
     };
 
@@ -2589,12 +2829,12 @@ fn parse_hls_segments(media_url: &Url, media: &str) -> ApiResult<Vec<Url>> {
         let value = line.trim();
         if value.starts_with("#EXT-X-MAP:") {
             if let Some(uri) = quoted_attribute(value, "URI") {
-                if let Ok(url) = media_url.join(&uri) {
+                if let Some(url) = join_preserving_query(media_url, &uri) {
                     segments.push(url);
                 }
             }
         } else if !value.is_empty() && !value.starts_with('#') {
-            if let Ok(url) = media_url.join(value) {
+            if let Some(url) = join_preserving_query(media_url, value) {
                 segments.push(url);
             }
         }
@@ -2619,9 +2859,14 @@ fn hls_body_stream(
     async_stream::try_stream! {
         for segment in segments {
             let mut response = client.get(segment).headers(headers.clone()).send().await
-                .map_err(std::io::Error::other)?
-                .error_for_status().map_err(std::io::Error::other)?;
-            while let Some(chunk) = response.chunk().await.map_err(std::io::Error::other)? {
+                .map_err(|_| std::io::Error::other("upstream segment request failed"))?
+                .error_for_status()
+                .map_err(|_| std::io::Error::other("upstream segment returned an error"))?;
+            while let Some(chunk) = response
+                .chunk()
+                .await
+                .map_err(|_| std::io::Error::other("upstream segment body failed"))?
+            {
                 yield chunk;
             }
         }
@@ -2649,40 +2894,16 @@ fn hls_body_stream_via_curl(
 
 async fn fetch_text(client: &Client, headers: &ReqwestHeaderMap, url: Url) -> ApiResult<String> {
     client
-        .get(url)
+        .get(url.clone())
         .headers(headers.clone())
         .send()
         .await
-        .map_err(|error| {
-            ApiError::new(
-                StatusCode::BAD_GATEWAY,
-                "DOWNLOAD_FAILED",
-                "download",
-                error.to_string(),
-                true,
-            )
-        })?
+        .map_err(|_| download_proxy_failure(&url, "playlist-request"))?
         .error_for_status()
-        .map_err(|error| {
-            ApiError::new(
-                StatusCode::BAD_GATEWAY,
-                "DOWNLOAD_FAILED",
-                "download",
-                error.to_string(),
-                true,
-            )
-        })?
+        .map_err(|_| download_proxy_failure(&url, "playlist-status"))?
         .text()
         .await
-        .map_err(|error| {
-            ApiError::new(
-                StatusCode::BAD_GATEWAY,
-                "DOWNLOAD_FAILED",
-                "download",
-                error.to_string(),
-                true,
-            )
-        })
+        .map_err(|_| download_proxy_failure(&url, "playlist-body"))
 }
 
 fn highest_bandwidth_variant(base: &Url, playlist: &str) -> Option<Url> {
@@ -3022,7 +3243,7 @@ mod tests {
             expires_at: Instant::now() + Duration::from_secs(60),
             stream,
             secret: [7_u8; 32],
-            resources: Arc::new(StdMutex::new(HashMap::new())),
+            resources: Arc::new(StdMutex::new(MediaResourceCache::default())),
         }
     }
 
@@ -3142,6 +3363,64 @@ mod tests {
         assert_eq!(content_type, "video/mp4");
     }
 
+    #[tokio::test]
+    async fn limited_async_reader_rejects_oversized_curl_payloads() {
+        use tokio::io::AsyncWriteExt;
+
+        let (mut writer, reader) = tokio::io::duplex(64);
+        let write = tokio::spawn(async move {
+            writer.write_all(&[b'x'; 33]).await.unwrap();
+            writer.shutdown().await.unwrap();
+        });
+
+        let result = read_limited_async(reader, 32).await;
+
+        write.await.unwrap();
+        assert_eq!(result, Err(ResponseBodyError::TooLarge));
+    }
+
+    #[test]
+    fn curl_manifests_reject_bodies_over_manifest_limit() {
+        let body = vec![b'x'; MAX_MEDIA_MANIFEST_BYTES + 1];
+
+        assert_eq!(
+            enforce_body_limit(body, MAX_MEDIA_MANIFEST_BYTES),
+            Err(ResponseBodyError::TooLarge)
+        );
+    }
+
+    #[test]
+    fn download_proxy_errors_do_not_expose_upstream_urls_or_tokens() {
+        let url = Url::parse(&format!(
+            "https://{UPSTREAM_HOST}/show/master.m3u8?token={SIGNED_VALUE}"
+        ))
+        .unwrap();
+        let error = download_proxy_failure(&url, "request");
+        let json = serde_json::to_string(&error.1).unwrap();
+
+        assert_private_material_absent(&json, &[url.as_str()]);
+        assert_eq!(
+            error.1.message,
+            "The upstream download is temporarily unavailable."
+        );
+    }
+
+    #[test]
+    fn media_proxy_errors_do_not_expose_upstream_urls_or_tokens() {
+        let url = Url::parse(&format!(
+            "https://{UPSTREAM_HOST}/show/master.m3u8?token={SIGNED_VALUE}"
+        ))
+        .unwrap();
+        let error = media_proxy_failure("session", &url, "connect");
+        let json = serde_json::to_string(&error.1).unwrap();
+
+        assert_private_material_absent(&json, &[url.as_str()]);
+        assert_eq!(
+            error.1.message,
+            "The upstream media resource is temporarily unavailable."
+        );
+    }
+
     #[test]
     fn playback_json_exposes_only_opaque_same_origin_resources() {
         let video_url = format!("https://{UPSTREAM_HOST}/show/master.m3u8?token={SIGNED_VALUE}");
@@ -3177,6 +3456,31 @@ mod tests {
         let value = serde_json::to_value(playback_dto("session", &session)).unwrap();
 
         assert_eq!(value["streamKind"], "dash");
+    }
+
+    #[test]
+    fn hls_download_segments_inherit_playlist_authorization_query() {
+        let media_url =
+            Url::parse("https://private-cdn.example/show/media.m3u8?token=signed-query-secret")
+                .unwrap();
+        let segments = parse_hls_segments(
+            &media_url,
+            "#EXTM3U\n#EXT-X-MAP:URI=\"init.mp4\"\nsegment-1.ts\nsegment-2.ts?part=2\n",
+        )
+        .unwrap();
+
+        assert_eq!(
+            segments[0].as_str(),
+            "https://private-cdn.example/show/init.mp4?token=signed-query-secret"
+        );
+        assert_eq!(
+            segments[1].as_str(),
+            "https://private-cdn.example/show/segment-1.ts?token=signed-query-secret"
+        );
+        assert_eq!(
+            segments[2].as_str(),
+            "https://private-cdn.example/show/segment-2.ts?part=2"
+        );
     }
 
     #[test]
@@ -3259,6 +3563,23 @@ mod tests {
     }
 
     #[test]
+    fn media_resource_cache_evicts_old_entries_at_its_limit() {
+        let session = media_session("https://cdn.example/master.m3u8");
+        for index in 0..=MAX_MEDIA_RESOURCES_PER_SESSION {
+            let url = Url::parse(&format!("https://cdn.example/segment-{index}.ts")).unwrap();
+            opaque_resource_url("session", &session, url, false);
+        }
+
+        assert_eq!(
+            media_resource_count(&session),
+            MAX_MEDIA_RESOURCES_PER_SESSION
+        );
+        let oldest = Url::parse("https://cdn.example/segment-0.ts").unwrap();
+        let oldest_id = opaque_resource_id(&session.secret, &oldest, false);
+        assert!(resolve_media_resource(&session, &oldest_id).is_err());
+    }
+
+    #[test]
     fn opaque_resources_reject_unknown_ids_and_cross_origin_paths() {
         let base = Url::parse(&format!(
             "https://{UPSTREAM_HOST}/show/?token={SIGNED_VALUE}"
@@ -3302,6 +3623,17 @@ mod tests {
     }
 
     #[test]
+    fn converts_srt_to_browser_native_webvtt() {
+        let srt = "1\r\n00:01:02,340 --> 00:01:05,600\r\nHello, world!\r\nSecond line\r\n\r\n";
+        let output = srt_to_webvtt(srt).unwrap();
+
+        assert_eq!(
+            output,
+            "WEBVTT\n\n00:01:02.340 --> 00:01:05.600\nHello, world!\nSecond line\n\n"
+        );
+    }
+
+    #[test]
     fn transformed_subtitles_use_distinct_opaque_resources() {
         let session = media_session("https://cdn.example/master.m3u8");
         let url = Url::parse("https://cdn.example/subtitle.ass").unwrap();
@@ -3315,6 +3647,107 @@ mod tests {
                 .transform,
             MediaTransform::AssToWebVtt
         );
+    }
+
+    #[tokio::test]
+    async fn limited_response_body_rejects_chunked_oversized_payloads() {
+        use std::convert::Infallible;
+
+        let app = Router::new().route(
+            "/",
+            get(|| async {
+                let chunks = stream::iter([
+                    Ok::<_, Infallible>(Bytes::from_static(b"12345678")),
+                    Ok::<_, Infallible>(Bytes::from_static(b"abcdefgh")),
+                ]);
+                Response::builder().body(Body::from_stream(chunks)).unwrap()
+            }),
+        );
+        let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
+        let address = listener.local_addr().unwrap();
+        let server = tokio::spawn(async move {
+            axum::serve(listener, app).await.unwrap();
+        });
+        let response = Client::new()
+            .get(format!("http://{address}/"))
+            .send()
+            .await
+            .unwrap();
+
+        let error = read_limited_response_body(response, 12).await.unwrap_err();
+        server.abort();
+
+        assert_eq!(error, ResponseBodyError::TooLarge);
+    }
+
+    #[tokio::test]
+    async fn provider_health_checks_use_bounded_concurrency() {
+        use std::sync::atomic::{AtomicUsize, Ordering};
+
+        let active = Arc::new(AtomicUsize::new(0));
+        let maximum = Arc::new(AtomicUsize::new(0));
+        let checks = (0..PROVIDER_HEALTH_CONCURRENCY * 3).map(|index| {
+            let active = Arc::clone(&active);
+            let maximum = Arc::clone(&maximum);
+            async move {
+                let current = active.fetch_add(1, Ordering::SeqCst) + 1;
+                maximum.fetch_max(current, Ordering::SeqCst);
+                tokio::time::sleep(Duration::from_millis(10)).await;
+                active.fetch_sub(1, Ordering::SeqCst);
+                index
+            }
+        });
+
+        let results = run_provider_health_checks(checks).await;
+
+        assert_eq!(
+            results,
+            (0..PROVIDER_HEALTH_CONCURRENCY * 3).collect::<Vec<_>>()
+        );
+        assert_eq!(maximum.load(Ordering::SeqCst), PROVIDER_HEALTH_CONCURRENCY);
+    }
+
+    #[tokio::test]
+    async fn concurrent_provider_health_retries_share_one_refresh() {
+        use std::sync::atomic::{AtomicUsize, Ordering};
+
+        let cache = Arc::new(Mutex::new(ProviderHealthCache::default()));
+        let refresh = Arc::new(Mutex::new(()));
+        let checks = Arc::new(AtomicUsize::new(0));
+        let retry = || {
+            let checks = Arc::clone(&checks);
+            async move {
+                checks.fetch_add(1, Ordering::SeqCst);
+                tokio::time::sleep(Duration::from_millis(50)).await;
+                Ok(vec![SourceDto {
+                    name: "Invidious".into(),
+                    language: "YouTube".into(),
+                    language_group: "YouTube".into(),
+                    status: "healthy".into(),
+                    failure_code: None,
+                    capabilities: any_watch_core::providers::ProviderCapabilities::default(),
+                    website_url: None,
+                }])
+            }
+        };
+
+        let first = refresh_provider_health_coalesced(
+            cache.as_ref(),
+            refresh.as_ref(),
+            Some("Invidious"),
+            retry(),
+        );
+        let second = refresh_provider_health_coalesced(
+            cache.as_ref(),
+            refresh.as_ref(),
+            Some("Invidious"),
+            retry(),
+        );
+        let (first, second) = tokio::join!(first, second);
+
+        assert_eq!(checks.load(Ordering::SeqCst), 1);
+        assert_eq!(first.unwrap()[0].name, "Invidious");
+        assert_eq!(second.unwrap()[0].name, "Invidious");
     }
 
     #[test]

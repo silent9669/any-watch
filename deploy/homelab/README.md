@@ -7,12 +7,14 @@ network.
 ## First deployment
 
 1. Copy this repository to `/srv/any-watch/app` on the VM.
-2. Copy `.env.example` to `.env`, set a long unique admin password, and protect
-   the file with mode `0600`.
+2. Copy `deploy/homelab/.env.example` to `deploy/homelab/.env`, set a long
+   unique admin password, and protect the file with mode `0600`. Set the optional
+   Invidious values only when the instance is reachable from the container.
 3. Create `/srv/any-watch/data` and keep it on the persistent data disk.
 4. From the repository root run the explicit commands below. The build context
    must be the repository root because that is where `Dockerfile` and
-   `tokens.css` live.
+   `tokens.css` live. The Compose file explicitly maps values supplied by
+   `--env-file`; `ANY_WATCH_ENV_FILE` is not a separate service setting.
 
    ```sh
    docker compose --env-file deploy/homelab/.env \
@@ -20,8 +22,10 @@ network.
    docker compose --env-file deploy/homelab/.env \
      -f deploy/homelab/compose.yml up -d
    ```
-5. Check `docker compose ps`, `docker compose logs --tail=100`, and
-   `curl -fsS https://ani.dangphuc.me/api/health`.
+5. Check `docker compose ps` and `docker compose logs --tail=100`, confirm that
+   `any-watch` reaches `healthy`, and then run
+   `curl -fsS https://ani.dangphuc.me/api/health`. Caddy waits for the
+   application healthcheck before starting.
 
 ## Update and rollback
 
@@ -170,14 +174,14 @@ data directory must remain mounted during every redeploy.
 ## Provider monitoring
 
 Provider health is a snapshot, not a permanent disable switch. Authenticated
-`GET /api/providers/health` is cached for five minutes, concurrent stale
-requests share one refresh, and each provider check is bounded to 60 seconds.
-Failed initial `unknown` checks become retryable `unavailable` entries, and an
-explicit provider-health retry can restore a healthy source. OPhim uses
-`https://ophim1.com/v1/api`, allows a 20-second upstream response window, and
-validates HTTP status before parsing results. MovieBox signs the request
-separately for each of its API mirrors and fails over between `api4`, `api5`,
-and `api6` when a regional endpoint is unreachable.
+`GET` and `POST /api/providers/health` refreshes share a five-minute cache and
+coalescing/version protection. At most four provider checks run concurrently,
+and each check is bounded to 60 seconds. Failed initial `unknown` checks become
+retryable `unavailable` entries, and an explicit provider-health retry can
+restore a healthy source. OPhim uses `https://ophim1.com/v1/api`, allows a
+45-second upstream response window, and validates HTTP status before parsing
+results. AniZone and MovieBox are disabled by default; enable either only for a
+focused certification from the deployment network.
 
 Run full provider certification only before a release or during a focused
 incident; it performs real upstream searches and media byte-range checks:

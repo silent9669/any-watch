@@ -11,21 +11,28 @@ and SQLite persistence.
 - Administrator-managed family accounts with no guest mode.
 - Account-scoped watch history, progress, and My List across browsers.
 - Title-first discovery with explicit provider availability and no silent source switching.
-- Browser-native HLS, DASH, subtitle, quality, fullscreen, and picture-in-picture playback.
+- Authentic YouTube viewing experience via Invidious: Trending & Popular feeds, topic chips (`All`, `Trending`, `Music`, `Gaming`, `News`, `Animations`), Theater Watch Room with channel bar and Up Next / Related video queue, and 16:9 continue watching cards.
+- Provider Search Dashboards with provider-specific continue watching shelves, status indicators, and curated quick search tags.
+- Universal Home Dashboard aggregating watch history across all anime providers and YouTube.
+- Browser-native HLS, DASH, subtitle, quality, fullscreen, and picture-in-picture playback across Chrome, Firefox, and Safari.
 - AniSkip opening and ending markers with a persistent Skip intro preference.
 - Browser downloads through short-lived authenticated tickets.
 - Responsive layouts and keyboard/remote navigation for phones, computers, and TVs.
 
 ## Providers
 
-AniZone, AniDB, AnimeGG, KKPhim, OPhim, and Niniyo are the playback-certified
-defaults. MovieBox is disabled because its current DASH output is HEVC-only and
-does not decode reliably in supported Chrome and Firefox browsers. AniZone's
-English ASS subtitles are converted to browser-native WebVTT by the opaque media proxy; AniDB contributes the
-Japanese-audio HLS source used by ani-cli v5. AllAnime, AnimeVietSub, and
-HiAnime remain disabled unless they pass the current admission and playback
-certification requirements. Provider cookies, required headers, and upstream
-media URLs stay server-side behind opaque playback paths.
+AniDB, AnimeGG, KKPhim, OPhim, Niniyo, and K20 (Stremio Addon) are
+enabled by default. Invidious is enabled only when `ANY_WATCH_INVIDIOUS_URL` is
+configured. AniZone and MovieBox are disabled by default; MovieBox's current
+HEVC-only DASH output does not decode reliably in the supported browser matrix.
+When AniZone is explicitly enabled, its English ASS subtitles are converted to
+browser-native WebVTT by the opaque media proxy. AniDB contributes the
+Japanese-audio HLS source used by ani-cli v5. K20 connects to NguonC, STP, HH3D,
+VSMOV, and YanHH3D catalogs through the Stremio Addon protocol and resolves
+direct HTTP/HLS streams. AllAnime, AnimeVietSub, and HiAnime remain disabled
+unless they pass the current admission and playback certification requirements.
+Provider cookies, required headers, and upstream media URLs stay server-side
+behind opaque playback paths.
 
 Direct provider results retain a unique exact AniList title, native-title, or
 synonym match so AniSkip uses the correct MyAnimeList title and
@@ -35,6 +42,12 @@ AniSkip submission remains playable and displays no marker.
 
 See [docs/PROVIDER_INVENTORY.md](docs/PROVIDER_INVENTORY.md) for the complete
 status and admission policy.
+
+An optional Invidious connection provides an authentic YouTube viewing experience. Set
+`ANY_WATCH_INVIDIOUS_URL` to a private or trusted Invidious instance; YouTube
+search and feeds remain outside the English/Vietnamese anime source selector, while
+playback, subtitles, progress, and My List use the existing authenticated
+any-watch boundary. The integration is disabled when no instance is configured.
 
 ## Development
 
@@ -66,11 +79,13 @@ Homelab and Cloudflare instructions remain under `deploy/`. Keep the existing
 data mount and environment variables when upgrading so accounts, sessions,
 history, and My List remain available.
 
-Provider-health GETs are cached and concurrent refreshes are coalesced for five
-minutes; checks have a 60-second backend budget. Cloudflare allows that endpoint
-70 seconds without selecting whole-site maintenance. The independent GitHub
-Pages maintenance shell is static; the Worker owns dynamic `/status.json` and
-the globally stable first-observed outage timestamp.
+Authenticated `GET` and `POST /api/providers/health` refreshes share a
+five-minute aggregate cache and coalescing/version protection. At most four
+provider checks run concurrently, and each check has a 60-second backend timeout.
+Cloudflare allows that endpoint 70 seconds without selecting whole-site
+maintenance. The independent GitHub Pages maintenance shell is static; the
+Worker owns dynamic `/status.json` and the globally stable first-observed outage
+timestamp.
 
 ## Documentation
 

@@ -12,8 +12,10 @@ invidious = false
 # ani-cli v5 compatible English HLS source.
 anidb = true
 
-# English soft-sub HLS source. ASS tracks are converted to WebVTT by the web server.
-anizone = true
+# English soft-sub HLS source. ASS tracks are converted to WebVTT by the web
+# server. Disabled by default until its challenge-prone upstream is explicitly
+# certified from the deployment network.
+anizone = false
 
 # AllAnime is challenge-gated upstream; keep disabled until a documented
 # browser-safe integration passes certification.
@@ -22,8 +24,9 @@ allanime = false
 # Live-certified English source.
 animegg = true
 
-# Signed English-sub series and film streams, live-certified.
-moviebox = true
+# Signed English-sub series and film streams. Disabled by default because the
+# currently resolved DASH variants are HEVC-only and are not browser-portable.
+moviebox = false
 
 # Enable KKPhim source (Vietnamese)
 kkphim = true

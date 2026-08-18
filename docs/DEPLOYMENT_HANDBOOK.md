@@ -3,8 +3,8 @@
 ## Current release state
 
 - Production deploys use the exact green commit from the `master` branch. The deployed SHA is recorded in `/srv/any-watch/app/.release-sha`.
-- CI runs for `master` pushes or manual dispatches. It validates quality/API behavior, browser E2E, dependency audit, and the production image build. The immutable GitHub Pages maintenance shell deploys only when maintenance assets or their workflow change, or through manual dispatch.
-- CI does not call live providers. Provider certification is an explicit pre-deploy or incident-response operation because upstream availability is outside repository control.
+- CI runs on pushes to `master`, pull requests targeting `master`, and manual dispatch. It validates quality/API behavior, dependency audits, and the production image. Browser E2E covers Chromium, Firefox, and WebKit on Ubuntu plus Chromium on macOS and Windows. The production-image job starts the built image, authenticates, and verifies its configured provider catalog. The immutable GitHub Pages maintenance shell deploys only when maintenance assets or its workflow change, or through manual dispatch.
+- CI does not perform live upstream provider health, search, or playback certification. Live provider certification is an explicit pre-deploy or incident-response operation because upstream availability is outside repository control.
 - Persistent data counts are deployment-specific. Record a pre-deploy snapshot and require that user, favorite, and history counts do not decrease unexpectedly; SQLite integrity must remain `ok`.
 - Current internal and public health return `{"service":"any-watch","status":"ok"}`.
 
@@ -12,10 +12,12 @@
 
 - Caddy is the only service binding host ports 80 and 443.
 - `any-watch` is reachable only on the Docker `web` network at port 3000.
+- Optional YouTube search requires `ANY_WATCH_INVIDIOUS_URL` to reference a trusted Invidious instance reachable from the any-watch container. Prefer an internal Docker/network address and keep `ANY_WATCH_INVIDIOUS_LOCAL_PROXY=1` so manifests and segments remain instance-local before any-watch applies its opaque proxy.
+- The homelab Compose file explicitly maps application variables from the file passed to `docker compose --env-file FILE`; `ANY_WATCH_ENV_FILE` is not a separate runtime selector. The application healthcheck probes `/api/health`, and Caddy waits for `service_healthy` on initial startup.
 - User accounts, sessions, favorites, and history are persisted at `/srv/any-watch/data`.
 - Caddy certificates and configuration use named Docker volumes. Do not remove those volumes during an application deploy.
 - Cloudflare fronts `ani.dangphuc.me`; its DDNS timer keeps the origin address current.
-- The `any-watch-failover` Worker Route remains `ani.dangphuc.me/*`. Ordinary requests receive a four-second origin window; `/api/providers/health` receives 70 seconds and its endpoint errors never select whole-site maintenance. Ordinary origin timeouts and 5xx responses serve the independent maintenance shell from `https://silent9669.github.io/any-watch/`.
+- The `any-watch-failover` Worker Route remains `ani.dangphuc.me/*`. Ordinary requests receive a four-second origin window; `/api/providers/health` receives 70 seconds and its endpoint errors never select whole-site maintenance. Ordinary origin timeouts and 5xx responses serve the independent maintenance shell from `https://silent9669.github.io/any-watch/`. If that maintenance origin also fails, navigation receives a controlled plain-text `503` with maintenance and retry headers.
 - The hostname-scoped `OUTAGE_STATE` Durable Object globally preserves the first Worker-observed outage time. Worker-served `/status.json` probes `/api/health`, reports that stable timestamp during the incident, and clears it after recovery.
 - Recreating Caddy or its certificates does not change the Worker Route. Caddy must still present a valid certificate for `ani.dangphuc.me` so Cloudflare can reach the origin.
 
@@ -143,19 +145,20 @@ The post-deploy SQLite snapshot must report `integrity: ok` and user, favorite, 
 
 ## Provider certification
 
-- Standard CI does not perform live provider health, search, or playback calls.
-- Before a provider-specific release, run its ignored live test explicitly. AniZone certification verifies search, regular episode resolution, HLS playback, and English subtitle extraction; AniDB certification verifies search, regular episode resolution, and Japanese-audio HLS playback:
+- Standard CI does not perform live upstream provider health, search, or playback calls. Its production-image smoke starts the local container, authenticates, and verifies the configured provider catalog only.
+- Before a provider-specific release, run its ignored live test explicitly. The aggregate certification example exercises every enabled default provider, including K20. AniZone remains opt-in; its explicit certification verifies search, regular episode resolution, HLS playback, and English subtitle extraction. AniDB certification verifies search, regular episode resolution, and Japanese-audio HLS playback:
 
   ```sh
+  cargo run --example provider_certification
   cargo test --test providers_live test_anizone_live_playback -- --ignored --nocapture
   cargo test --test providers_live test_anizone_live_health -- --ignored --nocapture
   cargo test --test providers_live test_anidb_live_playback -- --ignored --nocapture
   cargo test --test providers_live test_anidb_live_health -- --ignored --nocapture
   ```
 
-- Production defaults enable AniZone, AniDB, and AnimeGG for English and OPhim, KKPhim, and Niniyo for Vietnamese. MovieBox is disabled because its current DASH stream is HEVC-only. AniZone and AniDB fetch through the system `curl` binary with a neutral `any-watch/1.0` user agent - never a browser-claiming UA or reqwest TLS stack - because their upstream network policies reject or challenge the reqwest transport. A provider is selectable only while its application health check is healthy.
+- Production defaults enable AniDB, AnimeGG, KKPhim, OPhim, Niniyo, and K20. Invidious is optional and is enabled only when `ANY_WATCH_INVIDIOUS_URL` is configured. AniZone and MovieBox are disabled by default; MovieBox's current DASH output is HEVC-only. When enabled, AniZone and AniDB fetch through the system `curl` binary with a neutral `any-watch/1.0` user agent - never a browser-claiming UA or reqwest TLS stack - because their upstream network policies reject or challenge the reqwest transport. A provider is selectable only while its application health check is healthy.
 - A provider can become unavailable because of rate limits, regional routing, or upstream changes. Treat that as an operational incident, not a reason to delete user data or bypass access controls.
-- Authenticated `GET /api/providers/health` results are cached for five minutes, and concurrent stale requests share one refresh. Each provider check is bounded to 60 seconds. If the initial UI health request fails while entries are still `unknown`, they become retryable `unavailable` entries instead of remaining indefinitely in `Checking`.
+- Authenticated `GET` and `POST /api/providers/health` refreshes share a five-minute aggregate cache and coalescing/version protection. At most four provider checks run concurrently, and each provider check is bounded to 60 seconds. If the initial UI health request fails while entries are still `unknown`, they become retryable `unavailable` entries instead of remaining indefinitely in `Checking`.
 - AniSkip certification must verify the exact catalog ID, provider episode
   number, and stream duration. Run
   `cargo test skip_times::tests::live_one_piece_skip_times_smoke -- --ignored --nocapture`
@@ -191,6 +194,7 @@ Production validation must confirm:
 - `/` returns `X-Any-Watch-Mode: app` while the origin is healthy;
 - authenticated `/api/providers/health` can exceed four seconds, up to the 70-second edge allowance, without selecting maintenance;
 - during a controlled Caddy stop, `/` serves the static shell and ordinary API routes return JSON `503`;
+- if both the application origin and GitHub Pages maintenance origin are unavailable, navigation returns the controlled plain-text `503` with `X-Any-Watch-Mode: maintenance` and `Retry-After: 60`;
 - `/status.json` reports one stable `detectedAtIso` throughout the outage; and
 - after recovery, `/status.json` returns `mode: online`, clears `detectedAtIso`, and `/` returns app mode again.
 

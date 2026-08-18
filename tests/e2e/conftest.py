@@ -62,7 +62,8 @@ def mocked_page(page, vite_server):
                     { name: "AllAnime", language: "English", languageGroup: "english", status: "healthy", failureCode: null, websiteUrl: null, verificationUrl: "https://api.allanime.day/api", capabilities: { search: true, details: true, episodes: true, playback: true, subtitles: true } },
                     { name: "AnimeGG", language: "English", languageGroup: "english", status: "healthy", failureCode: null, websiteUrl: "https://www.animegg.org", verificationUrl: null, capabilities: { search: true, details: true, episodes: true, playback: true, subtitles: false } },
                     { name: "KKPhim", language: "Vietnamese", languageGroup: "vietnamese", status: "healthy", failureCode: null, websiteUrl: "https://www.kkphim.com", verificationUrl: null, capabilities: { search: true, details: true, episodes: true, playback: true, subtitles: false } },
-                    { name: "OPhim", language: "Vietnamese", languageGroup: "vietnamese", status: "healthy", failureCode: null, websiteUrl: "https://ophim19.cc", verificationUrl: null, capabilities: { search: true, details: true, episodes: true, playback: true, subtitles: false } }
+                    { name: "OPhim", language: "Vietnamese", languageGroup: "vietnamese", status: "healthy", failureCode: null, websiteUrl: "https://ophim19.cc", verificationUrl: null, capabilities: { search: true, details: true, episodes: true, playback: true, subtitles: false } },
+                    { name: "Invidious", language: "YouTube", languageGroup: "youtube", status: "healthy", failureCode: null, websiteUrl: "https://invidious.example", verificationUrl: null, capabilities: { search: true, details: true, episodes: true, playback: true, subtitles: true } }
                 ],
                 my_list: [
                     {
@@ -95,6 +96,10 @@ def mocked_page(page, vite_server):
                 skip_times: null,
                 playback_error: null,
                 download_error: null,
+                youtube_search_delays: {},
+                youtube_feed_delays: {},
+                youtube_related_delays: {},
+                youtube_playback_delays: {},
                 downloads: [],
                 update_available: false,
                 update_error: null,
@@ -115,6 +120,23 @@ def mocked_page(page, vite_server):
         };
 
         window.__API_MOCK_STATE__ = getMockState();
+
+        const makeYouTubeVideo = (id, title, author = "Mock Channel", meta = "1M views · 1 day ago") => ({
+            id,
+            provider: "Invidious",
+            title,
+            coverUrl: `https://example.com/youtube-${id}.jpg`,
+            bannerUrl: `https://example.com/youtube-${id}-banner.jpg`,
+            language: "YouTube",
+            totalEpisodes: null,
+            synopsis: `${author} · ${meta}\nA mock video description for ${title}.`,
+            isFavorite: false
+        });
+
+        const waitForMockDelay = async (delays, key) => {
+            const delay = Number(delays?.[key] || 0);
+            if (delay > 0) await new Promise((resolve) => setTimeout(resolve, delay));
+        };
 
         const invokeMock = async function(cmd, args = {}) {
             window.__API_CALLS__.push({ cmd, args });
@@ -276,7 +298,38 @@ def mocked_page(page, vite_server):
                     format: "TV",
                     seasonYear: 2026
                 }));
+            } else if (cmd === "get_youtube_trending") {
+                const topic = args.topic || "All";
+                await waitForMockDelay(state.youtube_feed_delays, topic);
+                return Array.from({ length: 18 }, (_, index) =>
+                    makeYouTubeVideo(
+                        `${topic.toLowerCase()}-${index + 1}`,
+                        index === 0 && topic === "All" ? "Saved Video" : `${topic} Video ${index + 1}`,
+                        `${topic} Channel ${index + 1}`,
+                    )
+                );
+            } else if (cmd === "get_youtube_popular") {
+                await waitForMockDelay(state.youtube_feed_delays, "Popular");
+                return Array.from({ length: 18 }, (_, index) =>
+                    makeYouTubeVideo(`popular-${index + 1}`, `Popular Video ${index + 1}`)
+                );
+            } else if (cmd === "get_youtube_related") {
+                await waitForMockDelay(state.youtube_related_delays, args.videoId);
+                return Array.from({ length: 8 }, (_, index) =>
+                    makeYouTubeVideo(`${args.videoId}-related-${index + 1}`, `${args.videoId} Related ${index + 1}`)
+                );
             } else if (cmd === "search_source") {
+                if (args.source === "Invidious") {
+                    const query = args.query || "";
+                    await waitForMockDelay(state.youtube_search_delays, query);
+                    return Array.from({ length: 12 }, (_, index) =>
+                        makeYouTubeVideo(
+                            `${query.toLowerCase().replace(/[^a-z0-9]+/g, "-") || "video"}-${index + 1}`,
+                            index === 0 && query.toLowerCase().includes("saved") ? "Saved Video" : `${query} Video ${index + 1}`,
+                            `${query} Channel ${index + 1}`,
+                        )
+                    );
+                }
                 if (state.provider_search_error) {
                     throw new Error(state.provider_search_error);
                 }
@@ -351,6 +404,9 @@ def mocked_page(page, vite_server):
                     isFavorite: false
                 })));
             } else if (cmd === "get_anime_details") {
+                if (args.provider === "Invidious") {
+                    await waitForMockDelay(state.youtube_playback_delays, args.animeId);
+                }
                 return {
                     coverUrl: "https://example.com/details.jpg",
                     bannerUrl: "https://example.com/banner.jpg",
@@ -501,6 +557,13 @@ def mocked_page(page, vite_server):
             else if (method === "GET" && path === "/catalog/search") {
                 cmd = "search_catalog";
                 args = { query: url.searchParams.get("query") || "" };
+            } else if (method === "GET" && path === "/youtube/trending") {
+                cmd = "get_youtube_trending";
+                args = { topic: url.searchParams.get("topic") || "All" };
+            } else if (method === "GET" && path === "/youtube/popular") cmd = "get_youtube_popular";
+            else if (method === "GET" && path.startsWith("/youtube/related/")) {
+                cmd = "get_youtube_related";
+                args = { videoId: decodeURIComponent(path.slice("/youtube/related/".length)) };
             } else if (method === "POST" && path === "/availability") cmd = "resolve_availability";
             else if (method === "GET" && path === "/history") cmd = "get_continue_watching";
             else if (method === "GET" && path === "/my-list") cmd = "get_my_list";

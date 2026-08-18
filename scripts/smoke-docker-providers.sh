@@ -9,6 +9,7 @@ PASSWORD="Provider-Smoke-Password-2026"
 COOKIE_JAR="$(mktemp)"
 SEGMENT="$(mktemp)"
 LIVE_PROVIDERS="${ANY_WATCH_SMOKE_LIVE_PROVIDERS:-0}"
+INVIDIOUS_URL="${ANY_WATCH_SMOKE_INVIDIOUS_URL:-}"
 
 PYTHON_BIN="${PYTHON_BIN:-}"
 if [[ -z "$PYTHON_BIN" ]]; then
@@ -23,12 +24,18 @@ cleanup() {
 trap cleanup EXIT
 
 docker rm -f "$CONTAINER" >/dev/null 2>&1 || true
-docker run --detach --name "$CONTAINER" \
-  --publish "127.0.0.1:${PORT}:3000" \
-  --env ANY_WATCH_ADMIN_USERNAME=provider_admin \
-  --env "ANY_WATCH_ADMIN_PASSWORD=${PASSWORD}" \
-  --env ANY_WATCH_SECURE_COOKIES=0 \
-  "$IMAGE" >/dev/null
+docker_args=(
+  --detach
+  --name "$CONTAINER"
+  --publish "127.0.0.1:${PORT}:3000"
+  --env ANY_WATCH_ADMIN_USERNAME=provider_admin
+  --env "ANY_WATCH_ADMIN_PASSWORD=${PASSWORD}"
+  --env ANY_WATCH_SECURE_COOKIES=0
+)
+if [[ -n "$INVIDIOUS_URL" ]]; then
+  docker_args+=(--env "ANY_WATCH_INVIDIOUS_URL=${INVIDIOUS_URL}")
+fi
+docker run "${docker_args[@]}" "$IMAGE" >/dev/null
 
 for _ in {1..60}; do
   if curl --fail --silent "${BASE_URL}/api/health" >/dev/null; then
@@ -46,20 +53,23 @@ curl --fail --silent \
   "${BASE_URL}/api/login" >/dev/null
 
 sources="$(curl --fail --silent --cookie "$COOKIE_JAR" "${BASE_URL}/api/sources")"
-"$PYTHON_BIN" - "$sources" <<'PY'
+"$PYTHON_BIN" - "$sources" "$INVIDIOUS_URL" <<'PY'
 import json
 import sys
 
 names = [source["name"] for source in json.loads(sys.argv[1])]
-assert names == ["AniZone", "AniDB", "MovieBox", "AnimeGG", "KKPhim", "OPhim", "Niniyo"], names
+expected = ["AniDB", "AnimeGG", "KKPhim", "OPhim", "Niniyo", "K20"]
+if sys.argv[2]:
+    expected.insert(0, "Invidious")
+assert names == expected, {"actual": names, "expected": expected}
 PY
 
-health="$(curl --fail --silent --cookie "$COOKIE_JAR" "${BASE_URL}/api/providers/health")"
 if [ "$LIVE_PROVIDERS" != "1" ]; then
   echo "Docker container smoke test passed (authenticated configured provider catalog)."
   exit 0
 fi
 
+health="$(curl --fail --silent --cookie "$COOKIE_JAR" "${BASE_URL}/api/providers/health")"
 "$PYTHON_BIN" - "$health" <<'PY'
 import json
 import sys
@@ -105,7 +115,7 @@ playback="$(curl --fail --silent \
   --header 'X-Any-Watch-Request: 1' \
   --data "{\"provider\":\"OPhim\",\"episodeId\":\"${episode_id}\"}" \
   "${BASE_URL}/api/playback")"
-playback_url="$(python3 - "$playback" <<'PY'
+playback_url="$("$PYTHON_BIN" - "$playback" <<'PY'
 import json
 import sys
 
@@ -118,7 +128,7 @@ PY
 )"
 
 manifest="$(curl --fail --silent --cookie "$COOKIE_JAR" "${BASE_URL}${playback_url}")"
-resource_path="$(python3 - "$manifest" <<'PY'
+resource_path="$("$PYTHON_BIN" - "$manifest" <<'PY'
 import sys
 
 manifest = sys.argv[1]
@@ -128,7 +138,7 @@ print(next(line.strip() for line in manifest.splitlines() if line.strip() and no
 PY
 )"
 media_playlist="$(curl --fail --silent --cookie "$COOKIE_JAR" "${BASE_URL}${resource_path}")"
-segment_path="$(python3 - "$media_playlist" <<'PY'
+segment_path="$("$PYTHON_BIN" - "$media_playlist" <<'PY'
 import sys
 
 playlist = sys.argv[1]
@@ -140,63 +150,6 @@ PY
 curl --fail --silent --range 0-4095 --cookie "$COOKIE_JAR" \
   "${BASE_URL}${segment_path}" --output "$SEGMENT"
 test "$(wc -c < "$SEGMENT")" -gt 0
-
-search="$(curl --fail --silent \
-  --cookie "$COOKIE_JAR" \
-  --header 'Content-Type: application/json' \
-  --header 'X-Any-Watch-Request: 1' \
-  --data '{"source":"AniZone","query":"One Piece"}' \
-  "${BASE_URL}/api/source/search")"
-anime_id="$("$PYTHON_BIN" - "$search" <<'PY'
-import json
-import sys
-
-print(next(item["id"] for item in json.loads(sys.argv[1]) if item["title"].casefold() == "one piece"))
-PY
-)"
-episodes="$(curl --fail --silent \
-  --cookie "$COOKIE_JAR" \
-  --header 'Content-Type: application/json' \
-  --header 'X-Any-Watch-Request: 1' \
-  --data "{\"provider\":\"AniZone\",\"animeId\":\"${anime_id}\"}" \
-  "${BASE_URL}/api/anime/episodes")"
-episode_id="$("$PYTHON_BIN" - "$episodes" <<'PY'
-import json
-import sys
-
-episodes = json.loads(sys.argv[1])
-assert len(episodes) > 1000, len(episodes)
-print(episodes[-1]["id"])
-PY
-)"
-playback="$(curl --fail --silent \
-  --cookie "$COOKIE_JAR" \
-  --header 'Content-Type: application/json' \
-  --header 'X-Any-Watch-Request: 1' \
-  --data "{\"provider\":\"AniZone\",\"episodeId\":\"${episode_id}\"}" \
-  "${BASE_URL}/api/playback")"
-read -r playback_url subtitle_url < <(python3 - "$playback" <<'PY'
-import json
-import sys
-
-playback = json.loads(sys.argv[1])
-assert playback["streamKind"] == "hls", playback
-assert playback["playbackUrl"].startswith("/api/media/"), playback
-assert len(playback["subtitles"]) >= 1, playback
-english = next(track for track in playback["subtitles"] if track["language"].casefold() == "english")
-assert english["url"].startswith("/api/media/"), english
-print(playback["playbackUrl"], english["url"])
-PY
-)
-manifest="$(curl --fail --silent --cookie "$COOKIE_JAR" "${BASE_URL}${playback_url}")"
-test "${manifest:0:7}" = "#EXTM3U"
-subtitle="$(curl --fail --silent --cookie "$COOKIE_JAR" "${BASE_URL}${subtitle_url}")"
-test "${subtitle:0:6}" = "WEBVTT"
-"$PYTHON_BIN" - "$subtitle" <<'PY'
-import sys
-
-assert "-->" in sys.argv[1]
-PY
 
 search="$(curl --fail --silent \
   --cookie "$COOKIE_JAR" \
@@ -233,7 +186,7 @@ playback="$(curl --fail --silent \
   --header 'X-Any-Watch-Request: 1' \
   --data "{\"provider\":\"AniDB\",\"episodeId\":\"${episode_id}\"}" \
   "${BASE_URL}/api/playback")"
-playback_url="$(python3 - "$playback" <<'PY'
+playback_url="$("$PYTHON_BIN" - "$playback" <<'PY'
 import json
 import sys
 
@@ -247,4 +200,4 @@ PY
 manifest="$(curl --fail --silent --cookie "$COOKIE_JAR" "${BASE_URL}${playback_url}")"
 test "${manifest:0:7}" = "#EXTM3U"
 
-echo "Docker provider certification passed (opaque proxy plus AniZone English subtitles and AniDB HLS)."
+echo "Docker provider certification passed (opaque OPhim proxy and AniDB HLS)."

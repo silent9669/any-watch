@@ -15,16 +15,18 @@ upstream provider or permit transferring browser cookies into the service.
 
 | Provider | Language focus | Current status | any-watch disposition |
 | --- | --- | --- | --- |
+| Invidious | YouTube, source-language agnostic | Implemented through documented v1 search/video/caption and DASH manifest APIs, with trending, popular, and related video feeds | Opt-in with `ANY_WATCH_INVIDIOUS_URL`; displayed in a dedicated authentic YouTube watch experience & dashboard |
+| K20 | Vietnamese | Implemented via Stremio Addon protocol (`sc.k-20.xyz`); multi-catalog support (NguonC, STP, HH3D, VSMOV, YanHH3D) with direct HLS & WebVTT/SRT subtitles | Enabled by default; certified for live search, episode index, and direct playback |
 | MovieBox | English | Implemented; current playback is HEVC-only DASH | Disabled until an AVC/VP9/AV1 browser-safe stream is certified |
 | KKPhim | Vietnamese | Implemented and certified | Enabled by default |
-| OPhim | Vietnamese | Implemented and certified | Enabled by default |
+| OPhim | Vietnamese | Implemented and certified; hardened timeout (45s) and multi-CDN fallback | Enabled by default |
 | Niniyo | Vietnamese | Implemented and certified | Enabled by default |
 | AllAnime | English | Legacy adapter; current source API is challenge-gated | Keep disabled; no documented browser-safe integration is available |
 | AnimeGG | English | Implemented and certified | Enabled by default |
 | AnimeVietSub | Vietnamese | Legacy adapter currently duplicates OPhim's public API | Disabled candidate; replace with a distinct documented web-safe integration before enabling |
 | HiAnime | English | Stub, not registered | Do not port without a supported integration basis |
 | AnimeTVN | Vietnamese | Configuration only, no adapter | Do not port without an implementation and supported integration basis |
-| AniZone | English | Implemented; current structured search payload, HLS, and converted English softsubs pass live browser and Docker playback | Enabled by default at user direction; undocumented page integration remains fragile |
+| AniZone | English | Implemented; current structured search payload, HLS, and converted English softsubs passed prior live browser and Docker playback checks | Disabled by default; retain as an opt-in operational adapter pending re-certification of its undocumented page integration |
 | AniDB | English | Implemented from ani-cli v5 (`92e9d796d23aef3ae94b52852f9c992e2bce4fe3`); search, 1,173 One Piece episodes, Japanese HLS pass live playback | Enabled by default; public frontend endpoints without a documented API contract |
 | Reanime | English | Public catalog API documented; playback integration is undocumented | Defer pending a supported playback API, embed, or handoff |
 | Prowlarr | N/A | Configuration only | Not a playback provider |
@@ -84,11 +86,12 @@ supported embed, or external handoff. No canonical API terms, caching rules, or
 integration permission were found, and the media CDN authorizes browser CORS
 only for AniZone's own origin.
 
-At the user's explicit direction, AniZone is now enabled despite the absence of
-a documented integration contract. The adapter uses public first-party search,
-title, and episode pages without imported cookies or challenge bypasses. Search
-results are read from the page's structured `items` payload because AniZone no
-longer renders one Livewire card per result.
+AniZone remains implemented but disabled by default. It may be explicitly
+enabled as an operational opt-in despite the absence of a documented integration
+contract. The adapter uses public first-party search, title, and episode pages
+without imported cookies or challenge bypasses. Search results are read from the
+page's structured `items` payload because AniZone no longer renders one Livewire
+card per result.
 The authenticated opaque proxy relays HLS manifests, keys, audio, video, and
 segments, and converts English ASS tracks to browser-native WebVTT. This loses
 advanced ASS positioning, fonts, animation, and karaoke styling but preserves
@@ -133,6 +136,23 @@ The integration has no documented public API contract and upstream page markup,
 embed structure, or bot policy can change without notice. Failures are
 classified and isolated from login, libraries, and the other providers.
 
+### K20 (Stremio Addon Protocol)
+
+Evaluated on 2026-08-18 against `https://sc.k-20.xyz`, a public Stremio Addon service
+aggregating Vietnamese and East Asian cinema catalogs (NguonC, STP, HH3D, VSMOV, YanHH3D).
+The integration conforms to the standard Stremio Addon specification:
+
+- Catalog search queries: `/catalog/{type}/{catalog_id}/search={query}.json`
+- Media metadata & episode lists: `/meta/{type}/{id}.json`
+- Stream discovery & subtitles: `/stream/{type}/{id}.json`
+
+The provider features:
+- Multi-catalog simultaneous asynchronous search across series and movie categories.
+- Robust alphanumeric episode identifier parsing with fallbacks.
+- Web-standard direct HLS media streams with automatic WebVTT/SRT subtitle extraction and mapping.
+- Browser-safe same-origin proxy support through any-watch's opaque stream pipeline.
+- Certified against live anime search (e.g. Naruto, One Piece) and video playback.
+
 ### Reanime
 
 Evaluated on 2026-08-12 against `reanime.to`. Its first-party OpenAPI document
@@ -164,18 +184,20 @@ Each adapter implements or explicitly disables:
   match the canonical title; ambiguous season splits and decimal specials stay
   unmapped.
 
-The aggregate health GET caches and coalesces checks for five minutes. Each
-provider health operation has a 60-second backend timeout; the Cloudflare Worker
-gives the aggregate endpoint 70 seconds and leaves provider-level failures
-scoped to that endpoint.
+Authenticated aggregate `GET` and `POST /api/providers/health` refreshes share a
+five-minute cache and coalescing/version protection. At most four provider checks
+run concurrently, and each provider-health operation has a 60-second backend
+timeout. The Cloudflare Worker gives the aggregate endpoint 70 seconds and leaves
+provider-level failures scoped to that endpoint.
 
 Provider search results remain distinct. Matching a canonical title is a
 confidence-scored mapping; it is never permission to merge source episode IDs or
 to silently switch playback providers.
 
-The current defaults expose AniSkip numbers for AniZone, AniDB, AnimeGG,
-KKPhim, OPhim, and integer-numbered Niniyo episodes. Automatic Skip intro still requires a
-unique exact catalog match and a compatible episode duration. AniSkip may have
+The enabled-by-default providers expose AniSkip numbers for AniDB, AnimeGG,
+KKPhim, OPhim, and integer-numbered Niniyo episodes. AniZone exposes the same
+mapping when explicitly enabled. Automatic Skip intro still requires a unique
+exact catalog match and a compatible episode duration. AniSkip may have
 no submitted timing for an otherwise correct episode (for example, One Piece
 1170 at the time of certification); the application must not borrow timing from
 an adjacent episode.
