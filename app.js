@@ -6,11 +6,11 @@
     mode: "maintenance",
     headline: "OFFLINE MAI UPDATE",
     message:
-      "any-watch is temporarily offline for maintenance. Your watch history, family accounts, and library remain stored safely on the home server.",
+      "any-watch is temporarily offline for maintenance. Your watch history, account, and library remain stored safely on my home server.",
     statusLabel: "Maintenance in progress",
     expectedReturn: "Shortly",
     detectedAtIso: null,
-    privacy: "Account data stays on your home server."
+    privacy: "Account data stays on home server."
   });
 
   function detectionTime(value) {
