@@ -1074,7 +1074,8 @@ def test_t3_hls_uses_browser_appropriate_playback_path(mocked_page, browser_name
         return Boolean(video?.currentSrc);
     }""")
     current_src = mocked_page.locator("video").evaluate("video => video.currentSrc")
-    if browser_name == "webkit":
+    can_native_hls = mocked_page.locator("video").evaluate("video => Boolean(video.canPlayType('application/vnd.apple.mpegurl'))")
+    if can_native_hls and browser_name == "webkit":
         assert current_src.endswith(".m3u8")
     else:
         assert current_src.startswith("blob:")

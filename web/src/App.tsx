@@ -4069,8 +4069,9 @@ function VideoPlayer({
         if (!disposed) setError(`The DASH player could not start (${String(loadError)}).`);
       });
     } else if (streamIsHls) {
+      const canNativeHls = Boolean(video.canPlayType("application/vnd.apple.mpegurl"));
       const startNativeHls = () => {
-        if (!video.canPlayType("application/vnd.apple.mpegurl")) {
+        if (!canNativeHls) {
           setError("This browser cannot play HLS streams.");
           return;
         }
@@ -4079,7 +4080,7 @@ function VideoPlayer({
         video.load();
       };
 
-      if (prefersNativeHls()) {
+      if (prefersNativeHls() && canNativeHls) {
         startNativeHls();
       } else {
         void import("hls.js").then(({ default: HlsRuntime }) => {
@@ -4121,7 +4122,7 @@ function VideoPlayer({
           });
         }).catch((loadError) => {
           if (disposed) return;
-          if (video.canPlayType("application/vnd.apple.mpegurl")) {
+          if (canNativeHls) {
             startNativeHls();
           } else {
             setError(`The HLS player could not start (${String(loadError)}).`);
