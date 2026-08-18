@@ -135,7 +135,7 @@ jobs:
           persist-credentials: false
 
       - name: Build production image
-        run: docker build --tag any-watch:ci .
+        run: docker build --tag any-watch:provider-verification .
 
       - name: Smoke-test production image
         run: bash scripts/smoke-docker-providers.sh
