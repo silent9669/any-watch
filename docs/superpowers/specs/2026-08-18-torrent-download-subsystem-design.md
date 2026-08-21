@@ -3,8 +3,8 @@
 ## 1. Overview & Objectives
 
 This specification defines the architecture, data models, APIs, and UI components for the **Download Section** in Any-Watch. The feature enables users to:
-1. Search across multiple public torrent indexers (Anime: Nyaa, AnimeTosho; Cinema Movies & Shows: YTS.mx, ThePirateBay, 1337x/EZTV).
-2. Download torrent contents securely on the server using an embedded BitTorrent engine.
+1. Search across multiple public torrent indexers (Anime: Nyaa, AnimeTosho; Cinema Movies & Shows: YTS.mx and ThePirateBay).
+2. Download torrent contents securely on the server using the sandboxed `aria2c` BitTorrent client bundled in the production image.
 3. Automatically extract and remux the target media into standard web/device-compatible **MP4 format (`faststart`)** without unnecessary quality loss.
 4. Auto-detect and extract embedded subtitles (English, Vietnamese), or fetch external **EngSub & VietSub** tracks (via SubDL / OpenSubtitles).
 5. Provide a responsive, real-time "Download" UI in the web application for queue management, progress tracking, in-app preview, and 1-click browser download to user devices.
@@ -20,21 +20,21 @@ A modular `TorrentSearchProvider` trait with asynchronous search implementations
 - **`AnimeToshoProvider`**: Queries `animetosho.org` JSON API with rich metadata, quality tags, and direct subtitle/attachment links.
 - **`YtsProvider`**: Queries `yts.mx` JSON API (`/api/v2/list_movies.json`) for cinema releases with 720p/1080p/4K qualities, seeds, and IMDb IDs.
 - **`ThePirateBayProvider`**: Queries reliable TPB API proxies (e.g. `apibay.org`) with query sanitization and category filtering.
-- **`Ez1337xProvider`**: General TV show and movies query adapter.
-- **`TorrentSearchHub`**: Concurrent orchestrator with timeout (5s default per provider), deduplication, seed-based sorting, and normalization.
+- **`TorrentSearchHub`**: Concurrent orchestrator with a 15-second timeout per provider, page-aware queries, deduplication, seed-based sorting, source aliases, and a bounded aggregate result set.
 
 ### 2.2 Subtitle Extraction & Lookup (`any-watch-core::subtitles`)
 - **Embedded Subtitles**: Inspects container streams (MKV/MP4) using container parsers / `ffprobe` to extract `.srt` and `.vtt` tracks, tagging language codes (`en`, `vi`, `ja`).
 - **External Subtitles**: Integrates SubDL / OpenSubtitles API searching by title, release group, or IMDb ID for English and Vietnamese subtitles.
 
 ### 2.3 BitTorrent Engine & Video Extraction (`server::torrent_engine`)
-- **Engine**: Async BitTorrent client integrated within the Rust service, supporting magnet URIs and `.torrent` files.
-- **Sequential Downloading**: Prioritizes video piece sequential acquisition.
-- **Sandboxed Storage**: Temp directory in `/data/downloads_tmp/{task_id}/` (configurable via `APP_DOWNLOAD_DIR`).
+- **Engine**: The Rust service manages a cancellable `aria2c` process for each active task, supporting validated magnet URIs and HTTP(S) `.torrent` files.
+- **Queueing**: A global three-task semaphore keeps accepted jobs queued without rejecting normal bursts.
+- **Sandboxed Storage**: Task directories live in `/data/downloads_tmp/{task_id}/` by default and can be moved with `ANY_WATCH_TORRENT_DOWNLOAD_DIR`.
 - **Storage Safety**:
   - Maximum concurrent active downloads (default: 3).
   - Enforced disk space quota (aborts if free space < 2GB).
-  - Automatic cleanup worker: purges temporary task directories 2 hours after completion or cancellation.
+  - Per-user ownership and persisted task metadata survive restarts; interrupted work is marked failed honestly.
+  - Automatic cleanup purges completed or failed task directories after 24 hours.
 - **Video Remuxing**:
   - Stream-copy container remux (`ffmpeg`/container remuxer) to generate `.mp4` with `+faststart` metadata for instant seeking and broad device compatibility.
   - Converts unsupported audio codecs (e.g. DTS/AC3) to standard stereo/5.1 AAC if required for web playback.
@@ -43,8 +43,9 @@ A modular `TorrentSearchProvider` trait with asynchronous search implementations
 - `GET /api/torrents/search`: Query multi-source indexers (`query`, `category`, `source`).
 - `POST /api/torrents/download`: Initiate a download & extraction task (`magnet_url`, `title`, `sub_pref`).
 - `GET /api/torrents/tasks`: List all active, ready, and failed tasks with progress, speed, and ETA.
-- `GET /api/torrents/tasks/:id/events`: Server-Sent Events (SSE) for live task progress.
-- `GET /api/torrents/tasks/:id/file`: Stream extracted `.mp4` with `Content-Disposition: attachment`.
+- `GET /api/torrents/tasks`: Pollable task state for progress, speed, and ETA.
+- `GET /api/torrents/tasks/:id/file`: Download the prepared `.mp4`.
+- `GET /api/torrents/tasks/:id/stream`: Range-enabled inline MP4 playback.
 - `GET /api/torrents/tasks/:id/subtitles/:lang`: Stream extracted or fetched `.vtt` / `.srt` subtitle.
 - `DELETE /api/torrents/tasks/:id`: Cancel task or remove completed file and clean up disk.
 

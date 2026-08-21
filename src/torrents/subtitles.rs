@@ -155,7 +155,7 @@ impl SubtitleFinder {
                 }
                 other => (
                     other.to_string(),
-                    other[..2.min(other.len())].to_lowercase(),
+                    other.chars().take(2).collect::<String>().to_lowercase(),
                 ),
             };
 
@@ -284,9 +284,14 @@ impl SubtitleFinder {
             .await
             .context("Failed to fetch subtitle file")?;
 
+        let resp = resp
+            .error_for_status()
+            .context("Subtitle download returned an error")?;
         let bytes = resp.bytes().await?;
-        // If it's a zip or gz, could handle, or decode utf-8
-        let text = String::from_utf8_lossy(&bytes).to_string();
-        Ok(text)
+        anyhow::ensure!(
+            !bytes.starts_with(&[b'P', b'K', 0x03, 0x04]) && !bytes.starts_with(&[0x1f, 0x8b]),
+            "Subtitle provider returned an archive; use the task extractor instead"
+        );
+        String::from_utf8(bytes.to_vec()).context("Subtitle file was not UTF-8 text")
     }
 }

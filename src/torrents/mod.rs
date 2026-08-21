@@ -49,6 +49,7 @@ pub trait TorrentSearchProvider: Send + Sync {
         &self,
         query: &str,
         category: TorrentCategory,
+        page: u32,
     ) -> Result<Vec<TorrentSearchResult>>;
 }
 
@@ -115,15 +116,15 @@ pub fn detect_subtitles(title: &str) -> (bool, bool) {
         || lower.contains(".raw.")
         || lower.contains("[raw]");
 
-    let has_engsub = lower.contains("engsub")
-        || lower.contains("eng sub")
-        || lower.contains("english")
-        || lower.contains("multi-sub")
-        || lower.contains("multisub")
-        || lower.contains("dual audio")
-        || lower.contains("subbed")
-        || lower.contains("[sub]")
-        || !has_foreign_only;
+    let has_engsub = !has_foreign_only
+        && (lower.contains("engsub")
+            || lower.contains("eng sub")
+            || lower.contains("english")
+            || lower.contains("multi-sub")
+            || lower.contains("multisub")
+            || lower.contains("dual audio")
+            || lower.contains("subbed")
+            || lower.contains("[sub]"));
 
     (has_engsub, has_vietsub)
 }
@@ -168,7 +169,7 @@ mod tests {
     fn test_detect_subtitles() {
         let (eng, viet) = detect_subtitles("[Vietsub] Kimetsu no Yaiba - Ep 01 [1080p].mkv");
         assert!(viet);
-        assert!(eng);
+        assert!(!eng);
 
         let (eng2, viet2) = detect_subtitles("Attack.on.Titan.S04E28.EngSub.1080p.mkv");
         assert!(!viet2);

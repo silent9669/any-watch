@@ -12,9 +12,9 @@ and SQLite persistence.
 - Account-scoped watch history, progress, and My List across browsers.
 - Title-first discovery with explicit provider availability and no silent source switching.
 - Authentic YouTube viewing experience via Invidious: Trending & Popular feeds, topic chips (`All`, `Trending`, `Music`, `Gaming`, `News`, `Animations`), Theater Watch Room with channel bar and Up Next / Related video queue, and 16:9 continue watching cards.
-- Provider Search Dashboards with provider-specific continue watching shelves, status indicators, and curated quick search tags.
+- Provider Search Dashboards with provider-backed film, series, and anime suggestions, explicit status, quick search topics, and general-catalog fallback when a provider feed is unavailable.
 - Universal Home Dashboard aggregating watch history across all anime providers and YouTube.
-- Multi-source torrent search aggregation (Nyaa.si, AnimeTosho, YTS.mx, The Pirate Bay) with subtitle detection (VietSub & EngSub) and server-side fast-start MP4 remuxing for direct downloads.
+- Multi-page torrent search aggregation (Nyaa.si, AnimeTosho, YTS.mx, The Pirate Bay) with per-user queued `aria2c` tasks, safe archive inspection, main-video selection, bundled and embedded subtitle extraction, browser-compatible fast-start MP4 preparation, inline preview, and direct download.
 - Browser-native HLS, DASH, subtitle, quality, fullscreen, and picture-in-picture playback across Chrome, Firefox, and Safari.
 - AniSkip opening and ending markers with a persistent Skip intro preference.
 - Browser downloads through short-lived authenticated tickets.
@@ -66,7 +66,10 @@ ANY_WATCH_ADMIN_PASSWORD='replace-with-a-long-password' npm run serve:web
 ```
 
 The `ANY_WATCH_*` environment variable names and existing SQLite paths are kept
-for deployment and data compatibility.
+for deployment and data compatibility. Hosted mode uses certified provider
+defaults unless `ANY_WATCH_PROVIDER_OVERRIDES` is set. To load a TOML file such
+as `/data/config.toml`, set `ANY_WATCH_CONFIG_PATH` explicitly; hosted mode does
+not read a workstation user config implicitly.
 
 ## Local Testing Guide
 
@@ -139,7 +142,7 @@ data mount and environment variables when upgrading so accounts, sessions,
 history, and My List remain available.
 
 Authenticated `GET` and `POST /api/providers/health` refreshes share a
-five-minute aggregate cache and coalescing/version protection. At most four
+five-minute aggregate cache and coalescing/version protection. At most sixteen
 provider checks run concurrently, and each check has a 60-second backend timeout.
 Cloudflare allows that endpoint 70 seconds without selecting whole-site
 maintenance. The independent GitHub Pages maintenance shell is static; the

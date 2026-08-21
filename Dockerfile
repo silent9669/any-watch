@@ -19,7 +19,7 @@ RUN cargo build --locked --release -p any-watch-server
 
 FROM debian:bookworm-slim
 RUN apt-get update \
-    && apt-get install -y --no-install-recommends ca-certificates curl gosu ffmpeg \
+    && apt-get install -y --no-install-recommends ca-certificates curl gosu ffmpeg aria2 p7zip-full unrar-free \
     && rm -rf /var/lib/apt/lists/* \
     && printf 'precedence ::ffff:0:0/96  100\n' >> /etc/gai.conf \
     && groupadd --system any-watch \

@@ -50,6 +50,7 @@ impl TorrentSearchProvider for ThePirateBayProvider {
         &self,
         query: &str,
         category: TorrentCategory,
+        page: u32,
     ) -> Result<Vec<TorrentSearchResult>> {
         let mut url = Url::parse("https://apibay.org/q.php")?;
         url.query_pairs_mut().append_pair("q", query);
@@ -77,11 +78,16 @@ impl TorrentSearchProvider for ThePirateBayProvider {
             .await
             .context("ThePirateBay request failed")?;
 
-        if !response.status().is_success() {
-            return Ok(Vec::new());
-        }
+        anyhow::ensure!(
+            response.status().is_success(),
+            "The Pirate Bay returned HTTP {}",
+            response.status()
+        );
 
-        let items: Vec<ApibayItem> = response.json().await.unwrap_or_default();
+        let items: Vec<ApibayItem> = response
+            .json()
+            .await
+            .context("The Pirate Bay returned invalid search JSON")?;
         let mut results = Vec::new();
 
         for item in items {
@@ -143,6 +149,8 @@ impl TorrentSearchProvider for ThePirateBayProvider {
             });
         }
 
-        Ok(results)
+        const PAGE_SIZE: usize = 50;
+        let start = page.max(1).saturating_sub(1) as usize * PAGE_SIZE;
+        Ok(results.into_iter().skip(start).take(PAGE_SIZE).collect())
     }
 }

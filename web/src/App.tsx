@@ -88,6 +88,36 @@ const fadeUpVariant = {
 };
 
 type Route = "home" | "my-list" | "continue" | "admin" | "search" | "youtube" | "detail" | "catalog" | "settings" | "download";
+
+function routeFromLocation(): Route {
+  switch (window.location.pathname.replace(/\/+$/, "") || "/") {
+    case "/search": return "search";
+    case "/youtube": return "youtube";
+    case "/downloads": return "download";
+    case "/my-list": return "my-list";
+    case "/continue": return "continue";
+    case "/catalog": return "catalog";
+    case "/settings": return "settings";
+    case "/admin": return "admin";
+    default: return "home";
+  }
+}
+
+function pathForRoute(route: Route): string {
+  switch (route) {
+    case "search": return "/search";
+    case "youtube": return "/youtube";
+    case "download": return "/downloads";
+    case "my-list": return "/my-list";
+    case "continue": return "/continue";
+    case "catalog": return "/catalog";
+    case "settings": return "/settings";
+    case "admin": return "/admin";
+    case "detail": return "/watch";
+    default: return "/";
+  }
+}
+
 type AppTheme = "obsidian" | "oled" | "ember" | "crimson" | "system";
 type AppScale = "compact" | "comfortable" | "large" | "tv";
 type AppFont = "manrope" | "noto" | "system";
@@ -126,8 +156,10 @@ function App() {
   const [youtubeTopic, setYoutubeTopic] = useState<YouTubeTopic>("All");
   const [youtubeFeed, setYoutubeFeed] = useState<Anime[]>([]);
   const [youtubeFeedLoading, setYoutubeFeedLoading] = useState(false);
+  const [youtubeFeedError, setYoutubeFeedError] = useState<string | null>(null);
   const [youtubeRelated, setYoutubeRelated] = useState<Anime[]>([]);
   const [youtubeRelatedLoading, setYoutubeRelatedLoading] = useState(false);
+  const [youtubeRelatedError, setYoutubeRelatedError] = useState<string | null>(null);
   const [youtubeWatchMode, setYoutubeWatchMode] = useState(false);
   const [selectedAnime, setSelectedAnime] = useState<Anime | null>(null);
   const [episodes, setEpisodes] = useState<Episode[]>([]);
@@ -139,7 +171,7 @@ function App() {
   const [loading, setLoading] = useState(false);
   const [loadingEpisodes, setLoadingEpisodes] = useState(false);
   const [error, setError] = useState<AppError | null>(null);
-  const [route, setRoute] = useState<Route>("home");
+  const [route, setRoute] = useState<Route>(routeFromLocation);
   const [routeStack, setRouteStack] = useState<Route[]>([]);
   const detailCacheRef = useRef<Record<string, Partial<Anime>>>({});
   const availabilityCacheRef = useRef(new Map<string, { expiresAt: number; items: ProviderAvailability[] }>());
@@ -151,6 +183,8 @@ function App() {
   const youtubeFeedGenerationRef = useRef(0);
   const youtubeRelatedGenerationRef = useRef(0);
   const youtubePlaybackGenerationRef = useRef(0);
+  const animeOpenGenerationRef = useRef(0);
+  const playbackGenerationRef = useRef(0);
   const [providerHealthPending, setProviderHealthPending] = useState<string | null>(null);
   const [theme, setTheme] = useState<AppTheme>(loadSavedTheme);
   const [appScale, setAppScale] = useState<AppScale>(loadSavedScale);
@@ -158,7 +192,27 @@ function App() {
   const [autoSkip, setAutoSkip] = useState(loadSavedAutoSkip);
 
   useEffect(() => {
+    window.history.replaceState({ anyWatchRoute: routeFromLocation() }, "", window.location.href);
+    const handlePopState = () => {
+      const nextRoute = routeFromLocation();
+      const youtubeVideoId = new URLSearchParams(window.location.search).get("v")?.trim();
+      if (nextRoute !== "youtube" || !youtubeVideoId) {
+        youtubePlaybackGenerationRef.current += 1;
+        setPlayer(null);
+        setYoutubeWatchMode(false);
+        if (!youtubeVideoId) setYoutubeSelection(null);
+      }
+      if (nextRoute !== "detail") {
+        animeOpenGenerationRef.current += 1;
+        setSelectedAnime(null);
+        setEpisodes([]);
+      }
+      setRoute(nextRoute);
+      setError(null);
+    };
+    window.addEventListener("popstate", handlePopState);
     void bootstrap();
+    return () => window.removeEventListener("popstate", handlePopState);
   }, []);
 
   useEffect(() => {
@@ -298,6 +352,34 @@ function App() {
   }, [youtubeQuery, route, youtubeTopic]);
 
   useEffect(() => {
+    if (route !== "youtube") return;
+    const videoId = new URLSearchParams(window.location.search).get("v")?.trim();
+    const source = sources.find((item) => item.name === "Invidious" && item.status === "healthy");
+    if (!videoId || !source || youtubeSelection?.id === videoId) return;
+    let active = true;
+    const placeholder: Anime = {
+      id: videoId,
+      provider: "Invidious",
+      title: "YouTube video",
+      coverUrl: `https://i.ytimg.com/vi/${encodeURIComponent(videoId)}/hqdefault.jpg`,
+      bannerUrl: null,
+      language: "YouTube",
+      totalEpisodes: null,
+      synopsis: null,
+      isFavorite: myList.some((item) => item.animeId === animeKey("Invidious", videoId)),
+    };
+    setYoutubeSelection(placeholder);
+    setYoutubeWatchMode(true);
+    void loadYoutubeRelated(videoId);
+    void api.getAnimeDetails("Invidious", videoId, placeholder.title)
+      .then((details) => {
+        if (active) setYoutubeSelection(mergeAnimeDetails(placeholder, detailPatch(details)));
+      })
+      .catch(() => undefined);
+    return () => { active = false; };
+  }, [route, sources, youtubeSelection?.id]);
+
+  useEffect(() => {
     if (!sources.length) return;
     const current = selectedSource;
     if (
@@ -396,11 +478,34 @@ function App() {
       await api.logout();
     } finally {
       setSession(null);
+      window.history.replaceState({ anyWatchRoute: "home" }, "", "/");
       setRoute("home");
       setRouteStack([]);
       setSources([]);
+      setSelectedSource(null);
       setContinueWatching([]);
       setMyList([]);
+      setPlayer(null);
+      setSelectedAnime(null);
+      setEpisodes([]);
+      setResults([]);
+      setCatalogResults([]);
+      setProviderResults([]);
+      setCatalogSelection(null);
+      setAvailability([]);
+      setSearchSelection(null);
+      setYoutubeResults([]);
+      setYoutubeFeed([]);
+      setYoutubeRelated([]);
+      setYoutubeSelection(null);
+      setYoutubeWatchMode(false);
+      setDiscovery(null);
+      detailCacheRef.current = {};
+      availabilityCacheRef.current.clear();
+      catalogSearchCacheRef.current.clear();
+      animeOpenGenerationRef.current += 1;
+      playbackGenerationRef.current += 1;
+      youtubePlaybackGenerationRef.current += 1;
     }
   }
 
@@ -419,6 +524,7 @@ function App() {
     if (nextRoute === route) return;
     if (route === "youtube" && nextRoute !== "youtube") leaveYoutubeRoute();
     setRouteStack((stack) => [...stack, route]);
+    window.history.pushState({ anyWatchRoute: nextRoute }, "", pathForRoute(nextRoute));
     setRoute(nextRoute);
     setError(null);
   }
@@ -429,7 +535,12 @@ function App() {
     setRouteStack((stack) => {
       const nextStack = [...stack];
       const previous = nextStack.pop();
-      setRoute(previous ?? "home");
+      if (previous) {
+        window.history.back();
+      } else {
+        window.history.replaceState({ anyWatchRoute: "home" }, "", "/");
+        setRoute("home");
+      }
       setError(null);
       if (currentRoute === "detail") {
         setSelectedAnime(null);
@@ -461,7 +572,7 @@ function App() {
     const generation = ++youtubeSearchGenerationRef.current;
     if (cleanQuery.length < 2) return;
     const source = sources.find((item) => item.languageGroup === "youtube");
-    if (!source || source.status === "unavailable" || !source.capabilities.search) {
+    if (!source || source.status !== "healthy" || !source.capabilities.search) {
       setYoutubeResults([]);
       setYoutubeSelection(null);
       setError({
@@ -499,8 +610,13 @@ function App() {
   async function loadYoutubeFeed(topic: YouTubeTopic = youtubeTopic) {
     const generation = ++youtubeFeedGenerationRef.current;
     const source = sources.find((item) => item.languageGroup === "youtube");
-    if (!source || source.status === "unavailable" || !source.capabilities.search) return;
+    if (!source || source.status !== "healthy" || !source.capabilities.search) {
+      setYoutubeFeed([]);
+      setYoutubeFeedError(null);
+      return;
+    }
     setYoutubeFeed([]);
+    setYoutubeFeedError(null);
     setYoutubeFeedLoading(true);
     try {
       let items: Anime[];
@@ -520,8 +636,9 @@ function App() {
       setYoutubeFeed(withFavoriteState(items));
     } catch (err) {
       if (generation !== youtubeFeedGenerationRef.current) return;
-      console.error("Failed to load YouTube feed:", err);
+      const appError = toAppError(err, "youtube-feed");
       setYoutubeFeed([]);
+      setYoutubeFeedError(appError.message);
     } finally {
       if (generation === youtubeFeedGenerationRef.current) setYoutubeFeedLoading(false);
     }
@@ -530,6 +647,7 @@ function App() {
   async function loadYoutubeRelated(videoId: string) {
     const generation = ++youtubeRelatedGenerationRef.current;
     setYoutubeRelated([]);
+    setYoutubeRelatedError(null);
     setYoutubeRelatedLoading(true);
     try {
       const related = withFavoriteState(await api.getYouTubeRelated(videoId));
@@ -537,8 +655,9 @@ function App() {
       setYoutubeRelated(related);
     } catch (err) {
       if (generation !== youtubeRelatedGenerationRef.current) return;
-      console.error("Failed to load YouTube related:", err);
+      const appError = toAppError(err, "youtube-related");
       setYoutubeRelated([]);
+      setYoutubeRelatedError(appError.message);
     } finally {
       if (generation === youtubeRelatedGenerationRef.current) setYoutubeRelatedLoading(false);
     }
@@ -547,6 +666,10 @@ function App() {
   function selectYoutubeVideo(video: Anime, openWatchRoom = true) {
     setYoutubeSelection(video);
     if (openWatchRoom) {
+      const url = `/youtube?v=${encodeURIComponent(video.id)}`;
+      if (`${window.location.pathname}${window.location.search}` !== url) {
+        window.history.pushState({ anyWatchRoute: "youtube", videoId: video.id }, "", url);
+      }
       setYoutubeWatchMode(true);
       void loadYoutubeRelated(video.id);
     }
@@ -647,7 +770,8 @@ function App() {
       return { ok: true, items };
     } catch (err) {
       const appError = toAppError(err, "catalog-search");
-      if (appError.code === "CATALOG_UNAVAILABLE" && `${appError.technical ?? appError.message}`.includes("429")) {
+      const catalogFailure = `${appError.technical ?? appError.message}`.toLowerCase();
+      if (appError.code === "CATALOG_UNAVAILABLE" && (catalogFailure.includes("429") || catalogFailure.includes("rate limit"))) {
         catalogCooldownUntilRef.current = Date.now() + 90_000;
       }
       return { ok: false, error: appError };
@@ -845,6 +969,11 @@ function App() {
   }
 
   async function openAnime(anime: Anime) {
+    const generation = ++animeOpenGenerationRef.current;
+    playbackGenerationRef.current += 1;
+    if (anime.provider === "YouTube") {
+      anime = { ...anime, provider: "Invidious" };
+    }
     if (anime.provider === "Invidious") {
       navigate("youtube");
       selectYoutubeVideo(anime, true);
@@ -856,16 +985,20 @@ function App() {
     setError(null);
     if (route !== "detail") navigate("detail");
     const linkedAnime = await linkCatalogAnime(anime);
+    if (generation !== animeOpenGenerationRef.current) return;
     if (linkedAnime !== anime) setSelectedAnime(linkedAnime);
     void enrichAnime(linkedAnime);
     try {
-      setEpisodes(await api.getEpisodes(linkedAnime.provider, linkedAnime.id));
+      const nextEpisodes = await api.getEpisodes(linkedAnime.provider, linkedAnime.id);
+      if (generation !== animeOpenGenerationRef.current) return;
+      setEpisodes(nextEpisodes);
     } catch (err) {
+      if (generation !== animeOpenGenerationRef.current) return;
       const appError = toAppError(err, "episodes");
       if (providerFailureMakesOffline(appError)) markProviderOffline(anime.provider, appError.code);
       setError(appError);
     } finally {
-      setLoadingEpisodes(false);
+      if (generation === animeOpenGenerationRef.current) setLoadingEpisodes(false);
     }
   }
 
@@ -950,11 +1083,14 @@ function App() {
   }
 
   async function playEpisode(anime: Anime, episode: Episode, startTime = 0, episodeList = episodes) {
+    const generation = ++playbackGenerationRef.current;
     setError(null);
     try {
       const playback = await api.preparePlayback(anime.provider, episode.id);
+      if (generation !== playbackGenerationRef.current) return;
       setPlayer({ anime, episode, episodes: episodeList, playback, startTime });
     } catch (err) {
+      if (generation !== playbackGenerationRef.current) return;
       const appError = toAppError(err, "playback");
       if (providerFailureMakesOffline(appError)) markProviderOffline(anime.provider, appError.code);
       setError(appError);
@@ -962,6 +1098,13 @@ function App() {
   }
 
   async function playYoutubeVideo(anime: Anime) {
+    if (anime.provider === "YouTube") {
+      anime = { ...anime, provider: "Invidious" };
+    }
+    const watchUrl = `/youtube?v=${encodeURIComponent(anime.id)}`;
+    if (`${window.location.pathname}${window.location.search}` !== watchUrl) {
+      window.history.pushState({ anyWatchRoute: "youtube", videoId: anime.id }, "", watchUrl);
+    }
     const generation = ++youtubePlaybackGenerationRef.current;
     setPlayer(null);
     setYoutubeLoading(true);
@@ -1082,6 +1225,16 @@ function App() {
   }
 
   const savedAnime = useMemo(() => myList.map(favoriteToAnime), [myList]);
+  const providerFallbackCatalog = useMemo(() => {
+    const seen = new Set<number>();
+    return [...(discovery?.trending ?? []), ...(discovery?.popularThisSeason ?? [])]
+      .filter((item) => {
+        if (seen.has(item.catalogId)) return false;
+        seen.add(item.catalogId);
+        return true;
+      })
+      .slice(0, 12);
+  }, [discovery]);
   const latestHistory = continueWatching[0] ?? null;
   const featuredAnime = latestHistory ? historyToAnime(latestHistory, myList) : savedAnime[0] ?? null;
   const heroImage =
@@ -1232,7 +1385,7 @@ function App() {
               selectedSource={selectedSource}
               selectedCatalog={catalogSelection}
               selectedAnime={searchSelection}
-              continueWatching={continueWatching}
+              suggestedCatalog={providerFallbackCatalog}
               onQueryChange={setQuery}
               onSearch={() => void searchCatalog()}
               onLanguageChange={selectSearchLanguage}
@@ -1242,6 +1395,7 @@ function App() {
               providerHealthPending={providerHealthPending}
               onSelectProviderResult={selectProviderResult}
               onSelectCatalog={selectCatalogResult}
+              onOpenCatalog={openCatalogSearch}
               onOpenAnime={(anime) => void openAnime(anime)}
               onDownload={(anime) => void openAnime(anime)}
               onToggleMyList={(anime) => void toggleMyList(anime)}
@@ -1261,8 +1415,10 @@ function App() {
               topic={youtubeTopic}
               feedVideos={youtubeFeed}
               feedLoading={youtubeFeedLoading}
+              feedError={youtubeFeedError}
               relatedVideos={youtubeRelated}
               relatedLoading={youtubeRelatedLoading}
+              relatedError={youtubeRelatedError}
               continueWatching={continueWatching}
               watchMode={youtubeWatchMode}
               resume={youtubeResume}
@@ -1285,6 +1441,7 @@ function App() {
                   youtubePlaybackGenerationRef.current += 1;
                   setPlayer(null);
                   setYoutubeWatchMode(false);
+                  window.history.replaceState({ anyWatchRoute: "youtube" }, "", "/youtube");
                 }
               }}
               onSearch={() => void searchYoutube()}
@@ -1295,7 +1452,10 @@ function App() {
                 setYoutubeTopic(t);
                 setYoutubeQuery("");
                 setYoutubeWatchMode(false);
+                window.history.replaceState({ anyWatchRoute: "youtube" }, "", "/youtube");
               }}
+              onRetryFeed={() => void loadYoutubeFeed(youtubeTopic)}
+              onRetryRelated={() => youtubeSelection && void loadYoutubeRelated(youtubeSelection.id)}
               onSelect={(video) => selectYoutubeVideo(video, true)}
               onPlay={(video) => void playYoutubeVideo(video)}
               onCloseWatch={() => {
@@ -1303,6 +1463,7 @@ function App() {
                 youtubePlaybackGenerationRef.current += 1;
                 setPlayer(null);
                 setYoutubeWatchMode(false);
+                window.history.replaceState({ anyWatchRoute: "youtube" }, "", "/youtube");
                 void refreshShelfData();
               }}
               onToggleMyList={(video) => void toggleMyList(video)}
@@ -1381,7 +1542,9 @@ function AppNavigation({
         {items.map((item) => (
           <button
             key={item.route}
+            data-route={item.route}
             className={route === item.route ? "active" : ""}
+            aria-label={item.label}
             aria-current={route === item.route ? "page" : undefined}
             onClick={() => onNavigate(item.route)}
           >
@@ -1439,7 +1602,10 @@ function DownloadsPage({
   const [source, setSource] = useState("");
   const [subPref, setSubPref] = useState<"all" | "vi" | "en">("all");
   const [results, setResults] = useState<TorrentSearchResult[]>([]);
+  const [page, setPage] = useState(1);
+  const [hasMore, setHasMore] = useState(false);
   const [loading, setLoading] = useState(false);
+  const [loadingMore, setLoadingMore] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const [tasks, setTasks] = useState<TorrentTask[]>([]);
   const [copiedId, setCopiedId] = useState<string | null>(null);
@@ -1478,24 +1644,39 @@ function DownloadsPage({
     return () => clearInterval(interval);
   }, [tasks, tab]);
 
-  const performSearch = async (targetQuery: string, targetCat: "all" | "anime" | "movie" | "tv", targetSource: string) => {
+  const performSearch = async (
+    targetQuery: string,
+    targetCat: "all" | "anime" | "movie" | "tv",
+    targetSource: string,
+    targetPage = 1,
+    append = false,
+  ) => {
     const cleanQuery = targetQuery.trim();
     if (cleanQuery.length < 2) return;
 
-    setLoading(true);
+    if (append) setLoadingMore(true);
+    else setLoading(true);
     setError(null);
     try {
       const data = await api.searchTorrents(
         cleanQuery,
         targetCat === "all" ? undefined : targetCat,
-        targetSource || undefined
+        targetSource || undefined,
+        targetPage,
       );
-      setResults(data);
+      setPage(targetPage);
+      setHasMore(data.length > 0);
+      setResults((current) => {
+        if (!append) return data;
+        const seen = new Set(current.map((item) => item.id));
+        return [...current, ...data.filter((item) => !seen.has(item.id))];
+      });
     } catch (err: any) {
       setError(err?.message || "Failed to search torrent providers.");
-      setResults([]);
+      if (!append) setResults([]);
     } finally {
       setLoading(false);
+      setLoadingMore(false);
     }
   };
 
@@ -1522,7 +1703,13 @@ function DownloadsPage({
     setActionLoadingId(torrent.id);
     setError(null);
     try {
-      await api.createTorrentTask(torrent.title, torrent.magnet_url, subPref === "all" ? undefined : subPref);
+      await api.createTorrentTask(
+        torrent.title,
+        torrent.magnet_url,
+        torrent.torrent_url,
+        torrent.size_bytes,
+        subPref,
+      );
       await loadTasks();
       setTab("tasks");
     } catch (err: any) {
@@ -1563,6 +1750,20 @@ function DownloadsPage({
     void performSearch(q, cat, source);
   };
 
+  const loadMoreResults = () => {
+    if (loadingMore || !hasMore) return;
+    void performSearch(query, category, source, page + 1, true);
+  };
+
+  const selectDownloadTabFromKeyboard = (event: React.KeyboardEvent, nextTab: "search" | "tasks") => {
+    if (!['ArrowLeft', 'ArrowRight'].includes(event.key)) return;
+    event.preventDefault();
+    setTab(nextTab);
+    window.requestAnimationFrame(() => {
+      document.getElementById(`torrent-${nextTab}-tab`)?.focus();
+    });
+  };
+
   return (
     <motion.section
       className="page-stage stage-downloads"
@@ -1585,8 +1786,12 @@ function DownloadsPage({
       <div className="download-tabs" role="tablist">
         <button
           role="tab"
+          id="torrent-search-tab"
+          aria-controls="torrent-search-panel"
           aria-selected={tab === "search"}
+          tabIndex={tab === "search" ? 0 : -1}
           className={`download-tab-button ${tab === "search" ? "active" : ""}`}
+          onKeyDown={(event) => selectDownloadTabFromKeyboard(event, "tasks")}
           onClick={() => setTab("search")}
         >
           <Search size={16} />
@@ -1594,8 +1799,12 @@ function DownloadsPage({
         </button>
         <button
           role="tab"
+          id="torrent-tasks-tab"
+          aria-controls="torrent-tasks-panel"
           aria-selected={tab === "tasks"}
+          tabIndex={tab === "tasks" ? 0 : -1}
           className={`download-tab-button ${tab === "tasks" ? "active" : ""}`}
+          onKeyDown={(event) => selectDownloadTabFromKeyboard(event, "search")}
           onClick={() => setTab("tasks")}
         >
           <Download size={16} />
@@ -1613,13 +1822,20 @@ function DownloadsPage({
 
       {tab === "search" && (
         <>
-          <form className="torrent-search-panel" onSubmit={handleSearch}>
+          <form
+            id="torrent-search-panel"
+            className="torrent-search-panel"
+            role="tabpanel"
+            aria-labelledby="torrent-search-tab"
+            onSubmit={handleSearch}
+          >
             <div className="torrent-search-bar">
               <div className="torrent-search-input-wrap">
                 <Search size={18} />
                 <input
                   type="text"
                   placeholder="Search cinema movies, anime, TV series (e.g. Frieren, Oppenheimer)..."
+                  aria-label="Search torrent indexers"
                   value={query}
                   onChange={(e) => setQuery(e.target.value)}
                   autoFocus
@@ -1631,6 +1847,8 @@ function DownloadsPage({
                     onClick={() => {
                       setQuery("");
                       setResults([]);
+                      setPage(1);
+                      setHasMore(false);
                     }}
                     aria-label="Clear query"
                   >
@@ -1654,6 +1872,7 @@ function DownloadsPage({
                 <button
                   type="button"
                   className={`torrent-filter-chip ${category === "all" ? "active" : ""}`}
+                  aria-pressed={category === "all"}
                   onClick={() => handleCategoryChange("all")}
                 >
                   All
@@ -1661,6 +1880,7 @@ function DownloadsPage({
                 <button
                   type="button"
                   className={`torrent-filter-chip ${category === "movie" ? "active" : ""}`}
+                  aria-pressed={category === "movie"}
                   onClick={() => handleCategoryChange("movie")}
                 >
                   Cinema Movies
@@ -1668,6 +1888,7 @@ function DownloadsPage({
                 <button
                   type="button"
                   className={`torrent-filter-chip ${category === "anime" ? "active" : ""}`}
+                  aria-pressed={category === "anime"}
                   onClick={() => handleCategoryChange("anime")}
                 >
                   Anime
@@ -1675,6 +1896,7 @@ function DownloadsPage({
                 <button
                   type="button"
                   className={`torrent-filter-chip ${category === "tv" ? "active" : ""}`}
+                  aria-pressed={category === "tv"}
                   onClick={() => handleCategoryChange("tv")}
                 >
                   TV Series
@@ -1685,14 +1907,15 @@ function DownloadsPage({
                 <span>Source:</span>
                 <select
                   className="torrent-source-select"
+                  aria-label="Torrent source"
                   value={source}
                   onChange={(e) => handleSourceChange(e.target.value)}
                 >
                   <option value="">All Indexers</option>
-                  <option value="nyaa">Nyaa.si (Anime)</option>
-                  <option value="yts">YTS.mx (Movies)</option>
-                  <option value="piratebay">The Pirate Bay (Multi)</option>
-                  <option value="animetosho">AnimeTosho (Anime)</option>
+                  <option value="Nyaa">Nyaa.si (Anime)</option>
+                  <option value="YTS">YTS.mx (Movies)</option>
+                  <option value="ThePirateBay">The Pirate Bay (Multi)</option>
+                  <option value="AnimeTosho">AnimeTosho (Anime)</option>
                 </select>
               </div>
 
@@ -1701,6 +1924,7 @@ function DownloadsPage({
                 <button
                   type="button"
                   className={`torrent-filter-chip ${subPref === "all" ? "active" : ""}`}
+                  aria-pressed={subPref === "all"}
                   onClick={() => setSubPref("all")}
                 >
                   VietSub & EngSub
@@ -1708,6 +1932,7 @@ function DownloadsPage({
                 <button
                   type="button"
                   className={`torrent-filter-chip ${subPref === "vi" ? "active" : ""}`}
+                  aria-pressed={subPref === "vi"}
                   onClick={() => setSubPref("vi")}
                 >
                   VietSub Only
@@ -1715,6 +1940,7 @@ function DownloadsPage({
                 <button
                   type="button"
                   className={`torrent-filter-chip ${subPref === "en" ? "active" : ""}`}
+                  aria-pressed={subPref === "en"}
                   onClick={() => setSubPref("en")}
                 >
                   EngSub Only
@@ -1750,7 +1976,7 @@ function DownloadsPage({
                         {item.title}
                       </h3>
                       <div className="torrent-meta-badges">
-                        <span className={`badge-source ${item.source}`}>{item.source}</span>
+                        <span className={`badge-source ${item.source.toLowerCase().replace(/^the/, "")}`}>{item.source}</span>
                         <span className="badge-pill">{item.category}</span>
                         {item.quality && <span className="badge-pill badge-quality">{item.quality}</span>}
                         <span className="badge-pill badge-size">{item.formatted_size}</span>
@@ -1786,6 +2012,17 @@ function DownloadsPage({
                   </div>
                 );
               })}
+              {hasMore && (
+                <button
+                  type="button"
+                  className="torrent-load-more"
+                  onClick={loadMoreResults}
+                  disabled={loadingMore}
+                >
+                  {loadingMore ? <Loader2 size={16} className="spin" /> : <Plus size={16} />}
+                  {loadingMore ? "Loading more..." : `Load page ${page + 1}`}
+                </button>
+              )}
             </div>
           ) : query.trim().length >= 2 ? (
             <div className="downloads-empty" style={{ margin: "2rem auto", textAlign: "center" }}>
@@ -1802,7 +2039,12 @@ function DownloadsPage({
       )}
 
       {tab === "tasks" && (
-        <div className="torrent-tasks-workspace">
+        <div
+          id="torrent-tasks-panel"
+          className="torrent-tasks-workspace"
+          role="tabpanel"
+          aria-labelledby="torrent-tasks-tab"
+        >
           {tasks.length > 0 ? (
             <div className="torrent-tasks-list">
               {tasks.map((task) => (
@@ -1839,6 +2081,7 @@ function TorrentTaskItem({
   const status = task.status;
   const isReady = status.type === "ready";
   const isFailed = status.type === "failed";
+  const [previewOpen, setPreviewOpen] = useState(false);
 
   return (
     <div className={`torrent-task-card ${isReady ? "ready" : isFailed ? "failed" : ""}`}>
@@ -1913,6 +2156,15 @@ function TorrentTaskItem({
       <div className="torrent-task-actions-row">
         {status.type === "ready" && (
           <>
+            <button
+              type="button"
+              className="torrent-btn-watch"
+              aria-expanded={previewOpen}
+              onClick={() => setPreviewOpen((current) => !current)}
+            >
+              {previewOpen ? <X size={15} /> : <Play size={15} fill="currentColor" />}
+              <span>{previewOpen ? "Close Player" : "Watch Now"}</span>
+            </button>
             <a
               href={api.getTorrentDownloadUrl(task.id)}
               download={status.data.file_name}
@@ -1929,7 +2181,7 @@ function TorrentTaskItem({
                 className="torrent-btn-sub-download"
               >
                 <Download size={14} />
-                <span>{sub.language} Sub (.srt)</span>
+                <span>{sub.language} Sub (.vtt)</span>
               </a>
             ))}
           </>
@@ -1944,6 +2196,27 @@ function TorrentTaskItem({
           <span>{isDeleting ? "Deleting..." : "Delete Task"}</span>
         </button>
       </div>
+      {status.type === "ready" && previewOpen && (
+        <div className="torrent-task-player">
+          <video
+            controls
+            playsInline
+            preload="metadata"
+            src={api.getTorrentStreamUrl(task.id)}
+          >
+            {status.data.subtitles.map((sub: TorrentSubtitleMeta) => (
+              <track
+                key={sub.language_code}
+                kind="subtitles"
+                src={api.getTorrentSubtitleUrl(task.id, sub.language_code)}
+                srcLang={sub.language_code}
+                label={sub.language}
+                default={sub.language_code === "vi"}
+              />
+            ))}
+          </video>
+        </div>
+      )}
     </div>
   );
 }
@@ -2668,6 +2941,8 @@ function CatalogPage({
   const [items, setItems] = useState<CatalogAnime[]>([]);
   const [hasNextPage, setHasNextPage] = useState(false);
   const [loading, setLoading] = useState(true);
+  const [catalogError, setCatalogError] = useState<string | null>(null);
+  const [reloadGeneration, setReloadGeneration] = useState(0);
   const currentYear = new Date().getFullYear();
   const networkSort = sort === "personalMatch" ? "trending" : sort;
   const visibleItems = useMemo(() => {
@@ -2678,17 +2953,24 @@ function CatalogPage({
   useEffect(() => {
     let cancelled = false;
     setLoading(true);
+    setCatalogError(null);
     void api.getCatalog(filters, networkSort, page)
       .then((result) => {
         if (cancelled) return;
         setItems(result.items);
         setHasNextPage(result.hasNextPage);
       })
+      .catch((error) => {
+        if (cancelled) return;
+        setItems([]);
+        setHasNextPage(false);
+        setCatalogError(toAppError(error, "catalog").message);
+      })
       .finally(() => {
         if (!cancelled) setLoading(false);
       });
     return () => { cancelled = true; };
-  }, [filters.genre, filters.season, filters.year, filters.format, filters.status, networkSort, page]);
+  }, [filters.genre, filters.season, filters.year, filters.format, filters.status, networkSort, page, reloadGeneration]);
 
   function updateFilter<K extends keyof CatalogFilters>(key: K, value: CatalogFilters[K]) {
     setPage(1);
@@ -2728,6 +3010,13 @@ function CatalogPage({
           <option value="">All statuses</option><option value="RELEASING">Releasing</option><option value="FINISHED">Finished</option><option value="NOT_YET_RELEASED">Upcoming</option>
         </select></label>
       </div>
+      {catalogError && (
+        <div className="catalog-error" role="alert">
+          <AlertTriangle size={18} />
+          <span>{catalogError}</span>
+          <button type="button" onClick={() => setReloadGeneration((value) => value + 1)}>Retry</button>
+        </div>
+      )}
       <div className="catalog-grid" aria-busy={loading}>
         {loading
           ? Array.from({ length: 12 }, (_, index) => <div className="catalog-card skeleton" key={index} />)
@@ -2760,7 +3049,7 @@ function SearchStage({
   selectedSource,
   selectedCatalog,
   selectedAnime,
-  continueWatching,
+  suggestedCatalog,
   onQueryChange,
   onSearch,
   onLanguageChange,
@@ -2770,6 +3059,7 @@ function SearchStage({
   providerHealthPending,
   onSelectProviderResult,
   onSelectCatalog,
+  onOpenCatalog,
   onOpenAnime,
   onDownload,
   onToggleMyList,
@@ -2787,7 +3077,7 @@ function SearchStage({
   selectedSource: Source | null;
   selectedCatalog: CatalogAnime | null;
   selectedAnime: Anime | null;
-  continueWatching: WatchHistory[];
+  suggestedCatalog: CatalogAnime[];
   onQueryChange: (query: string) => void;
   onSearch: () => void;
   onLanguageChange: (language: "english" | "vietnamese") => void;
@@ -2797,6 +3087,7 @@ function SearchStage({
   providerHealthPending: string | null;
   onSelectProviderResult: (anime: Anime) => void;
   onSelectCatalog: (anime: CatalogAnime) => void;
+  onOpenCatalog: (anime: CatalogAnime) => void;
   onOpenAnime: (anime: Anime) => void;
   onDownload: (anime: Anime) => void;
   onToggleMyList: (anime: Anime) => void;
@@ -2824,32 +3115,40 @@ function SearchStage({
         category: selectedAnime?.provider ?? "Provider result",
       };
 
-  const providerContinueWatching = useMemo(
-    () => continueWatching.filter((item) => item.provider === selectedSource?.name),
-    [continueWatching, selectedSource],
-  );
-
   const [providerCatalog, setProviderCatalog] = useState<Anime[]>([]);
   const [providerCatalogLoading, setProviderCatalogLoading] = useState(false);
+  const [providerCatalogError, setProviderCatalogError] = useState(false);
+  const fallbackSuggestions = suggestedCatalog.slice(0, 12);
+  const curatedTopics = languageGroup === "vietnamese"
+    ? ["One Piece", "Naruto", "Solo Leveling", "Thanh Gươm Diệt Quỷ", "Đại Chiến Titan", "Thám Tử Conan", "Phim Mới", "Tình Cảm"]
+    : ["One Piece", "Attack on Titan", "Demon Slayer", "Jujutsu Kaisen", "Your Name", "Death Note", "Action", "Fantasy"];
+  const providerTopics = [...new Set([
+    ...providerCatalog.slice(0, 8).map((item) => item.title),
+    ...curatedTopics,
+  ])].slice(0, 12);
 
   useEffect(() => {
     if (!selectedSource?.name) {
       setProviderCatalog([]);
+      setProviderCatalogError(false);
       return;
     }
     let active = true;
     setProviderCatalogLoading(true);
+    setProviderCatalogError(false);
     api
       .getProviderCatalog(selectedSource.name)
       .then((items) => {
         if (active) {
           setProviderCatalog(items);
+          setProviderCatalogError(false);
           setProviderCatalogLoading(false);
         }
       })
       .catch(() => {
         if (active) {
           setProviderCatalog([]);
+          setProviderCatalogError(true);
           setProviderCatalogLoading(false);
         }
       });
@@ -2970,76 +3269,43 @@ function SearchStage({
               </div>
               <div className="provider-hero-text">
                 <span className="eyebrow">{languageGroup === "vietnamese" ? "Vietnamese Provider" : "English Provider"}</span>
-                <h1>{selectedSource?.name ? `Search ${serverLabel(selectedSource.name, sources)}` : "Provider Dashboard"}</h1>
+                <h1>{selectedSource?.name ? `Explore ${serverLabel(selectedSource.name, sources)}` : "Provider Dashboard"}</h1>
                 <p>
                   {selectedSource
-                    ? `${selectedSource.language} · ${providerStatusLabel(selectedSource)} · Direct Streams & Media`
-                    : "Select a provider above to explore its catalog and resume watching."}
+                    ? `${selectedSource.language} · ${providerStatusLabel(selectedSource)} · Direct streams and provider-backed suggestions`
+                    : "Select a provider above to explore films, series, and anime it currently offers."}
                 </p>
               </div>
             </div>
+            {selectedSource?.websiteUrl && (
+              <a
+                className="provider-website-link"
+                href={selectedSource.websiteUrl}
+                target="_blank"
+                rel="noreferrer"
+              >
+                Provider site ↗
+              </a>
+            )}
           </div>
-
-          {/* Provider-Specific Continue Watching Shelf */}
-          {providerContinueWatching.length > 0 && (
-            <div className="provider-dashboard-shelf">
-              <div className="provider-shelf-heading">
-                <div>
-                  <h3>Continue Watching on {serverLabel(selectedSource?.name ?? "", sources)}</h3>
-                  <p>Resume your series from where you left off</p>
-                </div>
-                <small>{providerContinueWatching.length} items</small>
-              </div>
-              <div className="provider-history-grid">
-                {providerContinueWatching.map((item) => {
-                  const progress = item.totalSeconds > 0
-                    ? Math.min(100, (item.positionSeconds / item.totalSeconds) * 100)
-                    : 0;
-                  return (
-                    <article key={item.animeId} className="provider-history-card">
-                      <button
-                        type="button"
-                        className="provider-history-thumb"
-                        onClick={() => onOpenAnime({
-                          id: item.animeId.includes(":") ? item.animeId.split(":").slice(1).join(":") : item.animeId,
-                          provider: item.provider,
-                          catalogId: item.catalogId ?? null,
-                          title: item.title,
-                          coverUrl: item.coverUrl,
-                          bannerUrl: null,
-                          language: selectedSource?.language ?? "Vietnamese",
-                          totalEpisodes: null,
-                          synopsis: null,
-                          isFavorite: false,
-                        })}
-                      >
-                        <img src={item.coverUrl || LOGO_SRC} alt="" onError={useLogoFallback} />
-                        <span className="provider-history-play"><Play size={20} fill="currentColor" /></span>
-                        <div className="progress watch-progress"><i style={{ width: `${progress}%` }} /></div>
-                        <span className="provider-time-pill">{formatTime(item.positionSeconds)}</span>
-                      </button>
-                      <div className="provider-history-copy">
-                        <strong title={item.title}>{item.title}</strong>
-                        <small>{episodeLabel(item.episodeNumber, item.episodeTitle, " · ")}</small>
-                      </div>
-                    </article>
-                  );
-                })}
-              </div>
-            </div>
-          )}
 
           {/* Provider Live Catalog / Trending Shelf */}
           <div className="provider-dashboard-shelf">
             <div className="provider-shelf-heading">
               <div>
-                <h3>{selectedSource ? `${serverLabel(selectedSource.name, sources)} Catalog & Trending` : "Provider Catalog"}</h3>
-                <p>Trending series and latest releases directly from this server</p>
+                <h3>{providerCatalog.length > 0 && selectedSource
+                  ? `Available now on ${serverLabel(selectedSource.name, sources)}`
+                  : "Suggestions for your next watch"}</h3>
+                <p>{providerCatalog.length > 0
+                  ? "Films, series, and anime returned directly by this provider."
+                  : providerCatalogError
+                    ? "This provider could not load its catalog, so these picks come from the general catalog."
+                    : "This provider did not return a catalog, so these picks come from the general catalog."}</p>
               </div>
-              {providerCatalog.length > 0 && <small>{providerCatalog.length} titles</small>}
+              <small>{providerCatalog.length || fallbackSuggestions.length} titles</small>
             </div>
             {providerCatalogLoading ? (
-              <div className="provider-catalog-skeleton-grid">
+              <div className="provider-catalog-skeleton-grid" aria-label="Loading provider suggestions">
                 {Array.from({ length: 8 }).map((_, i) => (
                   <div
                     key={i}
@@ -3055,7 +3321,7 @@ function SearchStage({
                     <button
                       type="button"
                       className="provider-catalog-thumb"
-                      aria-label={`Play ${item.title}`}
+                      aria-label={`Open ${item.title}`}
                       title={item.title}
                       onClick={() => onOpenAnime(item)}
                     >
@@ -3072,9 +3338,31 @@ function SearchStage({
                   </article>
                 ))}
               </div>
+            ) : fallbackSuggestions.length > 0 ? (
+              <div className="provider-catalog-grid provider-fallback-grid">
+                {fallbackSuggestions.map((item) => (
+                  <article key={item.catalogId} className="provider-catalog-card">
+                    <button
+                      type="button"
+                      className="provider-catalog-thumb"
+                      aria-label={`Find a provider for ${item.title}`}
+                      title={item.title}
+                      onClick={() => onOpenCatalog(item)}
+                    >
+                      <img src={item.coverUrl || LOGO_SRC} alt="" onError={useLogoFallback} />
+                      <span className="provider-catalog-play"><Search size={22} /></span>
+                      <span className="provider-fallback-pill">General pick</span>
+                    </button>
+                    <div className="provider-catalog-copy">
+                      <strong title={item.title}>{item.title}</strong>
+                      <p>{item.format || "Title"}{item.seasonYear ? ` · ${item.seasonYear}` : ""}</p>
+                    </div>
+                  </article>
+                ))}
+              </div>
             ) : (
               <div className="provider-catalog-empty">
-                <p>Search above or select quick topics to discover anime on {selectedSource ? serverLabel(selectedSource.name, sources) : "this server"}.</p>
+                <p>Search above or choose a topic to find something available to watch.</p>
               </div>
             )}
           </div>
@@ -3088,36 +3376,7 @@ function SearchStage({
               </div>
             </div>
             <div className="provider-topic-chips" aria-label="Suggested search queries">
-              {(languageGroup === "vietnamese"
-                ? [
-                    "One Piece",
-                    "Naruto",
-                    "Solo Leveling",
-                    "Thanh Gươm Diệt Quỷ",
-                    "Kimi no Na wa",
-                    "Đại Chiến Titan",
-                    "Dragon Ball Super",
-                    "Jujutsu Kaisen",
-                    "Thám Tử Conan",
-                    "Hành Động",
-                    "Tình Cảm",
-                    "Phim Mới",
-                  ]
-                : [
-                    "One Piece",
-                    "Attack on Titan",
-                    "Demon Slayer",
-                    "Jujutsu Kaisen",
-                    "Your Name",
-                    "Death Note",
-                    "Naruto Shippuden",
-                    "Bleach",
-                    "Chainsaw Man",
-                    "Action",
-                    "Romance",
-                    "Fantasy",
-                  ]
-              ).map((suggestion) => (
+              {providerTopics.map((suggestion) => (
                 <button
                   type="button"
                   key={suggestion}
@@ -3167,6 +3426,30 @@ function SearchStage({
                 </motion.button>
               );
             })}
+            {results.length > 0 && (
+              <section className="catalog-search-results" aria-label="General catalog results">
+                <div className="catalog-search-heading">
+                  <span>General catalog</span>
+                  <strong>{results.length}</strong>
+                </div>
+                {results.slice(0, 12).map((anime) => (
+                  <button
+                    type="button"
+                    className={selectedCatalog?.catalogId === anime.catalogId ? "catalog-search-result active" : "catalog-search-result"}
+                    key={anime.catalogId}
+                    aria-label={`Check provider availability for ${anime.title}`}
+                    onClick={() => {
+                      onSelectCatalog(anime);
+                      setMobileSearchStep(true);
+                    }}
+                  >
+                    <img src={anime.coverUrl || LOGO_SRC} alt="" onError={useLogoFallback} />
+                    <span>{anime.title}</span>
+                    <small>{anime.format || "Title"}{anime.seasonYear ? ` / ${anime.seasonYear}` : ""}</small>
+                  </button>
+                ))}
+              </section>
+            )}
             {catalogError && (
               <div className="inline-status">
                 <strong>{catalogError.code}</strong>
@@ -3222,13 +3505,16 @@ function SearchStage({
                         <Play size={18} />
                         {selectedAnime ? "Open" : "Unavailable"}
                       </button>
-                      <button onClick={() => {
-                        const current = selectedAnime ?? catalogOnlyAnime(selectedCatalog!);
-                        onToggleMyList(current);
-                      }}>
+                      <button
+                        disabled={!selectedAnime}
+                        title={selectedAnime ? undefined : "Choose an available provider before saving"}
+                        onClick={() => selectedAnime && onToggleMyList(selectedAnime)}
+                      >
                         {(() => {
-                          const current = selectedAnime ?? catalogOnlyAnime(selectedCatalog!);
-                          const isFavorite = current.isFavorite || myList.some((item) => item.animeId === animeKey(current.provider, current.id));
+                          const isFavorite = Boolean(selectedAnime && (
+                            selectedAnime.isFavorite
+                            || myList.some((item) => item.animeId === animeKey(selectedAnime.provider, selectedAnime.id))
+                          ));
                           return (
                             <>
                               <Star size={18} fill={isFavorite ? "var(--red)" : "none"} style={{ color: "var(--red)" }} />
@@ -3279,8 +3565,10 @@ function YouTubePage({
   topic,
   feedVideos,
   feedLoading,
+  feedError,
   relatedVideos,
   relatedLoading,
+  relatedError,
   continueWatching,
   watchMode,
   resume,
@@ -3293,6 +3581,8 @@ function YouTubePage({
   onQueryChange,
   onSearch,
   onTopicChange,
+  onRetryFeed,
+  onRetryRelated,
   onSelect,
   onPlay,
   onCloseWatch,
@@ -3307,8 +3597,10 @@ function YouTubePage({
   topic: YouTubeTopic;
   feedVideos: Anime[];
   feedLoading: boolean;
+  feedError: string | null;
   relatedVideos: Anime[];
   relatedLoading: boolean;
+  relatedError: string | null;
   continueWatching: WatchHistory[];
   watchMode: boolean;
   resume?: WatchHistory;
@@ -3321,6 +3613,8 @@ function YouTubePage({
   onQueryChange: (query: string) => void;
   onSearch: () => void;
   onTopicChange: (topic: YouTubeTopic) => void;
+  onRetryFeed: () => void;
+  onRetryRelated: () => void;
   onSelect: (video: Anime) => void;
   onPlay: (video: Anime) => void;
   onCloseWatch: () => void;
@@ -3328,7 +3622,7 @@ function YouTubePage({
   onBack: () => void;
 }) {
   const inputRef = useRef<HTMLInputElement | null>(null);
-  const sourceReady = Boolean(source && source.status !== "unavailable" && source.capabilities.search);
+  const sourceReady = Boolean(source && source.status === "healthy" && source.capabilities.search);
   const [descExpanded, setDescExpanded] = useState(false);
   const [copied, setCopied] = useState(false);
 
@@ -3340,7 +3634,7 @@ function YouTubePage({
   const topics: YouTubeTopic[] = ["All", "Trending", "Music", "Gaming", "News", "Animations"];
 
   const copyShareLink = (videoId: string) => {
-    const url = `https://youtube.com/watch?v=${videoId}`;
+    const url = `${window.location.origin}/youtube?v=${encodeURIComponent(videoId)}`;
     void navigator.clipboard?.writeText(url);
     setCopied(true);
     setTimeout(() => setCopied(false), 2000);
@@ -3529,6 +3823,12 @@ function YouTubePage({
                   <div key={i} className="youtube-related-skel-item" />
                 ))}
               </div>
+            ) : relatedError ? (
+              <div className="youtube-inline-error" role="alert">
+                <AlertTriangle size={18} />
+                <span>{relatedError}</span>
+                <button type="button" onClick={onRetryRelated}>Retry</button>
+              </div>
             ) : relatedVideos.length > 0 ? (
               <div className="youtube-related-list">
                 {relatedVideos.map((item) => {
@@ -3653,7 +3953,7 @@ function YouTubePage({
                         className="youtube-continue-thumb"
                         onClick={() => onPlay({
                           id: item.animeId.includes(":") ? item.animeId.split(":").slice(1).join(":") : item.animeId,
-                          provider: item.provider,
+                          provider: "Invidious",
                           catalogId: item.catalogId ?? null,
                           title: item.title,
                           coverUrl: item.coverUrl,
@@ -3686,7 +3986,13 @@ function YouTubePage({
               <h2>{topic === "All" ? "Recommended & Trending" : `${topic} Feed`}</h2>
               <small>{feedVideos.length} videos</small>
             </div>
-            {feedLoading && !feedVideos.length ? (
+            {feedError ? (
+              <div className="youtube-inline-error" role="alert">
+                <AlertTriangle size={18} />
+                <span>{feedError}</span>
+                <button type="button" onClick={onRetryFeed}>Retry feed</button>
+              </div>
+            ) : feedLoading && !feedVideos.length ? (
               <div className="youtube-feed-grid">
                 {Array.from({ length: 8 }).map((_, i) => (
                   <div key={i} className="youtube-card-skeleton" />
@@ -4441,46 +4747,39 @@ function DetailPage({
                     const downloadState = downloadStates[episodeDownloadKey(anime, episode)];
                     const downloadBusy = downloadState?.status === "preparing" || downloadState?.status === "downloading";
                     return (
-                      <motion.div
+                      <motion.article
                         className={`episode-list-row${episode.thumbnail ? " has-thumbnail" : ""}${isResume ? " watched" : ""}${highlighted ? " highlighted" : ""}`}
                         key={episode.id}
                         data-episode-number={episode.number}
-                        role="button"
-                        tabIndex={0}
-                        onClick={() => onPlay(episode, isResume ? resumeHistory?.positionSeconds ?? 0 : 0)}
-                        onKeyDown={(event) => {
-                          if (event.key === "Enter" || event.key === " ") {
-                            if (event.target !== event.currentTarget) return;
-                            event.preventDefault();
-                            onPlay(episode, isResume ? resumeHistory?.positionSeconds ?? 0 : 0);
-                          }
-                        }}
                         whileHover={{ y: -2 }}
-                        whileTap={{ scale: 0.995 }}
                       >
-                        <span className="episode-thumb">
-                          {episode.thumbnail ? <img src={episode.thumbnail} alt="" loading="lazy" onError={useLogoFallback} /> : <Play size={18} />}
-                        </span>
-                        <span className="episode-row-copy">
-                          <strong>Episode {episode.number}</strong>
-                          <small>{episodeTitleDetail(episode.title, episode.number) || "Ready to play"}</small>
-                        </span>
-                        {isResume && <span className="episode-resume-pill">Resume</span>}
+                        <button
+                          type="button"
+                          className="episode-open-button"
+                          aria-label={`${isResume ? "Resume" : "Play"} Episode ${episode.number}`}
+                          onClick={() => onPlay(episode, isResume ? resumeHistory?.positionSeconds ?? 0 : 0)}
+                        >
+                          <span className="episode-thumb">
+                            {episode.thumbnail ? <img src={episode.thumbnail} alt="" loading="lazy" onError={useLogoFallback} /> : <Play size={18} />}
+                          </span>
+                          <span className="episode-row-copy">
+                            <strong>Episode {episode.number}</strong>
+                            <small>{episodeTitleDetail(episode.title, episode.number) || "Ready to play"}</small>
+                          </span>
+                          {isResume && <span className="episode-resume-pill">Resume</span>}
+                          <Play className="episode-play-icon" size={18} fill="currentColor" />
+                        </button>
                         <button
                           className={`episode-download-button ${downloadState?.status || "idle"}`}
                           disabled={downloadBusy}
                           aria-label={`Download Episode ${episode.number}`}
                           title={downloadState?.message || `Download Episode ${episode.number}`}
                           style={{ "--download-progress": `${downloadState?.progress ?? 0}%` } as React.CSSProperties}
-                          onClick={(event) => {
-                            event.stopPropagation();
-                            onDownload(episode);
-                          }}
+                          onClick={() => onDownload(episode)}
                         >
                           {downloadBusy ? <Loader2 className="spin" size={17} /> : downloadState?.status === "complete" ? <Check size={17} /> : <Download size={17} />}
                         </button>
-                        <Play className="episode-play-icon" size={18} fill="currentColor" />
-                      </motion.div>
+                      </motion.article>
                     );
                   })}
                 </motion.div>
@@ -4667,7 +4966,9 @@ function VideoPlayer({
       } catch {
         // Some WebViews reject currentTime before metadata is ready.
       }
-      void video.play().catch(() => undefined);
+      void video.play().catch(() => {
+        if (!disposed) setError("Playback is ready. Press Play to start on this device.");
+      });
     };
 
     const handleNativeError = () => {
@@ -4841,6 +5142,10 @@ function VideoPlayer({
     return () => window.clearInterval(saveInterval);
   }, [context.anime.id, context.episode.id]);
 
+  useEffect(() => () => {
+    void saveProgress(true).catch(() => undefined);
+  }, [context.playback.sessionId]);
+
   useEffect(() => {
     const handleKeyDown = (event: KeyboardEvent) => {
       const target = event.target as HTMLElement | null;
@@ -4936,7 +5241,9 @@ function VideoPlayer({
     const video = videoRef.current;
     if (!video) return;
     if (video.paused) {
-      void video.play().catch(() => undefined);
+      void video.play()
+        .then(() => setError(null))
+        .catch(() => setError("Playback could not start on this device."));
     } else {
       video.pause();
       void saveProgress(true);
@@ -5018,7 +5325,7 @@ function VideoPlayer({
   }
 
   async function closePlayer() {
-    await saveProgress(true);
+    await saveProgress(true).catch(() => undefined);
     onClose();
   }
 
@@ -5060,6 +5367,7 @@ function VideoPlayer({
       <video
         ref={videoRef}
         autoPlay
+        playsInline
         onTimeUpdate={() => void saveProgress()}
         onPause={() => void saveProgress(true)}
         onEnded={() => void saveProgress(true)}

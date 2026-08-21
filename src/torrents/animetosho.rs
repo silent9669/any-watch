@@ -29,8 +29,6 @@ struct ToshoItem {
     seeders: Option<u32>,
     leechers: Option<u32>,
     timestamp: Option<i64>,
-    #[serde(default)]
-    has_subtitles: Option<bool>,
 }
 
 #[async_trait]
@@ -47,13 +45,16 @@ impl TorrentSearchProvider for AnimeToshoProvider {
         &self,
         query: &str,
         category: TorrentCategory,
+        page: u32,
     ) -> Result<Vec<TorrentSearchResult>> {
         if category == TorrentCategory::Movies || category == TorrentCategory::Tv {
             return Ok(Vec::new());
         }
 
         let mut url = Url::parse("https://animetosho.org/api/v1/search")?;
-        url.query_pairs_mut().append_pair("q", query);
+        url.query_pairs_mut()
+            .append_pair("q", query)
+            .append_pair("page", &page.max(1).to_string());
 
         let response = self
             .client
@@ -66,11 +67,16 @@ impl TorrentSearchProvider for AnimeToshoProvider {
             .await
             .context("AnimeTosho request failed")?;
 
-        if !response.status().is_success() {
-            return Ok(Vec::new());
-        }
+        anyhow::ensure!(
+            response.status().is_success(),
+            "AnimeTosho returned HTTP {}",
+            response.status()
+        );
 
-        let items: Vec<ToshoItem> = response.json().await.unwrap_or_default();
+        let items: Vec<ToshoItem> = response
+            .json()
+            .await
+            .context("AnimeTosho returned invalid search JSON")?;
         let mut results = Vec::new();
 
         for item in items {
@@ -89,10 +95,7 @@ impl TorrentSearchProvider for AnimeToshoProvider {
             let peers = item.leechers.unwrap_or(0);
             let id = format!("animetosho-{}", item.id.unwrap_or(0));
             let quality = detect_quality(&title);
-            let (mut has_engsub, has_vietsub) = detect_subtitles(&title);
-            if item.has_subtitles.unwrap_or(false) {
-                has_engsub = true;
-            }
+            let (has_engsub, has_vietsub) = detect_subtitles(&title);
 
             let upload_date = item.timestamp.map(|ts| {
                 chrono::DateTime::from_timestamp(ts, 0)

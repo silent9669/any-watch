@@ -41,7 +41,7 @@ use std::{
     collections::{HashMap, VecDeque},
     env,
     future::Future,
-    net::SocketAddr,
+    net::{IpAddr, SocketAddr},
     panic::AssertUnwindSafe,
     path::PathBuf,
     pin::Pin,
@@ -50,7 +50,7 @@ use std::{
     time::{Duration, Instant},
 };
 use tokio::{
-    io::{AsyncRead, AsyncReadExt},
+    io::{AsyncRead, AsyncReadExt, AsyncSeekExt, SeekFrom},
     sync::Mutex,
 };
 use tower_http::{
@@ -73,7 +73,7 @@ const LOGIN_ATTEMPT_LIMIT: usize = 8;
 const LOGIN_ATTEMPT_KEY_LIMIT: usize = 10_000;
 const PROVIDER_HEALTH_TTL: Duration = Duration::from_secs(5 * 60);
 const PROVIDER_HEALTH_TIMEOUT: Duration = Duration::from_secs(60);
-const PROVIDER_HEALTH_CONCURRENCY: usize = 4;
+const PROVIDER_HEALTH_CONCURRENCY: usize = 16;
 
 #[derive(Clone)]
 struct AppState {
@@ -457,6 +457,51 @@ struct SubtitleDto {
     url: String,
 }
 
+fn apply_provider_overrides(config: &mut Config, overrides: &str) -> Result<()> {
+    for entry in overrides
+        .split(',')
+        .map(str::trim)
+        .filter(|entry| !entry.is_empty())
+    {
+        let (name, value) = entry.split_once('=').with_context(|| {
+            format!("Invalid provider override '{entry}'; expected name=true|false")
+        })?;
+        let enabled = match value.trim().to_ascii_lowercase().as_str() {
+            "1" | "true" | "yes" | "on" => true,
+            "0" | "false" | "no" | "off" => false,
+            _ => anyhow::bail!(
+                "Invalid provider override value for '{}': {}",
+                name.trim(),
+                value.trim()
+            ),
+        };
+        match name
+            .trim()
+            .to_ascii_lowercase()
+            .replace(['-', '_'], "")
+            .as_str()
+        {
+            "invidious" | "youtube" => config.sources.invidious = enabled,
+            "anidb" => config.sources.anidb = enabled,
+            "anizone" => config.sources.anizone = enabled,
+            "allanime" => config.sources.allanime = enabled,
+            "animegg" => config.sources.animegg = enabled,
+            "moviebox" => config.sources.moviebox = enabled,
+            "kkphim" => config.sources.kkphim = enabled,
+            "ophim" => config.sources.ophim = enabled,
+            "animevietsub" => config.sources.animevietsub = enabled,
+            "niniyo" => config.sources.niniyo = enabled,
+            "k20" => config.sources.k20 = enabled,
+            "animetvn" | "hianime" => anyhow::bail!(
+                "Provider override '{}' has no registered hosted adapter",
+                name.trim()
+            ),
+            _ => anyhow::bail!("Unknown provider override: {}", name.trim()),
+        }
+    }
+    Ok(())
+}
+
 #[tokio::main]
 async fn main() -> Result<()> {
     tracing_subscriber::fmt()
@@ -476,7 +521,11 @@ async fn main() -> Result<()> {
     db.bootstrap_admin(&admin_username, &admin_password).await?;
 
     let core_db = Arc::new(Database::new_at(data_dir.join("catalog.db")).await?);
-    let mut config = Config::default();
+    let mut config = match env::var("ANY_WATCH_CONFIG_PATH") {
+        Ok(path) if !path.trim().is_empty() => Config::load_from_path(path.trim())
+            .context("Failed to load hosted provider configuration")?,
+        _ => Config::default(),
+    };
     if let Ok(instance_url) = env::var("ANY_WATCH_INVIDIOUS_URL") {
         if !instance_url.trim().is_empty() {
             config.sources.invidious = true;
@@ -488,15 +537,34 @@ async fn main() -> Result<()> {
             });
         }
     }
+    if let Ok(overrides) = env::var("ANY_WATCH_PROVIDER_OVERRIDES") {
+        apply_provider_overrides(&mut config, &overrides)?;
+    }
     config.validate()?;
 
     let media_client = Client::builder()
         .connect_timeout(Duration::from_secs(20))
         .timeout(Duration::from_secs(6 * 60 * 60))
-        .redirect(reqwest::redirect::Policy::limited(8))
+        .redirect(reqwest::redirect::Policy::custom(|attempt| {
+            if attempt.previous().len() >= 8 {
+                return attempt.stop();
+            }
+            let same_origin = attempt.previous().first().is_some_and(|initial| {
+                initial.scheme() == attempt.url().scheme()
+                    && initial.host_str() == attempt.url().host_str()
+                    && initial.port_or_known_default() == attempt.url().port_or_known_default()
+            });
+            if same_origin || externally_safe_media_url(attempt.url()) {
+                attempt.follow()
+            } else {
+                attempt.stop()
+            }
+        }))
         .build()?;
 
-    let torrent_downloads_dir = data_dir.join("downloads_tmp");
+    let torrent_downloads_dir = env::var_os("ANY_WATCH_TORRENT_DOWNLOAD_DIR")
+        .map(PathBuf::from)
+        .unwrap_or_else(|| data_dir.join("downloads_tmp"));
     tokio::fs::create_dir_all(&torrent_downloads_dir).await?;
 
     let state = AppState {
@@ -563,6 +631,7 @@ async fn main() -> Result<()> {
             get(get_torrent_task).delete(delete_torrent_task),
         )
         .route("/torrents/tasks/:id/file", get(download_torrent_file))
+        .route("/torrents/tasks/:id/stream", get(stream_torrent_file))
         .route("/torrents/tasks/:id/download", get(download_torrent_file))
         .route(
             "/torrents/tasks/:id/subtitles/:lang",
@@ -582,7 +651,7 @@ async fn main() -> Result<()> {
         .layer(SetResponseHeaderLayer::if_not_present(HeaderName::from_static("strict-transport-security"), HeaderValue::from_static("max-age=31536000; includeSubDomains")))
         .layer(SetResponseHeaderLayer::if_not_present(header::REFERRER_POLICY, HeaderValue::from_static("strict-origin-when-cross-origin")))
         .layer(SetResponseHeaderLayer::if_not_present(HeaderName::from_static("permissions-policy"), HeaderValue::from_static("camera=(), microphone=(), geolocation=()")))
-        .layer(SetResponseHeaderLayer::if_not_present(HeaderName::from_static("content-security-policy"), HeaderValue::from_static("default-src 'self'; img-src 'self' https: data:; media-src 'self' https: blob:; connect-src 'self' https:; style-src 'self' 'unsafe-inline'; script-src 'self'; font-src 'self' data:; object-src 'none'; frame-ancestors 'none'; base-uri 'self'; form-action 'self'")))
+        .layer(SetResponseHeaderLayer::if_not_present(HeaderName::from_static("content-security-policy"), HeaderValue::from_static("default-src 'self'; img-src 'self' https: data:; media-src 'self' https: blob:; connect-src 'self' https:; style-src 'self' 'unsafe-inline'; script-src 'self'; worker-src 'self' blob:; font-src 'self' data:; object-src 'none'; frame-ancestors 'none'; base-uri 'self'; form-action 'self'")))
         .layer(CompressionLayer::new())
         .layer(TraceLayer::new_for_http());
 
@@ -981,13 +1050,30 @@ async fn check_provider_health(
     Ok(run_provider_health_checks(checks).await)
 }
 
+fn catalog_error(operation: &str, error: impl std::fmt::Display) -> ApiError {
+    let detail = error.to_string();
+    tracing::warn!(operation, error = %detail, "catalog request failed");
+    let message = if detail.contains("429") {
+        "Anime discovery is rate limited. Provider results remain available while it cools down."
+    } else {
+        "Anime discovery is temporarily unavailable. Provider results remain available."
+    };
+    ApiError::new(
+        StatusCode::BAD_GATEWAY,
+        "CATALOG_UNAVAILABLE",
+        operation,
+        message,
+        true,
+    )
+}
+
 async fn discovery(State(state): State<AppState>, headers: HeaderMap) -> ApiResult<Json<Value>> {
     let user = require_user(&state, &headers).await?;
     let mut discovery = state
         .catalog
         .discovery()
         .await
-        .map_err(|error| ApiError::internal("catalog", error))?;
+        .map_err(|error| catalog_error("catalog", error))?;
     let preferences = catalog_preferences(&state, &user.id).await;
     apply_personal_matches(&mut discovery.trending, &preferences);
     apply_personal_matches(&mut discovery.popular_this_season, &preferences);
@@ -1004,7 +1090,7 @@ async fn search_catalog(
         .catalog
         .search(query.query.trim(), 24)
         .await
-        .map_err(|error| ApiError::internal("catalog-search", error))?;
+        .map_err(|error| catalog_error("catalog-search", error))?;
     personalize_catalog_items(&state, &user.id, &mut items).await;
     Ok(Json(json!(items)))
 }
@@ -1019,7 +1105,7 @@ async fn genre_catalog(
         .catalog
         .by_genre(&genre, 24)
         .await
-        .map_err(|error| ApiError::internal("catalog", error))?;
+        .map_err(|error| catalog_error("catalog", error))?;
     personalize_catalog_items(&state, &user.id, &mut items).await;
     Ok(Json(json!(items)))
 }
@@ -1029,12 +1115,13 @@ async fn catalog(
     headers: HeaderMap,
     Json(input): Json<CatalogInput>,
 ) -> ApiResult<Json<Value>> {
+    require_app_request(&headers)?;
     let user = require_user(&state, &headers).await?;
     let mut page = state
         .catalog
         .catalog(&input.filters, &input.sort, input.page.unwrap_or(1), 24)
         .await
-        .map_err(|error| ApiError::internal("catalog", error))?;
+        .map_err(|error| catalog_error("catalog", error))?;
     personalize_catalog_items(&state, &user.id, &mut page.items).await;
     Ok(Json(json!(page)))
 }
@@ -1112,6 +1199,7 @@ async fn availability(
     headers: HeaderMap,
     Json(input): Json<AvailabilityInput>,
 ) -> ApiResult<Json<Vec<AvailabilityDto>>> {
+    require_app_request(&headers)?;
     require_user(&state, &headers).await?;
     let mut titles = Vec::new();
     for title in std::iter::once(input.title).chain(input.title_variants) {
@@ -1124,12 +1212,12 @@ async fn availability(
             continue;
         }
         titles.push(title.to_string());
-        if titles.len() == 8 {
+        if titles.len() == 3 {
             break;
         }
     }
-    let mut values = Vec::new();
-    for provider in state.providers.list_providers() {
+    let checks = futures_util::stream::FuturesUnordered::new();
+    for (index, provider) in state.providers.list_providers().iter().enumerate() {
         if input
             .language_group_filter
             .as_deref()
@@ -1137,6 +1225,25 @@ async fn availability(
         {
             continue;
         }
+        checks.push(provider_availability(
+            index,
+            Arc::clone(provider),
+            titles.clone(),
+            input.catalog_id,
+        ));
+    }
+    let mut values = checks.collect::<Vec<_>>().await;
+    values.sort_by_key(|(index, _)| *index);
+    Ok(Json(values.into_iter().map(|(_, value)| value).collect()))
+}
+
+async fn provider_availability(
+    index: usize,
+    provider: Arc<dyn AnimeProvider>,
+    titles: Vec<String>,
+    catalog_id: i64,
+) -> (usize, AvailabilityDto) {
+    let outcome = tokio::time::timeout(Duration::from_secs(55), async {
         let mut selected = None;
         let mut successful_search = false;
         let mut last_error = None;
@@ -1145,7 +1252,7 @@ async fn availability(
                 Ok(items) => {
                     successful_search = true;
                     selected = best_title_match(items, &titles)
-                        .map(|anime| map_anime(anime, Some(input.catalog_id)));
+                        .map(|anime| map_anime(anime, Some(catalog_id)));
                     if selected.is_some() {
                         break;
                     }
@@ -1153,36 +1260,39 @@ async fn availability(
                 Err(error) => last_error = Some(error),
             }
         }
-        let (status, failure_code, anime) = if selected.is_some() {
-            ("available".into(), None, selected)
-        } else if successful_search {
-            (
-                "unavailable".into(),
-                Some("TITLE_NOT_AVAILABLE".into()),
-                None,
-            )
-        } else {
-            (
-                "unavailable".into(),
-                Some(
-                    last_error
-                        .as_ref()
-                        .map(|error| classify_provider_error(&error.to_string()))
-                        .unwrap_or("PROVIDER_UNAVAILABLE")
-                        .into(),
-                ),
-                None,
-            )
-        };
-        values.push(AvailabilityDto {
+        (selected, successful_search, last_error)
+    })
+    .await;
+    let (status, failure_code, anime) = match outcome {
+        Ok((selected, _, _)) if selected.is_some() => ("available".into(), None, selected),
+        Ok((_, true, _)) => (
+            "unavailable".into(),
+            Some("TITLE_NOT_AVAILABLE".into()),
+            None,
+        ),
+        Ok((_, false, last_error)) => (
+            "unavailable".into(),
+            Some(
+                last_error
+                    .as_ref()
+                    .map(|error| classify_provider_error(&error.to_string()))
+                    .unwrap_or("PROVIDER_UNAVAILABLE")
+                    .into(),
+            ),
+            None,
+        ),
+        Err(_) => ("unavailable".into(), Some("NETWORK_TIMEOUT".into()), None),
+    };
+    (
+        index,
+        AvailabilityDto {
             provider: provider.name().into(),
             language: language_label(provider.language()).into(),
             status,
             failure_code,
             anime,
-        });
-    }
-    Ok(Json(values))
+        },
+    )
 }
 
 async fn search_source(
@@ -1190,6 +1300,7 @@ async fn search_source(
     headers: HeaderMap,
     Json(input): Json<SourceSearchInput>,
 ) -> ApiResult<Json<Vec<AnimeDto>>> {
+    require_app_request(&headers)?;
     require_user(&state, &headers).await?;
     if input.query.trim().len() < 2 {
         return Ok(Json(Vec::new()));
@@ -1225,6 +1336,7 @@ async fn provider_catalog(
     headers: HeaderMap,
     Json(input): Json<ProviderCatalogInput>,
 ) -> ApiResult<Json<Vec<AnimeDto>>> {
+    require_app_request(&headers)?;
     require_user(&state, &headers).await?;
     let provider = state
         .providers
@@ -1363,6 +1475,7 @@ async fn anime_details(
     headers: HeaderMap,
     Json(input): Json<AnimeDetailsInput>,
 ) -> ApiResult<Json<AnimeDetailsDto>> {
+    require_app_request(&headers)?;
     require_user(&state, &headers).await?;
     let mut details = AnimeDetailsDto::default();
     let mut metadata_allowed = true;
@@ -1403,6 +1516,7 @@ async fn episodes(
     headers: HeaderMap,
     Json(input): Json<EpisodesInput>,
 ) -> ApiResult<Json<Value>> {
+    require_app_request(&headers)?;
     require_user(&state, &headers).await?;
     let provider = state
         .providers
@@ -1433,6 +1547,7 @@ async fn playback(
     headers: HeaderMap,
     Json(input): Json<PlaybackInput>,
 ) -> ApiResult<Json<PlaybackDto>> {
+    require_app_request(&headers)?;
     let user = require_user(&state, &headers).await?;
     let stream = resolve_stream(&state, &input.provider, &input.episode_id).await?;
     let id = Uuid::new_v4().to_string();
@@ -1463,6 +1578,16 @@ async fn playback(
     Ok(Json(response))
 }
 
+fn is_hls_url(value: &str) -> bool {
+    let value = value.to_ascii_lowercase();
+    value.contains(".m3u8") || value.contains("/api/manifest/hls")
+}
+
+fn is_dash_url(value: &str) -> bool {
+    let value = value.to_ascii_lowercase();
+    value.contains(".mpd") || value.contains("/api/manifest/dash/")
+}
+
 fn playback_dto(id: &str, session: &MediaSession) -> PlaybackDto {
     let subtitles = session
         .stream
@@ -1478,21 +1603,9 @@ fn playback_dto(id: &str, session: &MediaSession) -> PlaybackDto {
     PlaybackDto {
         session_id: id.into(),
         playback_url: format!("/api/media/{id}"),
-        stream_kind: if session
-            .stream
-            .video_url
-            .to_ascii_lowercase()
-            .contains(".m3u8")
-            || session.stream.video_url.contains("/api/manifest/hls")
-        {
+        stream_kind: if is_hls_url(&session.stream.video_url) {
             "hls"
-        } else if session
-            .stream
-            .video_url
-            .to_ascii_lowercase()
-            .contains(".mpd")
-            || session.stream.video_url.contains("/api/manifest/dash/")
-        {
+        } else if is_dash_url(&session.stream.video_url) {
             "dash"
         } else {
             "native"
@@ -1508,6 +1621,7 @@ async fn skip_times(
     headers: HeaderMap,
     Json(input): Json<SkipTimesInput>,
 ) -> ApiResult<Json<Vec<SkipTime>>> {
+    require_app_request(&headers)?;
     require_user(&state, &headers).await?;
     if input.catalog_id <= 0 || input.episode_number == 0 {
         return Err(ApiError::new(
@@ -1791,7 +1905,7 @@ async fn proxy_media_url(
         .get(reqwest::header::CONTENT_TYPE)
         .and_then(|value| value.to_str().ok())
         .map(str::to_string);
-    let hls = url.path().to_ascii_lowercase().contains(".m3u8")
+    let hls = is_hls_url(url.as_str())
         || content_type
             .as_deref()
             .is_some_and(|value| value.contains("mpegurl"));
@@ -1813,7 +1927,7 @@ async fn proxy_media_url(
             .map_err(|error| ApiError::internal("playback", error));
     }
 
-    let dash = url.path().to_ascii_lowercase().contains(".mpd")
+    let dash = is_dash_url(url.as_str())
         || content_type
             .as_deref()
             .is_some_and(|value| value.contains("dash+xml"));
@@ -1883,7 +1997,7 @@ async fn proxy_media_url_via_curl(
             true,
         ));
     }
-    let hls = url.path().to_ascii_lowercase().contains(".m3u8") || content_type.contains("mpegurl");
+    let hls = is_hls_url(url.as_str()) || content_type.contains("mpegurl");
     if hls {
         let body = enforce_body_limit(body, MAX_MEDIA_MANIFEST_BYTES)
             .map_err(|error| manifest_body_error(session_id, &url, error))?;
@@ -1897,8 +2011,7 @@ async fn proxy_media_url_via_curl(
             .body(Body::from(rewritten))
             .map_err(|error| ApiError::internal("playback", error));
     }
-    let dash =
-        url.path().to_ascii_lowercase().contains(".mpd") || content_type.contains("dash+xml");
+    let dash = is_dash_url(url.as_str()) || content_type.contains("dash+xml");
     if dash {
         let body = enforce_body_limit(body, MAX_MEDIA_MANIFEST_BYTES)
             .map_err(|error| manifest_body_error(session_id, &url, error))?;
@@ -1934,6 +2047,10 @@ async fn curl_fetch(
         "-L".into(),
         "--max-redirs".into(),
         "8".into(),
+        "--proto".into(),
+        "=http,https".into(),
+        "--proto-redir".into(),
+        "=http,https".into(),
         "--max-time".into(),
         max_time.to_string(),
     ];
@@ -2263,7 +2380,7 @@ fn rewrite_hls_manifest(
                         url
                     })
                     .map(|url| opaque_resource_url(session_id, session, url, false))
-                    .unwrap_or_else(|_| line.to_string());
+                    .unwrap_or_else(|_| format!("/api/media/{session_id}/resource/invalid"));
             }
             if let Some(uri) = quoted_attribute(trimmed, "URI") {
                 if let Some(url) = join_preserving_query(base, &uri) {
@@ -2276,6 +2393,9 @@ fn rewrite_hls_manifest(
                         1,
                     );
                 }
+            }
+            if trimmed.contains("URI=") {
+                return "#EXT-X-GAP".to_string();
             }
             line.to_string()
         })
@@ -2355,21 +2475,54 @@ fn rewrite_dash_resource_attribute(
     manifest: &str,
     attribute: &str,
 ) -> String {
-    let marker = format!("{attribute}=\"");
+    let rewritten = rewrite_dash_resource_attribute_quote(
+        session_id,
+        session,
+        manifest_url,
+        manifest,
+        attribute,
+        '"',
+    );
+    rewrite_dash_resource_attribute_quote(
+        session_id,
+        session,
+        manifest_url,
+        &rewritten,
+        attribute,
+        '\'',
+    )
+}
+
+fn rewrite_dash_resource_attribute_quote(
+    session_id: &str,
+    session: &MediaSession,
+    manifest_url: &Url,
+    manifest: &str,
+    attribute: &str,
+    quote: char,
+) -> String {
+    let marker = format!("{attribute}={quote}");
     let mut output = String::with_capacity(manifest.len());
     let mut remaining = manifest;
     while let Some(start) = remaining.find(&marker) {
         let value_start = start + marker.len();
-        let Some(value_length) = remaining[value_start..].find('"') else {
+        let Some(value_length) = remaining[value_start..].find(quote) else {
             break;
         };
         let value_end = value_start + value_length;
         let value = &remaining[value_start..value_end];
         output.push_str(&remaining[..value_start]);
-        output.push_str(
-            &opaque_dash_attribute_url(session_id, session, manifest_url, value)
-                .unwrap_or_else(|| value.to_string()),
-        );
+        let replacement = opaque_dash_attribute_url(session_id, session, manifest_url, value)
+            .or_else(|| {
+                (value.is_empty()
+                    || value.starts_with('#')
+                    || value.starts_with("data:")
+                    || value.starts_with("urn:")
+                    || value.starts_with("/api/media/"))
+                .then(|| value.to_string())
+            })
+            .unwrap_or_else(|| format!("/api/media/{session_id}/resource/invalid"));
+        output.push_str(&replacement);
         remaining = &remaining[value_end..];
     }
     output.push_str(remaining);
@@ -2438,7 +2591,22 @@ fn opaque_subtitle_url(
     url: Url,
     format: SubtitleFormat,
 ) -> String {
-    let transform = match format {
+    let inferred_format = if format == SubtitleFormat::Unknown {
+        match url
+            .path()
+            .rsplit_once('.')
+            .map(|(_, extension)| extension.to_ascii_lowercase())
+            .as_deref()
+        {
+            Some("ass" | "ssa") => SubtitleFormat::Ass,
+            Some("srt") => SubtitleFormat::Srt,
+            Some("vtt") => SubtitleFormat::WebVtt,
+            _ => SubtitleFormat::Unknown,
+        }
+    } else {
+        format
+    };
+    let transform = match inferred_format {
         SubtitleFormat::Ass => MediaTransform::AssToWebVtt,
         SubtitleFormat::Srt => MediaTransform::SrtToWebVtt,
         _ => MediaTransform::None,
@@ -2453,6 +2621,9 @@ fn opaque_resource_url_with_transform(
     allow_relative_paths: bool,
     transform: MediaTransform,
 ) -> String {
+    if !allowed_media_resource_url(session, &url) {
+        return format!("/api/media/{session_id}/resource/invalid");
+    }
     let resource_id =
         opaque_resource_id_with_transform(&session.secret, &url, allow_relative_paths, transform);
     session
@@ -2473,6 +2644,72 @@ fn opaque_resource_url_with_transform(
 #[cfg(test)]
 fn opaque_resource_id(secret: &[u8; 32], url: &Url, allow_relative_paths: bool) -> String {
     opaque_resource_id_with_transform(secret, url, allow_relative_paths, MediaTransform::None)
+}
+
+fn allowed_media_resource_url(session: &MediaSession, url: &Url) -> bool {
+    if !matches!(url.scheme(), "http" | "https")
+        || !url.username().is_empty()
+        || url.password().is_some()
+    {
+        return false;
+    }
+    let Some(host) = url.host_str() else {
+        return false;
+    };
+    if Url::parse(&session.stream.video_url)
+        .ok()
+        .and_then(|initial| {
+            initial.host_str().map(|initial_host| {
+                initial_host.eq_ignore_ascii_case(host)
+                    && initial.port_or_known_default() == url.port_or_known_default()
+            })
+        })
+        == Some(true)
+    {
+        return true;
+    }
+    externally_safe_media_url(url)
+}
+
+fn externally_safe_media_url(url: &Url) -> bool {
+    if !matches!(url.scheme(), "http" | "https")
+        || !url.username().is_empty()
+        || url.password().is_some()
+    {
+        return false;
+    }
+    let Some(host) = url.host_str() else {
+        return false;
+    };
+    if let Ok(address) = host.parse::<IpAddr>() {
+        return public_media_ip(address);
+    }
+    !(host.eq_ignore_ascii_case("localhost")
+        || host.ends_with(".localhost")
+        || host.ends_with(".local")
+        || !host.contains('.'))
+}
+
+fn public_media_ip(address: IpAddr) -> bool {
+    match address {
+        IpAddr::V4(address) => {
+            !(address.is_private()
+                || address.is_loopback()
+                || address.is_link_local()
+                || address.is_broadcast()
+                || address.is_documentation()
+                || address.is_unspecified()
+                || address.is_multicast())
+        }
+        IpAddr::V6(address) => {
+            let first = address.segments()[0];
+            !(address.is_loopback()
+                || address.is_unspecified()
+                || address.is_multicast()
+                || first & 0xfe00 == 0xfc00
+                || first & 0xffc0 == 0xfe80)
+        }
+    }
 }
 
 fn opaque_resource_id_with_transform(
@@ -2682,7 +2919,7 @@ async fn create_download_ticket(
         ));
     }
     let stream = resolve_stream(&state, &request.provider, &request.episode_id).await?;
-    if stream.video_url.to_ascii_lowercase().contains(".mpd") {
+    if is_dash_url(&stream.video_url) {
         return Err(ApiError::new(
             StatusCode::UNPROCESSABLE_ENTITY,
             "DOWNLOAD_FORMAT_UNSUPPORTED",
@@ -2716,12 +2953,9 @@ async fn browser_download(
     Path(id): Path<String>,
 ) -> ApiResult<Response> {
     let user = require_user(&state, &headers).await?;
-    let ticket = state
-        .download_tickets
-        .lock()
-        .await
-        .remove(&id)
-        .ok_or_else(|| {
+    let ticket = {
+        let mut tickets = state.download_tickets.lock().await;
+        let ticket = tickets.get(&id).cloned().ok_or_else(|| {
             ApiError::new(
                 StatusCode::NOT_FOUND,
                 "DOWNLOAD_TICKET_EXPIRED",
@@ -2730,15 +2964,27 @@ async fn browser_download(
                 false,
             )
         })?;
-    if ticket.user_id != user.id || ticket.expires_at <= Instant::now() {
-        return Err(ApiError::new(
-            StatusCode::FORBIDDEN,
-            "DOWNLOAD_TICKET_EXPIRED",
-            "download",
-            "This download link is no longer valid.",
-            false,
-        ));
-    }
+        if ticket.user_id != user.id {
+            return Err(ApiError::new(
+                StatusCode::FORBIDDEN,
+                "DOWNLOAD_TICKET_FORBIDDEN",
+                "download",
+                "This download link belongs to another account.",
+                false,
+            ));
+        }
+        if ticket.expires_at <= Instant::now() {
+            tickets.remove(&id);
+            return Err(ApiError::new(
+                StatusCode::FORBIDDEN,
+                "DOWNLOAD_TICKET_EXPIRED",
+                "download",
+                "This download link is no longer valid.",
+                false,
+            ));
+        }
+        tickets.remove(&id).expect("validated download ticket")
+    };
     proxy_download_response(&state.media_client, ticket.stream, &ticket.request).await
 }
 
@@ -2757,7 +3003,7 @@ async fn proxy_download_response(
         )
     })?;
     let upstream_headers = stream_headers(&stream)?;
-    let is_hls = source.path().to_ascii_lowercase().contains(".m3u8");
+    let is_hls = is_hls_url(source.as_str());
     let file_name = browser_download_file_name(request, &stream);
 
     let body = if is_hls {
@@ -2995,7 +3241,7 @@ fn highest_bandwidth_variant(base: &Url, playlist: &str) -> Option<Url> {
             .map(|value| value.trim())
             .filter(|value| !value.starts_with('#') && !value.is_empty())
         {
-            if let Ok(url) = base.join(path) {
+            if let Some(url) = join_preserving_query(base, path) {
                 variants.push((bandwidth, url));
             }
         }
@@ -3053,7 +3299,7 @@ fn browser_download_file_name(request: &BrowserDownloadInput, stream: &StreamInf
         .ok()
         .map(|url| url.path().to_ascii_lowercase())
         .unwrap_or_default();
-    let extension = if source_path.contains(".m3u8") {
+    let extension = if is_hls_url(&stream.video_url) {
         "ts"
     } else {
         source_path
@@ -3168,18 +3414,45 @@ async fn require_admin(state: &AppState, headers: &HeaderMap) -> ApiResult<Sessi
 }
 
 fn require_app_request(headers: &HeaderMap) -> ApiResult<()> {
-    if headers
-        .get("x-any-watch-request")
-        .and_then(|value| value.to_str().ok())
-        != Some("1")
-    {
-        return Err(ApiError::new(
+    let reject = || {
+        ApiError::new(
             StatusCode::FORBIDDEN,
             "REQUEST_VERIFICATION_FAILED",
             "security",
             "The request could not be verified.",
             false,
-        ));
+        )
+    };
+    if headers
+        .get("x-any-watch-request")
+        .and_then(|value| value.to_str().ok())
+        != Some("1")
+    {
+        return Err(reject());
+    }
+
+    if let Some(origin) = headers
+        .get(header::ORIGIN)
+        .and_then(|value| value.to_str().ok())
+    {
+        let origin = Url::parse(origin).map_err(|_| reject())?;
+        let host = headers
+            .get(header::HOST)
+            .and_then(|value| value.to_str().ok())
+            .ok_or_else(reject)?;
+        let host_url = Url::parse(&format!("http://{host}")).map_err(|_| reject())?;
+        if !origin
+            .host_str()
+            .zip(host_url.host_str())
+            .is_some_and(|(origin_host, request_host)| {
+                origin_host.eq_ignore_ascii_case(request_host)
+            })
+            || host_url
+                .port()
+                .is_some_and(|port| origin.port_or_known_default() != Some(port))
+        {
+            return Err(reject());
+        }
     }
     Ok(())
 }
@@ -3293,6 +3566,7 @@ struct TorrentSearchQuery {
     query: String,
     category: Option<String>,
     source: Option<String>,
+    page: Option<u32>,
 }
 
 #[derive(Debug, Deserialize)]
@@ -3309,13 +3583,18 @@ async fn search_torrents(
     let _user = require_user(&state, &headers).await?;
     let category = match params.category.as_deref() {
         Some("anime") => TorrentCategory::Anime,
-        Some("movies") => TorrentCategory::Movies,
+        Some("movie" | "movies") => TorrentCategory::Movies,
         Some("tv") => TorrentCategory::Tv,
         _ => TorrentCategory::All,
     };
     let results = state
         .torrent_hub
-        .search(&params.query, category, params.source.as_deref())
+        .search(
+            &params.query,
+            category,
+            params.source.as_deref(),
+            params.page.unwrap_or(1).clamp(1, 20),
+        )
         .await
         .map_err(|e| ApiError::internal("torrent_search", e))?;
     Ok(Json(json!(results)))
@@ -3341,25 +3620,35 @@ async fn start_torrent_download(
     Json(input): Json<CreateTaskRequest>,
 ) -> ApiResult<Json<Value>> {
     require_app_request(&headers)?;
-    let _user = require_user(&state, &headers).await?;
-    if input.title.trim().is_empty() || input.magnet_url.trim().is_empty() {
+    let user = require_user(&state, &headers).await?;
+    if input.title.trim().is_empty()
+        || (input.magnet_url.trim().is_empty()
+            && input
+                .torrent_url
+                .as_deref()
+                .is_none_or(|url| url.trim().is_empty()))
+    {
         return Err(ApiError::new(
             StatusCode::BAD_REQUEST,
             "INVALID_INPUT",
             "torrent_download",
-            "Title and magnet URL are required",
+            "Title and a magnet or torrent URL are required",
             false,
         ));
     }
-    let task = state.torrent_engine.create_task(input).await.map_err(|e| {
-        ApiError::new(
-            StatusCode::BAD_REQUEST,
-            "TASK_CREATION_FAILED",
-            "torrent_download",
-            e.to_string(),
-            false,
-        )
-    })?;
+    let task = state
+        .torrent_engine
+        .create_task(&user.id, input)
+        .await
+        .map_err(|e| {
+            ApiError::new(
+                StatusCode::BAD_REQUEST,
+                "TASK_CREATION_FAILED",
+                "torrent_download",
+                e.to_string(),
+                false,
+            )
+        })?;
     Ok(Json(json!(task)))
 }
 
@@ -3367,8 +3656,8 @@ async fn list_torrent_tasks(
     State(state): State<AppState>,
     headers: HeaderMap,
 ) -> ApiResult<Json<Value>> {
-    let _user = require_user(&state, &headers).await?;
-    let tasks = state.torrent_engine.list_tasks().await;
+    let user = require_user(&state, &headers).await?;
+    let tasks = state.torrent_engine.list_tasks(&user.id).await;
     Ok(Json(json!(tasks)))
 }
 
@@ -3377,16 +3666,20 @@ async fn get_torrent_task(
     headers: HeaderMap,
     Path(id): Path<String>,
 ) -> ApiResult<Json<Value>> {
-    let _user = require_user(&state, &headers).await?;
-    let task = state.torrent_engine.get_task(&id).await.ok_or_else(|| {
-        ApiError::new(
-            StatusCode::NOT_FOUND,
-            "TASK_NOT_FOUND",
-            "torrent_task",
-            "Task not found",
-            false,
-        )
-    })?;
+    let user = require_user(&state, &headers).await?;
+    let task = state
+        .torrent_engine
+        .get_task(&user.id, &id)
+        .await
+        .ok_or_else(|| {
+            ApiError::new(
+                StatusCode::NOT_FOUND,
+                "TASK_NOT_FOUND",
+                "torrent_task",
+                "Task not found",
+                false,
+            )
+        })?;
     Ok(Json(json!(task)))
 }
 
@@ -3396,10 +3689,10 @@ async fn delete_torrent_task(
     Path(id): Path<String>,
 ) -> ApiResult<StatusCode> {
     require_app_request(&headers)?;
-    let _user = require_user(&state, &headers).await?;
+    let user = require_user(&state, &headers).await?;
     let deleted = state
         .torrent_engine
-        .delete_task(&id)
+        .delete_task(&user.id, &id)
         .await
         .map_err(|e| ApiError::internal("torrent_delete", e))?;
     if deleted {
@@ -3420,50 +3713,118 @@ async fn download_torrent_file(
     headers: HeaderMap,
     Path(id): Path<String>,
 ) -> ApiResult<Response> {
-    let _user = require_user(&state, &headers).await?;
+    serve_torrent_file(state, headers, id, true).await
+}
+
+async fn stream_torrent_file(
+    State(state): State<AppState>,
+    headers: HeaderMap,
+    Path(id): Path<String>,
+) -> ApiResult<Response> {
+    serve_torrent_file(state, headers, id, false).await
+}
+
+async fn serve_torrent_file(
+    state: AppState,
+    headers: HeaderMap,
+    id: String,
+    attachment: bool,
+) -> ApiResult<Response> {
+    let user = require_user(&state, &headers).await?;
     let (file_path, file_name) = state
         .torrent_engine
-        .get_task_file_path(&id)
+        .get_task_file_path(&user.id, &id)
         .await
         .ok_or_else(|| {
             ApiError::new(
                 StatusCode::NOT_FOUND,
                 "FILE_NOT_FOUND",
                 "torrent_file",
-                "The extracted media file is not available yet.",
+                "The prepared media file is not available yet.",
                 false,
             )
         })?;
 
-    let file = tokio::fs::File::open(&file_path)
+    let mut file = tokio::fs::File::open(&file_path)
         .await
-        .map_err(|e| ApiError::internal("torrent_file_open", e))?;
-    let metadata = file
+        .map_err(|error| ApiError::internal("torrent_file_open", error))?;
+    let file_size = file
         .metadata()
         .await
-        .map_err(|e| ApiError::internal("torrent_file_meta", e))?;
+        .map_err(|error| ApiError::internal("torrent_file_meta", error))?
+        .len();
+    let disposition = if attachment { "attachment" } else { "inline" };
+    let content_disposition =
+        HeaderValue::from_str(&format!("{disposition}; filename=\"{file_name}\""))
+            .unwrap_or_else(|_| HeaderValue::from_static("inline"));
+
+    if let Some(range_value) = headers
+        .get(header::RANGE)
+        .and_then(|value| value.to_str().ok())
+    {
+        let (start, end) = parse_single_byte_range(range_value, file_size).ok_or_else(|| {
+            ApiError::new(
+                StatusCode::RANGE_NOT_SATISFIABLE,
+                "INVALID_RANGE",
+                "torrent_file",
+                "The requested video byte range is invalid.",
+                false,
+            )
+        })?;
+        file.seek(SeekFrom::Start(start))
+            .await
+            .map_err(|error| ApiError::internal("torrent_file_seek", error))?;
+        let length = end - start + 1;
+        let stream = tokio_util::io::ReaderStream::new(file.take(length));
+        let mut response = (StatusCode::PARTIAL_CONTENT, Body::from_stream(stream)).into_response();
+        let response_headers = response.headers_mut();
+        response_headers.insert(header::CONTENT_TYPE, HeaderValue::from_static("video/mp4"));
+        response_headers.insert(header::CONTENT_DISPOSITION, content_disposition);
+        response_headers.insert(header::ACCEPT_RANGES, HeaderValue::from_static("bytes"));
+        response_headers.insert(
+            header::CONTENT_LENGTH,
+            HeaderValue::from_str(&length.to_string()).unwrap(),
+        );
+        response_headers.insert(
+            header::CONTENT_RANGE,
+            HeaderValue::from_str(&format!("bytes {start}-{end}/{file_size}")).unwrap(),
+        );
+        return Ok(response);
+    }
+
     let stream = tokio_util::io::ReaderStream::new(file);
-    let body = Body::from_stream(stream);
+    let mut response = Body::from_stream(stream).into_response();
+    let response_headers = response.headers_mut();
+    response_headers.insert(header::CONTENT_TYPE, HeaderValue::from_static("video/mp4"));
+    response_headers.insert(header::CONTENT_DISPOSITION, content_disposition);
+    response_headers.insert(header::ACCEPT_RANGES, HeaderValue::from_static("bytes"));
+    response_headers.insert(
+        header::CONTENT_LENGTH,
+        HeaderValue::from_str(&file_size.to_string()).unwrap(),
+    );
+    Ok(response)
+}
 
-    let content_disposition = format!("attachment; filename=\"{}\"", file_name);
-
-    Ok((
-        [
-            (header::CONTENT_TYPE, HeaderValue::from_static("video/mp4")),
-            (
-                header::CONTENT_DISPOSITION,
-                HeaderValue::from_str(&content_disposition)
-                    .unwrap_or_else(|_| HeaderValue::from_static("attachment")),
-            ),
-            (
-                header::CONTENT_LENGTH,
-                HeaderValue::from_str(&metadata.len().to_string())
-                    .unwrap_or_else(|_| HeaderValue::from_static("0")),
-            ),
-        ],
-        body,
-    )
-        .into_response())
+fn parse_single_byte_range(value: &str, file_size: u64) -> Option<(u64, u64)> {
+    let value = value.strip_prefix("bytes=")?;
+    if value.contains(',') || file_size == 0 {
+        return None;
+    }
+    let (start, end) = value.split_once('-')?;
+    if start.is_empty() {
+        let suffix = end.parse::<u64>().ok()?.min(file_size);
+        return (suffix > 0).then(|| (file_size - suffix, file_size - 1));
+    }
+    let start = start.parse::<u64>().ok()?;
+    if start >= file_size {
+        return None;
+    }
+    let end = if end.is_empty() {
+        file_size - 1
+    } else {
+        end.parse::<u64>().ok()?.min(file_size - 1)
+    };
+    (start <= end).then_some((start, end))
 }
 
 async fn download_torrent_subtitle(
@@ -3471,10 +3832,10 @@ async fn download_torrent_subtitle(
     headers: HeaderMap,
     Path((id, lang)): Path<(String, String)>,
 ) -> ApiResult<Response> {
-    let _user = require_user(&state, &headers).await?;
+    let user = require_user(&state, &headers).await?;
     let (file_path, file_name) = state
         .torrent_engine
-        .get_subtitle_file_path(&id, &lang)
+        .get_subtitle_file_path(&user.id, &id, &lang)
         .await
         .ok_or_else(|| {
             ApiError::new(
@@ -3496,7 +3857,7 @@ async fn download_torrent_subtitle(
         [
             (
                 header::CONTENT_TYPE,
-                HeaderValue::from_static("application/x-subrip; charset=utf-8"),
+                HeaderValue::from_static("text/vtt; charset=utf-8"),
             ),
             (
                 header::CONTENT_DISPOSITION,
@@ -3518,6 +3879,54 @@ mod tests {
     const SIGNED_VALUE: &str = "signed-query-secret";
     const COOKIE_VALUE: &str = "upstream_session=private-cookie";
     const REQUIRED_HEADER_VALUE: &str = "required-header-secret";
+
+    #[test]
+    fn app_request_rejects_cross_origin_headers() {
+        let mut headers = HeaderMap::new();
+        headers.insert("x-any-watch-request", HeaderValue::from_static("1"));
+        headers.insert(header::HOST, HeaderValue::from_static("ani.example"));
+        headers.insert(
+            header::ORIGIN,
+            HeaderValue::from_static("https://ani.example"),
+        );
+        assert!(require_app_request(&headers).is_ok());
+
+        headers.insert(
+            header::ORIGIN,
+            HeaderValue::from_static("https://attacker.example"),
+        );
+        assert!(require_app_request(&headers).is_err());
+        headers.remove(header::ORIGIN);
+        assert!(require_app_request(&headers).is_ok());
+    }
+
+    #[test]
+    fn parses_video_byte_ranges() {
+        assert_eq!(parse_single_byte_range("bytes=0-99", 1_000), Some((0, 99)));
+        assert_eq!(
+            parse_single_byte_range("bytes=900-", 1_000),
+            Some((900, 999))
+        );
+        assert_eq!(
+            parse_single_byte_range("bytes=-100", 1_000),
+            Some((900, 999))
+        );
+        assert_eq!(parse_single_byte_range("bytes=1000-", 1_000), None);
+        assert_eq!(parse_single_byte_range("bytes=0-1,3-4", 1_000), None);
+    }
+
+    #[test]
+    fn provider_overrides_are_explicit_and_validated() {
+        let mut config = Config::default();
+        apply_provider_overrides(&mut config, "anizone=true, animegg=off, youtube=yes")
+            .expect("provider overrides should parse");
+
+        assert!(config.sources.anizone);
+        assert!(!config.sources.animegg);
+        assert!(config.sources.invidious);
+        assert!(apply_provider_overrides(&mut config, "unknown=true").is_err());
+        assert!(apply_provider_overrides(&mut config, "ophim=maybe").is_err());
+    }
 
     fn media_session(video_url: &str) -> MediaSession {
         let mut stream = stream(video_url);
@@ -3776,6 +4185,20 @@ mod tests {
     }
 
     #[test]
+    fn hls_variant_selection_preserves_signed_master_query() {
+        let base = Url::parse("https://cdn.example/master.m3u8?token=signed").unwrap();
+        let selected = highest_bandwidth_variant(
+            &base,
+            "#EXTM3U\n#EXT-X-STREAM-INF:BANDWIDTH=1000\nlow/index.m3u8\n#EXT-X-STREAM-INF:BANDWIDTH=4000\nhigh/index.m3u8",
+        )
+        .unwrap();
+        assert_eq!(
+            selected.as_str(),
+            "https://cdn.example/high/index.m3u8?token=signed"
+        );
+    }
+
+    #[test]
     fn hls_rewrite_hides_private_material_and_resolves_opaque_resources() {
         let manifest_url = Url::parse(&format!(
             "https://{UPSTREAM_HOST}/show/master.m3u8?token={SIGNED_VALUE}"
@@ -3802,6 +4225,30 @@ mod tests {
                 .as_str(),
             format!("https://{UPSTREAM_HOST}/show/segment.ts?token={SIGNED_VALUE}")
         );
+    }
+
+    #[test]
+    fn manifest_rewrite_fails_closed_for_unsafe_or_malformed_resources() {
+        let manifest_url =
+            Url::parse(&format!("https://{UPSTREAM_HOST}/show/master.m3u8")).unwrap();
+        let session = media_session(manifest_url.as_str());
+        let hls = rewrite_hls_manifest(
+            "session",
+            &session,
+            &manifest_url,
+            "#EXTM3U\n#EXT-X-KEY:METHOD=AES-128,URI='http://127.0.0.1/key'\nhttp://[invalid",
+        );
+        assert!(!hls.contains("127.0.0.1"));
+        assert!(!hls.contains("http://[invalid"));
+
+        let dash = rewrite_dash_manifest(
+            "session",
+            &session,
+            &Url::parse(&format!("https://{UPSTREAM_HOST}/show/manifest.mpd")).unwrap(),
+            "<MPD><Period><SegmentTemplate media='http://169.254.169.254/$Number$.m4s' /></Period></MPD>",
+        );
+        assert!(!dash.contains("169.254.169.254"));
+        assert!(dash.contains("/api/media/session/resource/invalid"));
     }
 
     #[test]

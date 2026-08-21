@@ -1,4 +1,4 @@
-use anyhow::Result;
+use anyhow::{bail, Result};
 use reqwest::Client;
 use std::sync::Arc;
 use std::time::Duration;
@@ -42,12 +42,13 @@ impl TorrentSearchHub {
         self.providers.iter().map(|p| p.name()).collect()
     }
 
-    /// Search across all matching providers concurrently with a 6-second timeout per provider
+    /// Search across all matching providers concurrently with a 15-second timeout per provider
     pub async fn search(
         &self,
         query: &str,
         category: TorrentCategory,
         source_filter: Option<&str>,
+        page: u32,
     ) -> Result<Vec<TorrentSearchResult>> {
         let trimmed = query.trim();
         if trimmed.is_empty() {
@@ -62,7 +63,7 @@ impl TorrentSearchHub {
             if let Some(filter) = source_filter {
                 if !filter.is_empty()
                     && !filter.eq_ignore_ascii_case("all")
-                    && !filter.eq_ignore_ascii_case(name)
+                    && !source_matches(filter, name)
                 {
                     continue;
                 }
@@ -81,33 +82,49 @@ impl TorrentSearchHub {
             let query_owned = trimmed.to_string();
 
             tasks.push(tokio::spawn(async move {
-                let search_fut = provider_clone.search(&query_owned, category);
-                match timeout(Duration::from_secs(6), search_fut).await {
+                let search_fut = provider_clone.search(&query_owned, category, page.max(1));
+                match timeout(Duration::from_secs(15), search_fut).await {
                     Ok(Ok(results)) => {
                         info!(
                             "Provider {} returned {} results",
                             provider_clone.name(),
                             results.len()
                         );
-                        results
+                        Ok(results)
                     }
-                    Ok(Err(e)) => {
-                        warn!("Provider {} error: {:#}", provider_clone.name(), e);
-                        Vec::new()
+                    Ok(Err(error)) => {
+                        warn!("Provider {} error: {:#}", provider_clone.name(), error);
+                        Err(provider_clone.name())
                     }
                     Err(_) => {
                         warn!("Provider {} timed out", provider_clone.name());
-                        Vec::new()
+                        Err(provider_clone.name())
                     }
                 }
             }));
         }
 
+        if tasks.is_empty() {
+            return Ok(Vec::new());
+        }
         let mut all_results = Vec::new();
+        let mut successful_providers = 0_usize;
+        let mut failed_providers = Vec::new();
         for task in tasks {
-            if let Ok(res) = task.await {
-                all_results.extend(res);
+            match task.await {
+                Ok(Ok(results)) => {
+                    successful_providers += 1;
+                    all_results.extend(results);
+                }
+                Ok(Err(provider)) => failed_providers.push(provider),
+                Err(error) => warn!(%error, "torrent provider task failed"),
             }
+        }
+        if successful_providers == 0 {
+            bail!(
+                "All selected torrent indexers failed: {}",
+                failed_providers.join(", ")
+            );
         }
 
         // Sort by seeders descending, then size
@@ -126,21 +143,68 @@ impl TorrentSearchHub {
                 true
             }
         });
+        all_results.truncate(200);
 
         Ok(all_results)
     }
 }
 
-fn extract_info_hash(magnet: &str) -> Option<String> {
-    if let Some(idx) = magnet.find("xt=urn:btih:") {
-        let after = &magnet[idx + 12..];
-        let hash: String = after
+fn source_matches(filter: &str, provider_name: &str) -> bool {
+    let normalize = |value: &str| {
+        value
             .chars()
-            .take_while(|c| c.is_ascii_alphanumeric())
-            .collect();
-        if !hash.is_empty() {
-            return Some(hash.to_lowercase());
-        }
+            .filter(|character| character.is_ascii_alphanumeric())
+            .flat_map(char::to_lowercase)
+            .collect::<String>()
+    };
+    let filter = normalize(filter);
+    let provider = normalize(provider_name);
+    filter == provider
+        || (provider == "thepiratebay" && matches!(filter.as_str(), "piratebay" | "tpb"))
+}
+
+fn extract_info_hash(magnet: &str) -> Option<String> {
+    let url = url::Url::parse(magnet).ok()?;
+    if url.scheme() != "magnet" {
+        return None;
     }
-    None
+    url.query_pairs().find_map(|(key, value)| {
+        if !key.eq_ignore_ascii_case("xt") {
+            return None;
+        }
+        let value = value.as_ref();
+        let lower = value.to_ascii_lowercase();
+        let hash = lower.strip_prefix("urn:btih:")?;
+        (!hash.is_empty()
+            && hash
+                .chars()
+                .all(|character| character.is_ascii_alphanumeric()))
+        .then(|| hash.to_string())
+    })
+}
+
+#[cfg(test)]
+mod tests {
+    use super::{extract_info_hash, source_matches};
+
+    #[test]
+    fn source_filter_accepts_display_aliases() {
+        assert!(source_matches("piratebay", "ThePirateBay"));
+        assert!(source_matches("TPB", "ThePirateBay"));
+        assert!(source_matches("anime-tosho", "AnimeTosho"));
+        assert!(!source_matches("Nyaa", "YTS"));
+    }
+
+    #[test]
+    fn magnet_hash_parser_handles_case_and_encoding() {
+        let expected = "0123456789abcdef0123456789abcdef01234567";
+        assert_eq!(
+            extract_info_hash(&format!(
+                "magnet:?dn=Film&XT=URN%3ABTIH%3A{}",
+                expected.to_uppercase()
+            ))
+            .as_deref(),
+            Some(expected)
+        );
+    }
 }
