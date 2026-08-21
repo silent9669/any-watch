@@ -10474,6 +10474,27 @@ select:focus-visible {
   color: var(--color-muted);
 }
 
+.provider-catalog-retry-btn {
+  display: inline-flex;
+  align-items: center;
+  gap: 0.35rem;
+  padding: 0.2rem 0.55rem;
+  border-radius: var(--radius-pill);
+  border: var(--rule-hair) solid var(--color-rule-2);
+  background: var(--color-paper-2);
+  color: var(--color-ink-2);
+  font-size: 0.72rem;
+  font-weight: 600;
+  cursor: pointer;
+  transition: all var(--dur-short) var(--ease-out);
+}
+
+.provider-catalog-retry-btn:hover {
+  background: var(--color-paper-3);
+  color: var(--color-ink);
+  border-color: var(--color-rule);
+}
+
 .provider-history-grid {
   display: grid;
   grid-template-columns: repeat(auto-fill, minmax(13rem, 1fr));

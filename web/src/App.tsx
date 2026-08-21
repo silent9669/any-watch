@@ -20,6 +20,7 @@ import {
   PictureInPicture2,
   Play,
   Plus,
+  RefreshCw,
   RotateCcw,
   RotateCw,
   Search,
@@ -1387,7 +1388,7 @@ function App() {
               selectedAnime={searchSelection}
               suggestedCatalog={providerFallbackCatalog}
               onQueryChange={setQuery}
-              onSearch={() => void searchCatalog()}
+              onSearch={(targetQuery) => void searchCatalog(targetQuery ?? query)}
               onLanguageChange={selectSearchLanguage}
               onProviderSelect={(option) => void selectCatalogProvider(option)}
               onProviderSourceSelect={selectProviderSource}
@@ -3079,7 +3080,7 @@ function SearchStage({
   selectedAnime: Anime | null;
   suggestedCatalog: CatalogAnime[];
   onQueryChange: (query: string) => void;
-  onSearch: () => void;
+  onSearch: (targetQuery?: string) => void;
   onLanguageChange: (language: "english" | "vietnamese") => void;
   onProviderSelect: (option: ProviderAvailability) => void;
   onProviderSourceSelect: (source: Source) => void;
@@ -3126,6 +3127,23 @@ function SearchStage({
     ...providerCatalog.slice(0, 8).map((item) => item.title),
     ...curatedTopics,
   ])].slice(0, 12);
+
+  function fetchProviderCatalog(sourceName: string) {
+    setProviderCatalogLoading(true);
+    setProviderCatalogError(false);
+    api
+      .getProviderCatalog(sourceName)
+      .then((items) => {
+        setProviderCatalog(items);
+        setProviderCatalogError(false);
+        setProviderCatalogLoading(false);
+      })
+      .catch(() => {
+        setProviderCatalog([]);
+        setProviderCatalogError(true);
+        setProviderCatalogLoading(false);
+      });
+  }
 
   useEffect(() => {
     if (!selectedSource?.name) {
@@ -3282,7 +3300,7 @@ function SearchStage({
                 className="provider-website-link"
                 href={selectedSource.websiteUrl}
                 target="_blank"
-                rel="noreferrer"
+                rel="noopener noreferrer"
               >
                 Provider site ↗
               </a>
@@ -3302,7 +3320,19 @@ function SearchStage({
                     ? "This provider could not load its catalog, so these picks come from the general catalog."
                     : "This provider did not return a catalog, so these picks come from the general catalog."}</p>
               </div>
-              <small>{providerCatalog.length || fallbackSuggestions.length} titles</small>
+              <div style={{ display: "flex", alignItems: "center", gap: "0.5rem" }}>
+                {providerCatalogError && (
+                  <button
+                    type="button"
+                    className="provider-catalog-retry-btn"
+                    onClick={() => selectedSource && fetchProviderCatalog(selectedSource.name)}
+                  >
+                    <RefreshCw size={13} />
+                    <span>Retry catalog</span>
+                  </button>
+                )}
+                <small>{providerCatalog.length || fallbackSuggestions.length} titles</small>
+              </div>
             </div>
             {providerCatalogLoading ? (
               <div className="provider-catalog-skeleton-grid" aria-label="Loading provider suggestions">
@@ -3345,7 +3375,7 @@ function SearchStage({
                     <button
                       type="button"
                       className="provider-catalog-thumb"
-                      aria-label={`Find a provider for ${item.title}`}
+                      aria-label={`Explore provider availability for ${item.title}`}
                       title={item.title}
                       onClick={() => onOpenCatalog(item)}
                     >
@@ -3383,7 +3413,7 @@ function SearchStage({
                   className="provider-topic-btn"
                   onClick={() => {
                     onQueryChange(suggestion);
-                    inputRef.current?.focus();
+                    setTimeout(() => onSearch(suggestion), 0);
                   }}
                 >
                   <Search size={14} />
