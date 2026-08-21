@@ -1,6 +1,6 @@
 use super::{
-    Anime, AnimeProvider, Episode, Language, ProviderCapabilities, StreamInfo, Subtitle,
-    SubtitleFormat,
+    probe_stream, Anime, AnimeProvider, Episode, Language, ProviderCapabilities, StreamInfo,
+    Subtitle, SubtitleFormat,
 };
 use crate::config::InvidiousConfig;
 use anyhow::{Context, Result};
@@ -8,15 +8,18 @@ use async_trait::async_trait;
 use reqwest::Url;
 use serde::Deserialize;
 use std::collections::HashMap;
-use std::time::Duration;
+use std::sync::Arc;
+use std::time::{Duration, Instant};
 
 const PROVIDER_NAME: &str = "Invidious";
-const REQUEST_TIMEOUT: Duration = Duration::from_secs(25);
+const REQUEST_TIMEOUT: Duration = Duration::from_secs(15);
 
 pub struct InvidiousProvider {
     client: reqwest::Client,
     base_url: Url,
     local_proxy: bool,
+    video_cache: Arc<tokio::sync::Mutex<HashMap<String, (Instant, VideoResponse)>>>,
+    video_locks: Arc<tokio::sync::Mutex<HashMap<String, Arc<tokio::sync::Mutex<()>>>>>,
 }
 
 #[derive(Debug, Deserialize)]
@@ -38,14 +41,14 @@ fn default_video_type() -> String {
     "video".to_string()
 }
 
-#[derive(Debug, Deserialize)]
+#[derive(Debug, Clone, Deserialize)]
 struct Thumbnail {
     quality: String,
     url: String,
     width: Option<u32>,
 }
 
-#[derive(Debug, Deserialize)]
+#[derive(Debug, Clone, Deserialize)]
 #[serde(rename_all = "camelCase")]
 struct RecommendedVideo {
     video_id: Option<String>,
@@ -56,7 +59,7 @@ struct RecommendedVideo {
     view_count_text: Option<String>,
 }
 
-#[derive(Debug, Deserialize)]
+#[derive(Debug, Clone, Deserialize)]
 #[serde(rename_all = "camelCase")]
 struct VideoResponse {
     title: String,
@@ -75,7 +78,7 @@ struct VideoResponse {
     recommended_videos: Vec<RecommendedVideo>,
 }
 
-#[derive(Debug, Deserialize)]
+#[derive(Debug, Clone, Deserialize)]
 #[serde(rename_all = "camelCase")]
 struct FormatStream {
     url: String,
@@ -83,7 +86,7 @@ struct FormatStream {
     container: Option<String>,
 }
 
-#[derive(Debug, Deserialize)]
+#[derive(Debug, Clone, Deserialize)]
 struct Caption {
     label: String,
     #[serde(alias = "languageCode")]
@@ -104,6 +107,8 @@ impl InvidiousProvider {
             client,
             base_url,
             local_proxy: config.local_proxy,
+            video_cache: Arc::new(tokio::sync::Mutex::new(HashMap::new())),
+            video_locks: Arc::new(tokio::sync::Mutex::new(HashMap::new())),
         }
     }
 
@@ -114,18 +119,75 @@ impl InvidiousProvider {
     }
 
     async fn video(&self, video_id: &str) -> Result<VideoResponse> {
-        let url = self.endpoint(&format!("api/v1/videos/{video_id}"))?;
-        self.client
-            .get(url)
-            .query(&[("local", self.local_proxy.to_string())])
-            .send()
-            .await
-            .context("Failed to reach Invidious video API")?
-            .error_for_status()
-            .context("Invidious could not resolve this video")?
-            .json()
-            .await
-            .context("Failed to parse Invidious video response")
+        const VIDEO_CACHE_TTL: Duration = Duration::from_secs(2 * 60);
+        {
+            let cache = self.video_cache.lock().await;
+            if let Some((cached_at, video)) = cache.get(video_id) {
+                if cached_at.elapsed() < VIDEO_CACHE_TTL {
+                    return Ok(video.clone());
+                }
+            }
+        }
+
+        let video_lock = {
+            let mut locks = self.video_locks.lock().await;
+            Arc::clone(
+                locks
+                    .entry(video_id.to_string())
+                    .or_insert_with(|| Arc::new(tokio::sync::Mutex::new(()))),
+            )
+        };
+        let fetch_guard = video_lock.lock().await;
+        {
+            let cache = self.video_cache.lock().await;
+            if let Some((cached_at, video)) = cache.get(video_id) {
+                if cached_at.elapsed() < VIDEO_CACHE_TTL {
+                    return Ok(video.clone());
+                }
+            }
+        }
+
+        let fetch_result: Result<VideoResponse> = async {
+            let url = self.endpoint(&format!("api/v1/videos/{video_id}"))?;
+            self.client
+                .get(url)
+                .query(&[("local", self.local_proxy.to_string())])
+                .send()
+                .await
+                .context("Failed to reach Invidious video API")?
+                .error_for_status()
+                .context("Invidious could not resolve this video")?
+                .json()
+                .await
+                .context("Failed to parse Invidious video response")
+        }
+        .await;
+        let video = match fetch_result {
+            Ok(video) => video,
+            Err(error) => {
+                drop(fetch_guard);
+                self.video_locks.lock().await.remove(video_id);
+                return Err(error);
+            }
+        };
+
+        {
+            let mut cache = self.video_cache.lock().await;
+            cache.retain(|_, (cached_at, _)| cached_at.elapsed() < VIDEO_CACHE_TTL);
+            if cache.len() >= 128 {
+                if let Some(oldest) = cache
+                    .iter()
+                    .min_by_key(|(_, (cached_at, _))| *cached_at)
+                    .map(|(id, _)| id.clone())
+                {
+                    cache.remove(&oldest);
+                }
+            }
+            cache.insert(video_id.to_string(), (Instant::now(), video.clone()));
+        }
+        drop(fetch_guard);
+        self.video_locks.lock().await.remove(video_id);
+        Ok(video)
     }
 
     fn absolute_url(&self, value: &str) -> Result<String> {
@@ -283,16 +345,26 @@ impl AnimeProvider for InvidiousProvider {
             .context("Failed to reach Invidious")?
             .error_for_status()
             .context("Invidious health endpoint returned an error")?;
-        let probe = self
-            .trending(None)
-            .await?
-            .into_iter()
-            .next()
-            .context("Invidious trending returned no playable videos")?;
-        self.get_stream_url(&probe.id)
-            .await
-            .context("Invidious could not resolve a playable trending video")?;
-        Ok(())
+        let videos = self.trending(None).await?;
+        let mut last_error = None;
+        for video in videos.into_iter().take(2) {
+            match self.get_stream_url(&video.id).await {
+                Ok(stream) => {
+                    match tokio::time::timeout(Duration::from_secs(12), probe_stream(&stream)).await
+                    {
+                        Ok(Ok(())) => return Ok(()),
+                        Ok(Err(error)) => last_error = Some(error),
+                        Err(_) => {
+                            last_error = Some(anyhow::anyhow!("Invidious media probe timed out"))
+                        }
+                    }
+                }
+                Err(error) => last_error = Some(error),
+            }
+        }
+        Err(last_error.unwrap_or_else(|| {
+            anyhow::anyhow!("Invidious trending returned no browser-playable videos")
+        }))
     }
 
     async fn search(&self, query: &str) -> Result<Vec<Anime>> {
@@ -354,29 +426,31 @@ impl AnimeProvider for InvidiousProvider {
             "Live YouTube playback is not supported yet"
         );
 
-        let video_url = if let Some(dash_url) = video.dash_url.filter(|value| !value.is_empty()) {
+        let progressive_mp4 = video
+            .format_streams
+            .iter()
+            .filter(|stream| stream.container.as_deref() == Some("mp4"))
+            .max_by_key(|stream| {
+                stream
+                    .quality_label
+                    .as_deref()
+                    .and_then(|quality| quality.trim_end_matches('p').parse::<u32>().ok())
+                    .unwrap_or_default()
+            });
+        let video_url = if let Some(candidate) = progressive_mp4 {
+            self.absolute_url(&candidate.url)?
+        } else if let Some(hls_url) = video.hls_url.filter(|value| !value.is_empty()) {
+            self.absolute_url(&hls_url)?
+        } else if let Some(dash_url) = video.dash_url.filter(|value| !value.is_empty()) {
             let mut url = self.base_url.join(&dash_url)?;
             if self.local_proxy {
                 url.query_pairs_mut().append_pair("local", "true");
             }
             url.to_string()
-        } else if let Some(hls_url) = video.hls_url.filter(|value| !value.is_empty()) {
-            self.absolute_url(&hls_url)?
-        } else {
-            let candidate = video
-                .format_streams
-                .iter()
-                .filter(|stream| stream.container.as_deref() == Some("mp4"))
-                .max_by_key(|stream| {
-                    stream
-                        .quality_label
-                        .as_deref()
-                        .and_then(|quality| quality.trim_end_matches('p').parse::<u32>().ok())
-                        .unwrap_or_default()
-                })
-                .or_else(|| video.format_streams.first())
-                .context("Invidious returned no browser-playable stream")?;
+        } else if let Some(candidate) = video.format_streams.first() {
             self.absolute_url(&candidate.url)?
+        } else {
+            anyhow::bail!("Invidious returned no browser-playable stream")
         };
 
         let subtitles = video
@@ -487,6 +561,53 @@ mod tests {
             result.is_err(),
             "video details without a playable stream must fail health checks"
         );
+    }
+
+    #[tokio::test]
+    async fn playback_prefers_progressive_mp4_over_dash_and_hls() {
+        let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
+        let address = listener.local_addr().unwrap();
+        let server = tokio::spawn(async move {
+            loop {
+                let (mut socket, _) = listener.accept().await.unwrap();
+                let mut request = vec![0; 4096];
+                let length = socket.read(&mut request).await.unwrap();
+                let request = String::from_utf8_lossy(&request[..length]);
+                let (status, content_type, body) = if request
+                    .contains("GET /api/v1/videos/video123")
+                {
+                    (
+                        "200 OK",
+                        "application/json",
+                        r#"{
+                            "title":"Playable Video",
+                            "dashUrl":"/api/manifest/dash/video123",
+                            "hlsUrl":"/api/manifest/hls/video123",
+                            "formatStreams":[
+                                {"url":"/videoplayback-360.mp4","qualityLabel":"360p","container":"mp4"},
+                                {"url":"/videoplayback-720.mp4","qualityLabel":"720p","container":"mp4"}
+                            ]
+                        }"#,
+                    )
+                } else {
+                    ("404 Not Found", "application/json", "{}")
+                };
+                let response = format!(
+                    "HTTP/1.1 {status}\r\nContent-Type: {content_type}\r\nContent-Length: {}\r\nConnection: close\r\n\r\n{body}",
+                    body.len()
+                );
+                socket.write_all(response.as_bytes()).await.unwrap();
+            }
+        });
+        let provider = InvidiousProvider::new(&InvidiousConfig {
+            instance_url: format!("http://{address}/"),
+            local_proxy: true,
+        });
+
+        let stream = provider.get_stream_url("video123").await.unwrap();
+        server.abort();
+
+        assert!(stream.video_url.ends_with("/videoplayback-720.mp4"));
     }
 
     #[test]

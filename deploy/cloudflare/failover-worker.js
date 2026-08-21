@@ -1,7 +1,34 @@
 const MAINTENANCE_ORIGIN = "https://silent9669.github.io";
 const MAINTENANCE_PREFIX = "/any-watch";
 const ORIGIN_TIMEOUT_MS = 4_000;
+const PROVIDER_MEDIA_TIMEOUT_MS = 65_000;
 const PROVIDER_HEALTH_TIMEOUT_MS = 70_000;
+
+export function originTimeoutForPath(pathname) {
+  if (pathname === "/api/providers/health") return PROVIDER_HEALTH_TIMEOUT_MS;
+  if (pathname === "/api/health") return ORIGIN_TIMEOUT_MS;
+  if (pathname.startsWith("/api/")) return PROVIDER_MEDIA_TIMEOUT_MS;
+  return ORIGIN_TIMEOUT_MS;
+}
+
+async function fetchOrigin(request, timeoutMs) {
+  const controller = new AbortController();
+  const timer = setTimeout(() => controller.abort(), timeoutMs);
+  try {
+    const response = await fetch(request, {
+      cache: "no-store",
+      redirect: "manual",
+      signal: controller.signal,
+    });
+    // The deadline covers origin connection and response headers. Once headers
+    // arrive, leave streaming media bodies attached instead of aborting them.
+    clearTimeout(timer);
+    return response;
+  } catch (error) {
+    clearTimeout(timer);
+    throw error;
+  }
+}
 
 export class OutageState {
   constructor(state) {
@@ -31,18 +58,22 @@ export default {
       return statusResponse(request, env);
     }
 
-    const providerHealth = url.pathname === "/api/providers/health";
+    const apiRequest = url.pathname.startsWith("/api/");
     try {
-      const originResponse = await fetch(request, {
-        cache: "no-store",
-        redirect: "manual",
-        signal: AbortSignal.timeout(providerHealth ? PROVIDER_HEALTH_TIMEOUT_MS : ORIGIN_TIMEOUT_MS),
-      });
+      const originResponse = await fetchOrigin(request, originTimeoutForPath(url.pathname));
 
-      // A provider check reports provider failures itself. Never turn that
-      // endpoint's response into a whole-site outage.
-      if (providerHealth || originResponse.status < 500) {
-        context?.waitUntil(recordOutage(env, url.hostname, "online"));
+      // JSON API routes report typed provider/media failures themselves. Pass
+      // those through, but still treat a proxy-generated non-JSON 5xx as an
+      // origin outage so Caddy errors do not masquerade as application errors.
+      const typedApiResponse = apiRequest
+        && originResponse.headers.get("content-type")?.includes("application/json");
+      if (typedApiResponse || originResponse.status < 500) {
+        const shouldRecordRecovery = url.pathname === "/api/health"
+          || url.pathname === "/api/providers/health"
+          || request.headers.get("sec-fetch-mode") === "navigate";
+        if (shouldRecordRecovery) {
+          context?.waitUntil(recordOutage(env, url.hostname, "online"));
+        }
         return withMode(originResponse, "app", true);
       }
     } catch {
@@ -57,11 +88,7 @@ export default {
 async function statusResponse(request, env) {
   const healthUrl = new URL("/api/health", request.url);
   try {
-    const response = await fetch(healthUrl, {
-      cache: "no-store",
-      redirect: "manual",
-      signal: AbortSignal.timeout(ORIGIN_TIMEOUT_MS),
-    });
+    const response = await fetchOrigin(new Request(healthUrl, request), ORIGIN_TIMEOUT_MS);
     if (response.ok) {
       await recordOutage(env, healthUrl.hostname, "online");
       return jsonStatus("online", null);

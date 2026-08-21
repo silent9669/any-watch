@@ -1,5 +1,5 @@
 import assert from "node:assert/strict";
-import worker, { OutageState } from "../deploy/cloudflare/failover-worker.js";
+import worker, { OutageState, originTimeoutForPath } from "../deploy/cloudflare/failover-worker.js";
 
 const originalFetch = globalThis.fetch;
 
@@ -23,6 +23,10 @@ function outageEnvironment() {
 try {
   const env = outageEnvironment();
   const context = { waitUntil: (promise) => promise };
+  assert.equal(originTimeoutForPath("/api/health"), 4_000);
+  assert.equal(originTimeoutForPath("/api/youtube/trending"), 65_000);
+  assert.equal(originTimeoutForPath("/api/media/session-1"), 65_000);
+  assert.equal(originTimeoutForPath("/api/providers/health"), 70_000);
   globalThis.fetch = async (_request, init) => {
     assert.equal(init.cache, "no-store");
     return new Response("app", { status: 200 });
@@ -33,15 +37,27 @@ try {
   assert.equal(online.headers.get("cache-control"), "no-store");
   assert.equal(await online.text(), "app");
 
-  // Provider certification can legitimately exceed the normal four-second
-  // origin budget. Its response must never become a whole-site outage.
-  globalThis.fetch = async () => new Response(JSON.stringify({ code: "SERVER_ERROR" }), {
-    status: 500,
+  // Provider and media APIs report typed failures themselves. A received 5xx
+  // must never become a whole-site outage or generic maintenance response.
+  globalThis.fetch = async () => new Response(JSON.stringify({ code: "PROVIDER_UNAVAILABLE" }), {
+    status: 502,
     headers: { "content-type": "application/json" },
   });
   const providerHealth = await worker.fetch(new Request("https://ani.dangphuc.me/api/providers/health"), env, context);
-  assert.equal(providerHealth.status, 500);
+  assert.equal(providerHealth.status, 502);
   assert.equal(providerHealth.headers.get("x-any-watch-mode"), "app");
+  const youtubeFailure = await worker.fetch(new Request("https://ani.dangphuc.me/api/youtube/trending"), env, context);
+  assert.equal(youtubeFailure.status, 502);
+  assert.equal(youtubeFailure.headers.get("x-any-watch-mode"), "app");
+  assert.equal((await youtubeFailure.json()).code, "PROVIDER_UNAVAILABLE");
+
+  globalThis.fetch = async () => new Response("upstream unavailable", {
+    status: 502,
+    headers: { "content-type": "text/plain" },
+  });
+  const proxyFailure = await worker.fetch(new Request("https://ani.dangphuc.me/api/youtube/trending"), env, context);
+  assert.equal(proxyFailure.status, 503);
+  assert.equal(proxyFailure.headers.get("x-any-watch-mode"), "maintenance");
 
   const requestedUrls = [];
   globalThis.fetch = async (request) => {

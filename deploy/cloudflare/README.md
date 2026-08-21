@@ -6,11 +6,12 @@ record remains an orange-clouded `A` record pointing at the homelab. Calling
 
 For each request, the Worker:
 
-1. gives ordinary origin requests four seconds, but allows
-   `/api/providers/health` 70 seconds for its 60-second backend checks;
-2. returns non-5xx origin responses unchanged and leaves provider-health errors
-   scoped to that endpoint rather than selecting whole-site maintenance;
-3. returns a stable JSON `503` for ordinary API calls when the origin is unavailable;
+1. gives navigation, assets, and `/api/health` four seconds for response headers,
+   authenticated API routes 65 seconds, and `/api/providers/health` 70 seconds;
+   after headers arrive, streaming response bodies are not aborted by that timer;
+2. returns typed JSON API errors unchanged while treating non-JSON proxy 5xx
+   responses as origin outages;
+3. returns a stable JSON `503` for API calls when the origin is unavailable;
 4. serves navigation and static assets from the independent GitHub Pages
    artifact at `https://silent9669.github.io/any-watch/`;
 5. returns a controlled plain-text `503` when that maintenance origin also fails,

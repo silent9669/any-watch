@@ -1,7 +1,7 @@
 use anyhow::{Context, Result};
 use directories::ProjectDirs;
 use serde::{Deserialize, Serialize};
-use std::path::PathBuf;
+use std::path::{Path, PathBuf};
 
 #[derive(Debug, Clone, Serialize, Deserialize, Default)]
 pub struct Config {
@@ -185,6 +185,14 @@ impl Config {
 
         let content = std::fs::read_to_string(config_path).context("Failed to read config file")?;
         toml::from_str(&content).context("Failed to parse config file")
+    }
+
+    pub fn load_from_path(path: impl AsRef<Path>) -> Result<Self> {
+        let path = path.as_ref();
+        let content = std::fs::read_to_string(path)
+            .with_context(|| format!("Failed to read config file {}", path.display()))?;
+        toml::from_str(&content)
+            .with_context(|| format!("Failed to parse config file {}", path.display()))
     }
 
     pub fn save(&self) -> Result<()> {

@@ -119,6 +119,14 @@ pub async fn probe_stream(stream: &StreamInfo) -> Result<()> {
                     manifest.contains("<MPD"),
                     "STREAM_UNAVAILABLE: DASH response was not a manifest"
                 );
+                let lowercase = manifest.to_ascii_lowercase();
+                anyhow::ensure!(
+                    !lowercase.contains("codecs=\"hev1")
+                        && !lowercase.contains("codecs=\"hvc1")
+                        && !lowercase.contains("codecs='hev1")
+                        && !lowercase.contains("codecs='hvc1"),
+                    "STREAM_UNAVAILABLE: DASH manifest is HEVC-only"
+                );
             }
             return Ok(());
         }
@@ -132,11 +140,21 @@ pub async fn probe_stream(stream: &StreamInfo) -> Result<()> {
             "STREAM_UNAVAILABLE: HLS playlist nesting exceeded the safety limit"
         );
         let playlist = String::from_utf8(body)?;
+        if let Some(key_uri) = hls_attribute_uri(&playlist, "#EXT-X-KEY") {
+            let key_url = join_preserving_query(&url, &key_uri)
+                .context("STREAM_UNAVAILABLE: HLS key URL was invalid")?;
+            let (_, _, key) =
+                fetch_health_resource(&client, key_url.as_str(), &stream.headers).await?;
+            anyhow::ensure!(
+                !key.is_empty(),
+                "STREAM_UNAVAILABLE: HLS key response was empty"
+            );
+        }
         next_url = playlist
             .lines()
             .map(str::trim)
             .find(|line| !line.is_empty() && !line.starts_with('#'))
-            .and_then(|line| url.join(line).ok())
+            .and_then(|line| join_preserving_query(&url, line))
             .context("STREAM_UNAVAILABLE: HLS playlist contained no media resource")?
             .to_string();
     }
@@ -147,6 +165,25 @@ fn looks_like_html(body: &[u8]) -> bool {
     let prefix = String::from_utf8_lossy(&body[..body.len().min(256)]).to_ascii_lowercase();
     let prefix = prefix.trim_start();
     prefix.starts_with("<!doctype html") || prefix.starts_with("<html")
+}
+
+fn join_preserving_query(base: &reqwest::Url, value: &str) -> Option<reqwest::Url> {
+    let mut joined = base.join(value).ok()?;
+    if joined.query().is_none() {
+        joined.set_query(base.query());
+    }
+    Some(joined)
+}
+
+fn hls_attribute_uri(playlist: &str, tag: &str) -> Option<String> {
+    playlist.lines().map(str::trim).find_map(|line| {
+        if !line.starts_with(tag) {
+            return None;
+        }
+        let start = line.find("URI=\"")? + 5;
+        let end = line[start..].find('"')? + start;
+        Some(line[start..end].to_string())
+    })
 }
 
 async fn fetch_health_resource(

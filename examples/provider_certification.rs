@@ -1,4 +1,4 @@
-use any_watch_core::config::Config;
+use any_watch_core::config::{Config, InvidiousConfig};
 use any_watch_core::providers::{
     normalize_title, probe_stream, AnimeProvider, Language, ProviderRegistry,
 };
@@ -8,7 +8,22 @@ use anyhow::{Context, Result};
 async fn main() -> Result<()> {
     let require_english = std::env::args().any(|argument| argument == "--require-english");
     let certify_all = std::env::args().any(|argument| argument == "--all");
-    let mut config = Config::default();
+    let mut config = match std::env::var("ANY_WATCH_CONFIG_PATH") {
+        Ok(path) if !path.trim().is_empty() => Config::load_from_path(path.trim())?,
+        _ => Config::default(),
+    };
+    if let Ok(instance_url) = std::env::var("ANY_WATCH_INVIDIOUS_URL") {
+        if !instance_url.trim().is_empty() {
+            config.sources.invidious = true;
+            config.invidious = Some(InvidiousConfig {
+                instance_url,
+                local_proxy: std::env::var("ANY_WATCH_INVIDIOUS_LOCAL_PROXY")
+                    .map_or(true, |value| {
+                        value != "0" && !value.eq_ignore_ascii_case("false")
+                    }),
+            });
+        }
+    }
     if certify_all {
         config.sources.anizone = true;
         config.sources.allanime = true;
@@ -16,6 +31,7 @@ async fn main() -> Result<()> {
         config.sources.moviebox = true;
         config.sources.ophim = true;
     }
+    config.validate()?;
     let registry = ProviderRegistry::new(&config);
     let mut healthy_english = 0usize;
     let mut failures = Vec::new();
@@ -60,7 +76,7 @@ async fn certify(provider: &dyn AnimeProvider) -> Result<()> {
         (Language::Vietnamese, "Niniyo") => &["Solo Leveling", "Attack on Titan"][..],
         (Language::Vietnamese, "K20") => &["Naruto"][..],
         (Language::English, _) | (Language::Vietnamese, _) => &["One Piece"][..],
-        (Language::Youtube, _) => &["YouTube"][..],
+        (Language::Youtube, _) => &["music"][..],
     };
     for query in queries {
         certify_query(provider, query)
@@ -84,10 +100,14 @@ async fn certify_query(provider: &dyn AnimeProvider, query: &str) -> Result<()> 
         .into_iter()
         .map(str::to_string)
         .collect::<Vec<_>>();
-    let anime = results
-        .into_iter()
-        .find(|anime| exact_title_match(&anime.title, &aliases))
-        .with_context(|| format!("no exact canonical match for {query}"))?;
+    let anime = if provider.language() == Language::Youtube {
+        results.into_iter().next()
+    } else {
+        results
+            .into_iter()
+            .find(|anime| exact_title_match(&anime.title, &aliases))
+    }
+    .with_context(|| format!("no certifiable result for {query}"))?;
     certify_anime(provider, &anime).await.with_context(|| {
         format!(
             "{} [{}] did not produce playable media",

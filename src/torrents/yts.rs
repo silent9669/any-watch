@@ -61,6 +61,7 @@ impl TorrentSearchProvider for YtsProvider {
         &self,
         query: &str,
         category: TorrentCategory,
+        page: u32,
     ) -> Result<Vec<TorrentSearchResult>> {
         if category == TorrentCategory::Anime || category == TorrentCategory::Tv {
             return Ok(Vec::new());
@@ -71,7 +72,8 @@ impl TorrentSearchProvider for YtsProvider {
             .append_pair("query_term", query)
             .append_pair("sort_by", "seeds")
             .append_pair("order_by", "desc")
-            .append_pair("limit", "20");
+            .append_pair("limit", "50")
+            .append_pair("page", &page.max(1).to_string());
 
         let response = self
             .client
@@ -81,11 +83,16 @@ impl TorrentSearchProvider for YtsProvider {
             .await
             .context("YTS request failed")?;
 
-        if !response.status().is_success() {
-            return Ok(Vec::new());
-        }
+        anyhow::ensure!(
+            response.status().is_success(),
+            "YTS returned HTTP {}",
+            response.status()
+        );
 
-        let body: YtsResponse = response.json().await.unwrap_or(YtsResponse { data: None });
+        let body: YtsResponse = response
+            .json()
+            .await
+            .context("YTS returned invalid movie JSON")?;
 
         let mut results = Vec::new();
         let movies = match body.data.and_then(|d| d.movies) {
@@ -138,7 +145,7 @@ impl TorrentSearchProvider for YtsProvider {
                     peers,
                     quality: Some(quality),
                     upload_date: torrent.date_uploaded,
-                    has_engsub: true,
+                    has_engsub: false,
                     has_vietsub: false,
                 });
             }

@@ -17,6 +17,7 @@ name = "any_watch_core"
 [dependencies]
 # Async runtime
 tokio = { version = "1", features = ["full"] }
+tokio-util = { version = "0.7", features = ["rt"] }
 
 # HTTP client
 reqwest = { version = "0.12", default-features = false, features = ["json", "rustls-tls"] }
@@ -48,6 +49,7 @@ chrono = { version = "0.4", features = ["serde"] }
 url = "2.5"
 regex = "1.10"
 uuid = { version = "1.8", features = ["v4", "serde"] }
+fs2 = "0.4"
 
 # Crypto for AllAnime decryption
 aes = "0.8"

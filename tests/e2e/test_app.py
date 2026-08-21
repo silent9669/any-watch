@@ -216,10 +216,38 @@ def test_t1_search_idle_banner_and_suggestion(mocked_page):
     welcome = mocked_page.locator(".search-welcome")
     expect(welcome).to_be_visible()
     expect(welcome.locator(".search-welcome-provider")).to_be_visible()
-    expect(welcome).to_contain_text("Search Server 1")
+    expect(welcome).to_contain_text("Explore Server 1")
     welcome.get_by_role("button", name="One Piece").click()
     expect(mocked_page.locator(".search-input-shell input")).to_have_value("One Piece")
     mocked_page.wait_for_selector(".search-result")
+
+
+def test_t1_provider_dashboard_prioritizes_available_suggestions(mocked_page):
+    mocked_page.locator(".hero-search-trigger").click()
+    dashboard = mocked_page.locator(".provider-dashboard-welcome")
+    expect(dashboard).to_be_visible()
+    expect(dashboard).not_to_contain_text("Continue Watching")
+    expect(dashboard).to_contain_text("Available now on Server 1")
+    expect(dashboard.locator(".provider-catalog-card")).to_have_count(10)
+    expect(dashboard.locator(".provider-catalog-card").first).to_contain_text("AniZone Available 1")
+    expect(dashboard.locator(".provider-website-link")).to_have_attribute("href", "https://anizone.to")
+
+
+def test_t1_provider_dashboard_falls_back_to_general_catalog(mocked_page):
+    mocked_page.evaluate("""() => {
+        const state = JSON.parse(localStorage.getItem('__API_MOCK_STATE__') || '{}');
+        state.provider_catalog_error = { code: 'PROVIDER_UNAVAILABLE', message: 'Catalog failed' };
+        localStorage.setItem('__API_MOCK_STATE__', JSON.stringify(state));
+    }""")
+    mocked_page.locator(".hero-search-trigger").click()
+    dashboard = mocked_page.locator(".provider-dashboard-welcome")
+    expect(dashboard).to_contain_text("Suggestions for your next watch")
+    expect(dashboard).to_contain_text("general catalog")
+    expect(dashboard.locator(".provider-fallback-grid .provider-catalog-card")).to_have_count(12)
+    dashboard.locator(".provider-fallback-grid .provider-catalog-card button").first.click()
+    expect(mocked_page.locator(".search-input-shell input")).to_have_value("One Piece")
+    expect(mocked_page.locator(".catalog-search-results")).to_be_visible()
+
 
 def test_t1_search_provider_chips(mocked_page):
     mocked_page.locator(".hero-search-trigger").click()
@@ -489,18 +517,25 @@ def test_t1_episode_download_keyboard_does_not_start_playback(mocked_page):
     expect(download).to_have_class("episode-download-button complete")
     expect(mocked_page.locator("video")).to_have_count(0)
 
-def test_t1_episode_action_columns_are_fixed(mocked_page):
+def test_t1_episode_actions_use_sibling_buttons(mocked_page):
     mocked_page.locator(".hero-search-trigger").click()
     mocked_page.locator(".search-input-shell input").fill("Naruto")
     mocked_page.wait_for_selector(".search-result")
     mocked_page.locator(".search-result").first.click()
     mocked_page.locator(".detail-actions button.primary").click()
     row = mocked_page.locator(".episode-list-row").first
-    columns = row.evaluate("""node => ({
-        download: getComputedStyle(node.querySelector('.episode-download-button')).gridColumnStart,
-        play: getComputedStyle(node.querySelector('.episode-play-icon')).gridColumnStart,
+    semantics = row.evaluate("""node => ({
+        tag: node.tagName,
+        directButtons: [...node.children].filter((child) => child.tagName === 'BUTTON').length,
+        nestedButton: Boolean(node.querySelector('.episode-open-button button')),
+        downloadColumn: getComputedStyle(node.querySelector('.episode-download-button')).gridColumnStart,
     })""")
-    assert columns == {"download": "4", "play": "5"}
+    assert semantics == {
+        "tag": "ARTICLE",
+        "directButtons": 2,
+        "nestedButton": False,
+        "downloadColumn": "2",
+    }
 
 
 # Liquid Glass Features (5 tests)
@@ -854,7 +889,7 @@ def test_t2_episode_prepare_playback_failure(mocked_page):
         state.playback_error = "Playback stream resolving failed";
         localStorage.setItem('__API_MOCK_STATE__', JSON.stringify(state));
     }""")
-    mocked_page.locator(".episode-list-row").first.click()
+    mocked_page.locator(".episode-list-row").first.locator(".episode-open-button").click()
     expect(mocked_page.locator(".error-notice")).to_be_visible()
 
 
@@ -962,7 +997,7 @@ def test_t3_history_update_on_playback(mocked_page):
     mocked_page.wait_for_selector(".episode-list-row")
 
     # Play Episode 1
-    mocked_page.locator(".episode-list-row").first.click()
+    mocked_page.locator(".episode-list-row").first.locator(".episode-open-button").click()
     mocked_page.wait_for_selector("video")
 
     # Close player (if a close button exists)
@@ -977,7 +1012,7 @@ def test_t3_player_matches_apple_style_control_composition(mocked_page):
     mocked_page.locator(".search-result").first.click()
     mocked_page.locator(".detail-actions button.primary").click()
     mocked_page.wait_for_selector(".episode-list-row")
-    mocked_page.locator(".episode-list-row").first.click()
+    mocked_page.locator(".episode-list-row").first.locator(".episode-open-button").click()
     expect(mocked_page.locator(".player-leading-controls")).to_be_visible()
     expect(mocked_page.locator(".player-volume-dock")).to_be_visible()
     expect(mocked_page.locator(".player-now-playing")).to_contain_text("Naruto Shippuden")
@@ -1067,7 +1102,7 @@ def test_t3_hls_uses_browser_appropriate_playback_path(mocked_page, browser_name
     mocked_page.locator(".search-result").first.click()
     mocked_page.locator(".detail-actions button.primary").click()
     mocked_page.wait_for_selector(".episode-list-row")
-    mocked_page.locator(".episode-list-row").first.click()
+    mocked_page.locator(".episode-list-row").first.locator(".episode-open-button").click()
 
     mocked_page.wait_for_function("""() => {
         const video = document.querySelector('video');
@@ -1103,7 +1138,7 @@ def test_t3_direct_provider_result_links_catalog_and_skips_verified_intro(mocked
     mocked_page.locator(".search-result").first.click()
     mocked_page.locator(".detail-actions button.primary").click()
     mocked_page.wait_for_selector(".episode-list-row")
-    mocked_page.locator(".episode-list-row").first.click()
+    mocked_page.locator(".episode-list-row").first.locator(".episode-open-button").click()
     mocked_page.wait_for_selector("video")
     mocked_page.wait_for_function("""() => window.__API_CALLS__.some(
         (call) => call.cmd === 'get_skip_times'
@@ -1131,7 +1166,7 @@ def test_t3_localized_provider_result_uses_exact_search_catalog_id(mocked_page):
     mocked_page.locator(".search-result").first.click()
     mocked_page.locator(".detail-actions button.primary").click()
     mocked_page.wait_for_selector(".episode-list-row")
-    mocked_page.locator(".episode-list-row").first.click()
+    mocked_page.locator(".episode-list-row").first.locator(".episode-open-button").click()
     mocked_page.wait_for_function("""() => window.__API_CALLS__.some(
         (call) => call.cmd === 'get_skip_times'
             && call.args.catalogId === 21
@@ -1146,7 +1181,7 @@ def test_t3_skip_intro_does_not_seek_for_mismatched_cut(mocked_page):
     mocked_page.locator(".search-result").first.click()
     mocked_page.locator(".detail-actions button.primary").click()
     mocked_page.wait_for_selector(".episode-list-row")
-    mocked_page.locator(".episode-list-row").first.click()
+    mocked_page.locator(".episode-list-row").first.locator(".episode-open-button").click()
     mocked_page.wait_for_selector("video")
     mocked_page.wait_for_function("""() => window.__API_CALLS__.some(
         (call) => call.cmd === 'get_skip_times'
@@ -1174,7 +1209,7 @@ def test_t3_missing_aniskip_record_is_not_an_error(mocked_page):
     mocked_page.locator(".search-result").first.click()
     mocked_page.locator(".detail-actions button.primary").click()
     mocked_page.wait_for_selector(".episode-list-row")
-    mocked_page.locator(".episode-list-row").first.click()
+    mocked_page.locator(".episode-list-row").first.locator(".episode-open-button").click()
     skip_intro = mocked_page.get_by_role("switch", name="Toggle skip intro")
     expect(skip_intro).to_have_attribute("data-state", "success")
     expect(skip_intro).to_have_attribute("title", "No marked segments")
@@ -1254,9 +1289,9 @@ def test_t3_home_continue_watching_opens_youtube_watch_room(mocked_page):
     mocked_page.evaluate("""() => {
         const state = JSON.parse(localStorage.getItem('__API_MOCK_STATE__') || '{}');
         state.continue_watching = [{
-            animeId: 'Invidious:yt-continue-1',
+            animeId: 'YouTube:yt-continue-1',
             catalogId: null,
-            provider: 'Invidious',
+            provider: 'YouTube',
             title: 'YouTube Continue Video',
             coverUrl: 'https://example.com/youtube-continue-1.jpg',
             episodeNumber: 1,
@@ -1288,6 +1323,75 @@ def test_t3_detail_pagination_sorting(mocked_page):
     mocked_page.wait_for_timeout(300)
 
     expect(mocked_page.locator(".episode-list-row").first.locator("strong")).to_have_text("Episode 100")
+
+
+def test_t3_youtube_feed_failure_is_visible_and_retryable(mocked_page):
+    mocked_page.evaluate("""() => {
+        const state = JSON.parse(localStorage.getItem('__API_MOCK_STATE__') || '{}');
+        state.youtube_feed_error = {
+            code: 'PROVIDER_UNAVAILABLE',
+            message: 'The video feed is temporarily unavailable.',
+            retryable: true,
+        };
+        localStorage.setItem('__API_MOCK_STATE__', JSON.stringify(state));
+    }""")
+    mocked_page.get_by_role("button", name="YouTube").click()
+    error = mocked_page.locator(".youtube-feed-section .youtube-inline-error")
+    expect(error).to_contain_text("temporarily unavailable")
+
+    mocked_page.evaluate("""() => {
+        const state = JSON.parse(localStorage.getItem('__API_MOCK_STATE__') || '{}');
+        state.youtube_feed_error = null;
+        localStorage.setItem('__API_MOCK_STATE__', JSON.stringify(state));
+    }""")
+    error.get_by_role("button", name="Retry feed").click()
+    expect(mocked_page.locator(".youtube-feed-card").first).to_be_visible()
+
+
+def test_t3_youtube_related_failure_is_visible_and_retryable(mocked_page):
+    mocked_page.evaluate("""() => {
+        const state = JSON.parse(localStorage.getItem('__API_MOCK_STATE__') || '{}');
+        state.youtube_related_error = {
+            code: 'PROVIDER_UNAVAILABLE',
+            message: 'Related videos are temporarily unavailable.',
+            retryable: true,
+        };
+        localStorage.setItem('__API_MOCK_STATE__', JSON.stringify(state));
+    }""")
+    mocked_page.get_by_role("button", name="YouTube").click()
+    mocked_page.wait_for_selector(".youtube-feed-card")
+    mocked_page.locator(".youtube-feed-title").first.click()
+    error = mocked_page.locator(".youtube-watch-sidebar .youtube-inline-error")
+    expect(error).to_contain_text("Related videos are temporarily unavailable")
+
+    mocked_page.evaluate("""() => {
+        const state = JSON.parse(localStorage.getItem('__API_MOCK_STATE__') || '{}');
+        state.youtube_related_error = null;
+        localStorage.setItem('__API_MOCK_STATE__', JSON.stringify(state));
+    }""")
+    error.get_by_role("button", name="Retry").click()
+    expect(mocked_page.locator(".youtube-related-card").first).to_be_visible()
+
+
+def test_t3_youtube_deep_link_opens_watch_room(mocked_page):
+    origin = mocked_page.evaluate("() => location.origin")
+    mocked_page.goto(f"{origin}/youtube?v=deep-link-video")
+    expect(mocked_page.locator(".youtube-watch-room")).to_be_visible()
+    expect(mocked_page.locator(".youtube-watch-title")).to_have_text("YouTube video")
+    assert mocked_page.url.endswith("/youtube?v=deep-link-video")
+
+
+def test_t3_browser_back_closes_youtube_watch_room(mocked_page):
+    mocked_page.get_by_role("button", name="YouTube").click()
+    mocked_page.wait_for_selector(".youtube-feed-card")
+    mocked_page.locator(".youtube-feed-title").first.click()
+    expect(mocked_page.locator(".youtube-watch-room")).to_be_visible()
+    assert "/youtube?v=" in mocked_page.url
+
+    mocked_page.go_back()
+    expect(mocked_page.locator(".youtube-watch-room")).to_have_count(0)
+    expect(mocked_page.locator(".youtube-feed-card").first).to_be_visible()
+    assert mocked_page.url.endswith("/youtube")
 
 
 def test_t3_youtube_route_scrolls_long_feeds(mocked_page):
@@ -1534,7 +1638,9 @@ def test_t3_youtube_watch_room_contains_the_player(mocked_page):
     expect(mocked_page.locator(".youtube-watch-room")).to_be_visible()
 
     mocked_page.get_by_role("button", name="Play Now").click()
-    expect(mocked_page.locator(".youtube-theater-frame video")).to_be_visible()
+    video = mocked_page.locator(".youtube-theater-frame video")
+    expect(video).to_be_visible()
+    expect(video).to_have_attribute("playsinline", "")
     expect(mocked_page.locator(".youtube-theater-frame .inline-player")).to_be_visible()
     expect(mocked_page.locator(".app-shell > .player-overlay")).to_have_count(0)
 
@@ -1605,6 +1711,106 @@ def test_t3_youtube_inline_player_fits_mobile_viewport(mobile_mocked_page):
     assert all(button["width"] >= 44 and button["height"] >= 44 for button in geometry["buttons"])
 
 
+def test_t3_torrent_search_paginates_and_uses_exact_source(mocked_page):
+    mocked_page.get_by_label("Primary navigation").get_by_role("button", name="Downloads").click()
+    search = mocked_page.get_by_role("textbox", name="Search torrent indexers")
+    search.fill("Frieren")
+    mocked_page.locator(".torrent-search-panel").get_by_role("button", name="Search", exact=True).click()
+    expect(mocked_page.locator(".torrent-result-card")).to_have_count(8)
+
+    mocked_page.get_by_label("Torrent source").select_option("ThePirateBay")
+    expect(mocked_page.locator(".torrent-result-card").first).to_contain_text("ThePirateBay")
+    source_calls = mocked_page.evaluate("""() => window.__API_CALLS__.filter(
+        (call) => call.cmd === 'search_torrents' && call.args.source === 'ThePirateBay'
+    ).length""")
+    assert source_calls >= 1
+
+    mocked_page.get_by_role("button", name="Load page 2").click()
+    expect(mocked_page.locator(".torrent-result-card")).to_have_count(16)
+    pages = mocked_page.evaluate("""() => window.__API_CALLS__.filter(
+        (call) => call.cmd === 'search_torrents'
+    ).map((call) => call.args.page)""")
+    assert 2 in pages
+
+
+def test_t3_torrent_task_can_preview_and_delete_prepared_video(mocked_page):
+    mocked_page.get_by_label("Primary navigation").get_by_role("button", name="Downloads").click()
+    mocked_page.get_by_role("textbox", name="Search torrent indexers").fill("Dune")
+    mocked_page.locator(".torrent-search-panel").get_by_role("button", name="Search", exact=True).click()
+    mocked_page.locator(".torrent-btn-download").first.click()
+
+    task = mocked_page.locator(".torrent-task-card")
+    expect(task).to_contain_text("Ready")
+    task.get_by_role("button", name="Watch Now").click()
+    video = task.locator("video")
+    expect(video).to_be_visible()
+    expect(video).to_have_attribute("playsinline", "")
+    expect(video.locator("track")).to_have_count(2)
+
+    for width in (320, 768, 1440):
+        mocked_page.set_viewport_size({"width": width, "height": 800})
+        metrics = mocked_page.evaluate("""() => ({
+            viewport: window.innerWidth,
+            pageWidth: document.documentElement.scrollWidth,
+            playerRight: document.querySelector('.torrent-task-player')?.getBoundingClientRect().right || 0,
+        })""")
+        assert metrics["pageWidth"] <= metrics["viewport"]
+        assert metrics["playerRight"] <= metrics["viewport"]
+
+    task.get_by_role("button", name="Delete Task").click()
+    expect(mocked_page.locator(".torrent-task-card")).to_have_count(0)
+
+
+@pytest.mark.parametrize("width", [320, 375, 414, 768, 1100, 1440, 1728])
+def test_t3_responsive_route_matrix(mocked_page, width):
+    mocked_page.set_viewport_size({"width": width, "height": 568 if width <= 414 else 900})
+
+    def assert_no_horizontal_scroll():
+        metrics = mocked_page.evaluate("""() => ({
+            viewport: window.innerWidth,
+            documentWidth: document.documentElement.scrollWidth,
+            bodyWidth: document.body.scrollWidth,
+        })""")
+        assert metrics["documentWidth"] <= metrics["viewport"]
+        assert metrics["bodyWidth"] <= metrics["viewport"]
+
+    assert_no_horizontal_scroll()
+    if width <= 959:
+        nav = mocked_page.get_by_label("Primary navigation")
+        buttons = nav.locator(".app-navigation-items > button:visible")
+        expect(buttons).to_have_count(5)
+        targets = buttons.evaluate_all("""nodes => nodes.map((node) => {
+            const rect = node.getBoundingClientRect();
+            return { width: rect.width, height: rect.height };
+        })""")
+        assert all(target["width"] >= 44 and target["height"] >= 44 for target in targets)
+
+    mocked_page.get_by_label("Primary navigation").get_by_role("button", name="Search").click()
+    expect(mocked_page.locator(".provider-dashboard-welcome")).to_be_visible()
+    assert_no_horizontal_scroll()
+
+    mocked_page.get_by_role("searchbox", name="Search anime, films, and OVAs").fill("Naruto")
+    mocked_page.wait_for_selector(".search-result")
+    mocked_page.locator(".search-result").first.click()
+    expect(mocked_page.locator(".search-preview")).to_be_visible()
+    assert_no_horizontal_scroll()
+
+    mocked_page.locator(".search-preview .detail-actions button.primary").click()
+    mocked_page.wait_for_selector(".episode-list-row")
+    assert_no_horizontal_scroll()
+    chooser = mocked_page.locator(".detail-chooser-grid").evaluate("""node => ({
+        width: node.getBoundingClientRect().width,
+        scrollWidth: node.scrollWidth,
+    })""")
+    assert chooser["scrollWidth"] <= chooser["width"] + 1
+
+    if width <= 760:
+        mocked_page.get_by_role("button", name="Back", exact=True).first.click()
+    mocked_page.get_by_label("Primary navigation").get_by_role("button", name="Downloads").click()
+    expect(mocked_page.locator(".stage-downloads")).to_be_visible()
+    assert_no_horizontal_scroll()
+
+
 # --- TIER 4 TESTS (3 Tests in test_app.py) ---
 
 def test_t4_full_user_watching_session(mocked_page):
@@ -1624,7 +1830,7 @@ def test_t4_full_user_watching_session(mocked_page):
     mocked_page.locator(".episode-toolbar input").fill("25")
     mocked_page.locator(".episode-toolbar input").press("Enter")
     expect(mocked_page.locator(".episode-list-row.highlighted")).to_contain_text("Episode 25")
-    mocked_page.locator(".episode-list-row.highlighted").click()
+    mocked_page.locator(".episode-list-row.highlighted .episode-open-button").click()
 
     # 6. Verify player opens
     expect(mocked_page.locator("video")).to_be_visible()

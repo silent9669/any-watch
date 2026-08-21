@@ -49,7 +49,9 @@ k20 = true
 hianime = false
 
 [invidious]
-instance_url = "http://invidious:3000"
+# any-watch does not bundle an Invidious service. Point this at a private or
+# trusted instance reachable from the hosted container/network.
+instance_url = "https://your-invidious-instance.example"
 local_proxy = true
 
 [theme]

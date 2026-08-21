@@ -245,11 +245,18 @@ impl AniDbProvider {
                 depth < 2,
                 "STREAM_UNAVAILABLE: HLS playlist nesting exceeded the safety limit"
             );
+            let base_url = next_url.clone();
             next_url = body
                 .lines()
                 .map(str::trim)
                 .find(|line| !line.is_empty() && !line.starts_with('#'))
-                .and_then(|line| next_url.join(line).ok())
+                .and_then(|line| {
+                    let mut joined = base_url.join(line).ok()?;
+                    if joined.query().is_none() {
+                        joined.set_query(base_url.query());
+                    }
+                    Some(joined)
+                })
                 .context("STREAM_UNAVAILABLE: HLS playlist contained no media resource")?;
         }
         anyhow::bail!("STREAM_UNAVAILABLE: media probe did not resolve")

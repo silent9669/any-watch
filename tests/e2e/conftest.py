@@ -91,6 +91,7 @@ def mocked_page(page, vite_server):
                 search_error: null,
                 catalog_search_error: null,
                 provider_search_error: null,
+                provider_catalog_error: null,
                 provider_health_error: null,
                 episode_provider: null,
                 skip_times: null,
@@ -98,9 +99,13 @@ def mocked_page(page, vite_server):
                 download_error: null,
                 youtube_search_delays: {},
                 youtube_feed_delays: {},
+                youtube_feed_error: null,
                 youtube_related_delays: {},
+                youtube_related_error: null,
                 youtube_playback_delays: {},
                 downloads: [],
+                torrent_tasks: [],
+                torrent_search_error: null,
                 update_available: false,
                 update_error: null,
                 update_install_error: null,
@@ -299,6 +304,7 @@ def mocked_page(page, vite_server):
                     seasonYear: 2026
                 }));
             } else if (cmd === "get_youtube_trending") {
+                if (state.youtube_feed_error) throw state.youtube_feed_error;
                 const topic = args.topic || "All";
                 await waitForMockDelay(state.youtube_feed_delays, topic);
                 return Array.from({ length: 18 }, (_, index) =>
@@ -309,11 +315,13 @@ def mocked_page(page, vite_server):
                     )
                 );
             } else if (cmd === "get_youtube_popular") {
+                if (state.youtube_feed_error) throw state.youtube_feed_error;
                 await waitForMockDelay(state.youtube_feed_delays, "Popular");
                 return Array.from({ length: 18 }, (_, index) =>
                     makeYouTubeVideo(`popular-${index + 1}`, `Popular Video ${index + 1}`)
                 );
             } else if (cmd === "get_youtube_related") {
+                if (state.youtube_related_error) throw state.youtube_related_error;
                 await waitForMockDelay(state.youtube_related_delays, args.videoId);
                 return Array.from({ length: 8 }, (_, index) =>
                     makeYouTubeVideo(`${args.videoId}-related-${index + 1}`, `${args.videoId} Related ${index + 1}`)
@@ -403,6 +411,20 @@ def mocked_page(page, vite_server):
                     synopsis: `Sample synopsis ${index + 1}.`,
                     isFavorite: false
                 })));
+            } else if (cmd === "get_provider_catalog") {
+                if (state.provider_catalog_error) throw state.provider_catalog_error;
+                const provider = args.provider || "AllAnime";
+                return Array.from({ length: 10 }, (_, index) => ({
+                    id: `${provider.toLowerCase()}-catalog-${index + 1}`,
+                    provider,
+                    title: `${provider} Available ${index + 1}`,
+                    coverUrl: `https://example.com/${provider.toLowerCase()}-catalog-${index + 1}.jpg`,
+                    bannerUrl: null,
+                    language: ["AniZone", "AllAnime", "AnimeGG"].includes(provider) ? "English" : "Vietnamese",
+                    totalEpisodes: 12 + index,
+                    synopsis: `Available directly from ${provider}.`,
+                    isFavorite: false
+                }));
             } else if (cmd === "get_anime_details") {
                 if (args.provider === "Invidious") {
                     await waitForMockDelay(state.youtube_playback_delays, args.animeId);
@@ -478,6 +500,59 @@ def mocked_page(page, vite_server):
                     bytesDownloaded: 2048,
                     mediaKind: "hls-ts"
                 };
+            } else if (cmd === "search_torrents") {
+                if (state.torrent_search_error) throw state.torrent_search_error;
+                const page = Number(args.page || 1);
+                if (page > 2) return [];
+                const source = args.source || "Nyaa";
+                return Array.from({ length: 8 }, (_, index) => ({
+                    id: `${source.toLowerCase()}-${page}-${index + 1}`,
+                    title: `${args.query} Release ${page}-${index + 1} [1080p] EngSub`,
+                    magnet_url: `magnet:?xt=urn:btih:${String(page * 100 + index).padStart(40, "0")}&dn=release`,
+                    torrent_url: null,
+                    source,
+                    category: args.category === "movie" ? "Movies" : "Anime",
+                    size_bytes: 1024 * 1024 * (700 + index),
+                    formatted_size: `${700 + index}.0 MB`,
+                    seeds: 120 - index,
+                    peers: 8 + index,
+                    quality: "1080p",
+                    upload_date: "2026-08-21",
+                    has_engsub: true,
+                    has_vietsub: index % 2 === 0,
+                }));
+            } else if (cmd === "create_torrent_task") {
+                const task = {
+                    id: `torrent-task-${state.torrent_tasks.length + 1}`,
+                    title: args.title,
+                    magnet_url: args.magnetUrl,
+                    created_at: Math.floor(Date.now() / 1000),
+                    completed_at: Math.floor(Date.now() / 1000),
+                    sub_pref: args.subPref || "all",
+                    status: {
+                        type: "ready",
+                        data: {
+                            file_name: "prepared-film.mp4",
+                            file_size: 734003200,
+                            has_mp4: true,
+                            subtitles: [
+                                { language: "Vietnamese", language_code: "vi", format: "vtt", file_name: "prepared-film.vi.vtt" },
+                                { language: "English", language_code: "en", format: "vtt", file_name: "prepared-film.en.vtt" },
+                            ],
+                        },
+                    },
+                };
+                state.torrent_tasks = [task, ...state.torrent_tasks];
+                saveMockState(state);
+                return task;
+            } else if (cmd === "list_torrent_tasks") {
+                return state.torrent_tasks;
+            } else if (cmd === "get_torrent_task") {
+                return state.torrent_tasks.find((task) => task.id === args.id) || null;
+            } else if (cmd === "delete_torrent_task") {
+                state.torrent_tasks = state.torrent_tasks.filter((task) => task.id !== args.id);
+                saveMockState(state);
+                return null;
             } else if (cmd === "save_progress") {
                 if (args.progress) {
                     const progress = args.progress;
@@ -568,10 +643,33 @@ def mocked_page(page, vite_server):
             else if (method === "GET" && path === "/history") cmd = "get_continue_watching";
             else if (method === "GET" && path === "/my-list") cmd = "get_my_list";
             else if (method === "POST" && path === "/source/search") cmd = "search_source";
+            else if (method === "POST" && path === "/provider/catalog") cmd = "get_provider_catalog";
             else if (method === "POST" && path === "/anime/details") cmd = "get_anime_details";
             else if (method === "POST" && path === "/anime/episodes") cmd = "get_episodes";
             else if (method === "POST" && path === "/playback") cmd = "prepare_playback";
             else if (method === "POST" && path === "/skip-times") cmd = "get_skip_times";
+            else if (method === "GET" && path === "/torrents/search") {
+                cmd = "search_torrents";
+                args = {
+                    query: url.searchParams.get("query") || "",
+                    category: url.searchParams.get("category") || "all",
+                    source: url.searchParams.get("source") || "",
+                    page: Number(url.searchParams.get("page") || 1),
+                };
+            } else if (method === "POST" && path === "/torrents/download") {
+                cmd = "create_torrent_task";
+                args = {
+                    title: body.title,
+                    magnetUrl: body.magnet_url,
+                    torrentUrl: body.torrent_url,
+                    expectedSizeBytes: body.expected_size_bytes,
+                    subPref: body.sub_pref,
+                };
+            } else if (method === "GET" && path === "/torrents/tasks") cmd = "list_torrent_tasks";
+            else if (path.startsWith("/torrents/tasks/") && !path.includes("/file") && !path.includes("/stream") && !path.includes("/subtitles/")) {
+                args = { id: decodeURIComponent(path.slice("/torrents/tasks/".length)) };
+                cmd = method === "DELETE" ? "delete_torrent_task" : "get_torrent_task";
+            }
             else if (method === "POST" && path === "/downloads/ticket") {
                 cmd = "download_episode";
                 args = { request: body };

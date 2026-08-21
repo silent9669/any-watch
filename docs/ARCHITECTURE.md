@@ -33,7 +33,7 @@ desktop updater, MPV process, or application-managed local filesystem library.
 | Rust core | Provider adapters, catalog matching, skip timing, configuration, and shared SQLite models |
 | SQLite | Users, sessions, My List, watch progress, and existing compatible data |
 | Caddy | TLS, reverse proxy, security headers, compression, and access logs |
-| Cloudflare Worker | Origin routing, four-second ordinary timeout, 70-second provider-health allowance, dynamic status, maintenance selection, and controlled double-outage responses |
+| Cloudflare Worker | Origin routing, four-second navigation/health header timeout, 65-second authenticated API header timeout, 70-second provider-health allowance, typed API error passthrough, dynamic status, maintenance selection, and controlled double-outage responses |
 | Durable Object `OUTAGE_STATE` | Globally persistent first Worker-observed outage timestamp, cleared on recovery |
 | GitHub Pages | Immutable, account-free maintenance shell; it does not own live status |
 
@@ -72,8 +72,9 @@ The frontend delivers an authentic YouTube watching experience:
 - **Universal Home Dashboard**: Combines continue watching items across all active sources (Anime providers + YouTube) with explicit provider badges and progress tracking.
 - **Provider-Specific Search Dashboards**: In the Search view, when the search query is empty (`query.trim().length < 2`), selecting any provider renders that provider's custom dashboard featuring:
   - Hero header with provider icon, status, language scope, and official website link.
-  - Dedicated Continue Watching shelf isolated exclusively to history from that provider.
-  - Curated Quick Search and Discovery topic tags that populate search with one click.
+  - Films, series, and anime returned directly by that provider when its catalog endpoint is available.
+  - A clearly labeled general-catalog fallback when the provider cannot return suggestions.
+  - Provider-derived and curated Quick Search topics that populate search with one click.
 - When searching (`query.trim().length >= 2`), live search results are displayed with provider-specific result panes.
 
 ### K-20 Stremio Addon Integration
@@ -122,7 +123,7 @@ while transport/protocol failures remain retryable errors.
 
 Authenticated `GET` and `POST /api/providers/health` refreshes share a
 five-minute aggregate cache and coalescing/version protection. Provider checks
-run with a maximum concurrency of four and a 60-second per-check backend timeout.
+run with a maximum concurrency of sixteen and a 60-second per-check backend timeout.
 Cloudflare allows this endpoint 70 seconds and does not reinterpret
 provider-health errors as a whole-site outage. Compose healthchecks
 `/api/health`, and homelab Caddy waits for the application service to become

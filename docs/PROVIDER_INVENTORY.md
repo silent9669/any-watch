@@ -185,7 +185,7 @@ Each adapter implements or explicitly disables:
   unmapped.
 
 Authenticated aggregate `GET` and `POST /api/providers/health` refreshes share a
-five-minute cache and coalescing/version protection. At most four provider checks
+five-minute cache and coalescing/version protection. At most sixteen provider checks
 run concurrently, and each provider-health operation has a 60-second backend
 timeout. The Cloudflare Worker gives the aggregate endpoint 70 seconds and leaves
 provider-level failures scoped to that endpoint.

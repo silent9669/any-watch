@@ -33,6 +33,7 @@ impl TorrentSearchProvider for NyaaProvider {
         &self,
         query: &str,
         category: TorrentCategory,
+        page: u32,
     ) -> Result<Vec<TorrentSearchResult>> {
         if category == TorrentCategory::Movies || category == TorrentCategory::Tv {
             return Ok(Vec::new());
@@ -44,7 +45,8 @@ impl TorrentSearchProvider for NyaaProvider {
             .append_pair("c", "1_2") // Anime - English-translated
             .append_pair("f", "0")
             .append_pair("s", "seeders")
-            .append_pair("o", "desc");
+            .append_pair("o", "desc")
+            .append_pair("p", &page.max(1).to_string());
 
         let response = self
             .client
@@ -54,11 +56,16 @@ impl TorrentSearchProvider for NyaaProvider {
             .await
             .context("Nyaa request failed")?;
 
-        if !response.status().is_success() {
-            return Ok(Vec::new());
-        }
+        anyhow::ensure!(
+            response.status().is_success(),
+            "Nyaa returned HTTP {}",
+            response.status()
+        );
 
-        let xml = response.text().await.unwrap_or_default();
+        let xml = response
+            .text()
+            .await
+            .context("Nyaa returned invalid RSS text")?;
         let results = parse_nyaa_rss(&xml);
         Ok(results)
     }

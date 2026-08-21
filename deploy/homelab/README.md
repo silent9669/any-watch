@@ -177,7 +177,7 @@ data directory must remain mounted during every redeploy.
 
 Provider health is a snapshot, not a permanent disable switch. Authenticated
 `GET` and `POST /api/providers/health` refreshes share a five-minute cache and
-coalescing/version protection. At most four provider checks run concurrently,
+coalescing/version protection. At most sixteen provider checks run concurrently,
 and each check is bounded to 60 seconds. Failed initial `unknown` checks become
 retryable `unavailable` entries, and an explicit provider-health retry can
 restore a healthy source. OPhim uses `https://ophim1.com/v1/api`, allows a
