@@ -239,7 +239,7 @@ def test_t1_provider_dashboard_prioritizes_available_suggestions(mocked_page):
     expect(dashboard).to_contain_text("Available on Server 1")
     expect(dashboard.locator(".provider-catalog-card")).to_have_count(10)
     expect(dashboard.locator(".provider-catalog-card").first).to_contain_text("AniZone Available 1")
-    expect(dashboard.locator(".provider-website-link")).to_have_attribute("href", "https://anizone.to")
+    expect(dashboard.locator(".provider-website-link")).to_have_count(0)
 
 
 def test_t1_provider_dashboard_falls_back_to_general_catalog(mocked_page):

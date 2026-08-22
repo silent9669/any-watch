@@ -23,6 +23,10 @@ const SUBTITLE_EXTENSIONS: &[&str] = &["srt", "vtt", "ass", "ssa"];
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
 #[serde(tag = "type", content = "data", rename_all = "snake_case")]
 pub enum TaskStatus {
+    PendingApproval {
+        requester_id: String,
+        requester_name: String,
+    },
     Queued,
     Downloading {
         progress: f32,
@@ -177,6 +181,8 @@ impl TorrentTaskManager {
     pub async fn create_task(
         &self,
         owner_id: &str,
+        requester_name: Option<&str>,
+        is_admin: bool,
         mut req: CreateTaskRequest,
     ) -> Result<TorrentTask> {
         let title = req.title.trim();
@@ -211,11 +217,20 @@ impl TorrentTaskManager {
             .await
             .context("Failed to create torrent task workspace")?;
 
+        let initial_status = if is_admin {
+            TaskStatus::Queued
+        } else {
+            TaskStatus::PendingApproval {
+                requester_id: owner_id.to_string(),
+                requester_name: requester_name.unwrap_or(owner_id).to_string(),
+            }
+        };
+
         let task = TorrentTask {
             id: task_id.clone(),
             title: req.title.clone(),
             magnet_url: download_source.clone(),
-            status: TaskStatus::Queued,
+            status: initial_status,
             created_at: unix_now(),
             completed_at: None,
             sub_pref: req.sub_pref.clone(),
@@ -230,7 +245,8 @@ impl TorrentTaskManager {
                     existing.owner_id == owner_id
                         && matches!(
                             existing.status,
-                            TaskStatus::Queued
+                            TaskStatus::PendingApproval { .. }
+                                | TaskStatus::Queued
                                 | TaskStatus::Downloading { .. }
                                 | TaskStatus::Remuxing { .. }
                         )
@@ -253,6 +269,55 @@ impl TorrentTaskManager {
         }
         let _ = self.event_tx.send(task.clone());
 
+        if !is_admin {
+            return Ok(task);
+        }
+
+        self.spawn_worker_for_task(
+            &task_id,
+            &download_source,
+            &req.title,
+            req.sub_pref.as_deref(),
+            expected_size,
+        )
+        .await;
+
+        Ok(task)
+    }
+
+    pub async fn approve_task(&self, task_id: &str) -> Result<TorrentTask> {
+        let (task, download_source, title, sub_pref) = {
+            let mut tasks = self.tasks.write().await;
+            let task = tasks.get_mut(task_id).context("Task not found")?;
+            if !matches!(task.status, TaskStatus::PendingApproval { .. }) {
+                bail!("Task is not pending approval");
+            }
+            task.status = TaskStatus::Queued;
+            let cloned = task.clone();
+            (
+                cloned,
+                task.magnet_url.clone(),
+                task.title.clone(),
+                task.sub_pref.clone(),
+            )
+        };
+
+        let _ = persist_task(&self.base_dir, &task).await;
+        let _ = self.event_tx.send(task.clone());
+
+        self.spawn_worker_for_task(task_id, &download_source, &title, sub_pref.as_deref(), 0)
+            .await;
+        Ok(task)
+    }
+
+    async fn spawn_worker_for_task(
+        &self,
+        task_id: &str,
+        download_source: &str,
+        title: &str,
+        sub_pref: Option<&str>,
+        expected_size: u64,
+    ) {
         let control = TaskControl {
             cancel: CancellationToken::new(),
             done: Arc::new(Notify::new()),
@@ -260,7 +325,7 @@ impl TorrentTaskManager {
         self.controls
             .write()
             .await
-            .insert(task_id.clone(), control.clone());
+            .insert(task_id.to_string(), control.clone());
 
         let tasks = Arc::clone(&self.tasks);
         let controls = Arc::clone(&self.controls);
@@ -268,10 +333,10 @@ impl TorrentTaskManager {
         let event_tx = self.event_tx.clone();
         let slots = Arc::clone(&self.download_slots);
         let tools = self.tools.clone();
-        let title = req.title;
-        let sub_pref = req.sub_pref;
-        let expected_size = req.expected_size_bytes.unwrap_or(0);
-        let task_id_for_worker = task_id.clone();
+        let title = title.to_string();
+        let sub_pref = sub_pref.map(str::to_string);
+        let task_id_for_worker = task_id.to_string();
+        let download_source = download_source.to_string();
         tokio::spawn(async move {
             let result = Self::execute_task(
                 Arc::clone(&tasks),
@@ -306,8 +371,6 @@ impl TorrentTaskManager {
             controls.write().await.remove(&task_id_for_worker);
             control.done.notify_one();
         });
-
-        Ok(task)
     }
 
     pub async fn delete_task(&self, id: &str) -> Result<bool> {
@@ -1663,6 +1726,8 @@ mod tests {
         let task = manager
             .create_task(
                 "owner-a",
+                Some("owner-a"),
+                true,
                 CreateTaskRequest {
                     title: "Fixture Film".to_string(),
                     magnet_url: "magnet:?xt=urn:btih:0123456789abcdef0123456789abcdef01234567"

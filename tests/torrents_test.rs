@@ -51,6 +51,8 @@ async fn test_torrent_task_rejects_invalid_download_sources() {
     let result = manager
         .create_task(
             "owner-a",
+            Some("owner-a"),
+            true,
             CreateTaskRequest {
                 title: "Invalid download".to_string(),
                 magnet_url: "https://example.test/movie.mp4".to_string(),

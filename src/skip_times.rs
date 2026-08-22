@@ -71,7 +71,13 @@ pub async fn fetch_skip_times(catalog_id: i64, episode_number: u32) -> Result<Ve
     };
     let response = client
         .get(format!("{ANISKIP_API}/{id_mal}/{episode_number}"))
-        .query(&[("types[]", "op"), ("types[]", "ed")])
+        .query(&[
+            ("types[]", "op"),
+            ("types[]", "ed"),
+            ("types[]", "recap"),
+            ("types[]", "mixed-op"),
+            ("types[]", "mixed-ed"),
+        ])
         .send()
         .await
         .context("AniSkip request failed")?

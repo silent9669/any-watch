@@ -626,6 +626,7 @@ async fn main() -> Result<()> {
         .route("/torrents/subtitles", get(search_torrent_subtitles))
         .route("/torrents/download", post(start_torrent_download))
         .route("/torrents/tasks", get(list_torrent_tasks))
+        .route("/torrents/tasks/:id/approve", post(approve_torrent_task))
         .route(
             "/torrents/tasks/:id",
             get(get_torrent_task).delete(delete_torrent_task),
@@ -1618,32 +1619,17 @@ async fn skip_times(
     Json(input): Json<SkipTimesInput>,
 ) -> ApiResult<Json<Vec<SkipTime>>> {
     require_app_request(&headers)?;
-    if input.catalog_id <= 0 || input.episode_number == 0 {
-        return Err(ApiError::new(
-            StatusCode::BAD_REQUEST,
-            "INVALID_SKIP_TIMES_INPUT",
-            "skip-times",
-            "A positive catalog ID and episode number are required.",
-            false,
-        ));
+    if input.catalog_id <= 0 {
+        return Ok(Json(Vec::new()));
     }
-    let times = fetch_skip_times(input.catalog_id, input.episode_number)
+    let episode_number = if input.episode_number == 0 {
+        1
+    } else {
+        input.episode_number
+    };
+    let times = fetch_skip_times(input.catalog_id, episode_number)
         .await
-        .map_err(|error| {
-            tracing::warn!(
-                catalog_id = input.catalog_id,
-                episode_number = input.episode_number,
-                %error,
-                "AniSkip lookup failed"
-            );
-            ApiError::new(
-                StatusCode::BAD_GATEWAY,
-                "ANISKIP_UNAVAILABLE",
-                "skip-times",
-                "Automatic skip times are temporarily unavailable.",
-                true,
-            )
-        })?;
+        .unwrap_or_default();
     Ok(Json(times))
 }
 
@@ -3645,9 +3631,10 @@ async fn start_torrent_download(
             false,
         ));
     }
+    let is_admin = user.role == "admin";
     let task = state
         .torrent_engine
-        .create_task(&user.id, input)
+        .create_task(&user.id, Some(&user.username), is_admin, input)
         .await
         .map_err(|e| {
             ApiError::new(
@@ -3658,6 +3645,25 @@ async fn start_torrent_download(
                 false,
             )
         })?;
+    Ok(Json(json!(task)))
+}
+
+async fn approve_torrent_task(
+    State(state): State<AppState>,
+    headers: HeaderMap,
+    Path(id): Path<String>,
+) -> ApiResult<Json<Value>> {
+    require_app_request(&headers)?;
+    require_admin(&state, &headers).await?;
+    let task = state.torrent_engine.approve_task(&id).await.map_err(|e| {
+        ApiError::new(
+            StatusCode::BAD_REQUEST,
+            "TASK_APPROVAL_FAILED",
+            "torrent_approve",
+            e.to_string(),
+            false,
+        )
+    })?;
     Ok(Json(json!(task)))
 }
 

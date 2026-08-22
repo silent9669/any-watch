@@ -1782,11 +1782,16 @@ function DownloadsPage({
   const [copiedId, setCopiedId] = useState<string | null>(null);
   const [actionLoadingId, setActionLoadingId] = useState<string | null>(null);
   const [deletingTaskIds, setDeletingTaskIds] = useState<Set<string>>(new Set());
+  const [approvingTaskIds, setApprovingTaskIds] = useState<Set<string>>(new Set());
 
   const activeTasksCount = useMemo(() => {
     return tasks.filter(
       (t) => t.status.type === "queued" || t.status.type === "downloading" || t.status.type === "remuxing"
     ).length;
+  }, [tasks]);
+
+  const pendingRequestsCount = useMemo(() => {
+    return tasks.filter((t) => t.status.type === "pending_approval").length;
   }, [tasks]);
 
   const readyTasks = useMemo(() => {
@@ -1919,6 +1924,24 @@ function DownloadsPage({
       setError(err?.message || "Failed to create download task.");
     } finally {
       setActionLoadingId(null);
+    }
+  };
+
+  const handleApproveTask = async (id: string) => {
+    if (session?.role !== "admin") return;
+    setApprovingTaskIds((prev) => new Set(prev).add(id));
+    try {
+      const updated = await api.approveTorrentTask(id);
+      setTasks((current) => current.map((t) => (t.id === id ? updated : t)));
+    } catch (err: any) {
+      console.error("Failed to approve task:", err);
+      setError(err?.message || "Failed to approve download task.");
+    } finally {
+      setApprovingTaskIds((prev) => {
+        const next = new Set(prev);
+        next.delete(id);
+        return next;
+      });
     }
   };
 
@@ -2290,6 +2313,8 @@ function DownloadsPage({
                   task={task}
                   userRole={session?.role}
                   isDeleting={deletingTaskIds.has(task.id)}
+                  isApproving={approvingTaskIds.has(task.id)}
+                  onApprove={(id) => void handleApproveTask(id)}
                   onDelete={(id) => void handleDeleteTask(id)}
                 />
               ))}
@@ -2298,7 +2323,7 @@ function DownloadsPage({
             <div className="downloads-empty" style={{ margin: "3rem auto", textAlign: "center" }}>
               <div><Download size={26} /></div>
               <h3>No Active Download Tasks</h3>
-              <p>Your workspace is currently clean. Search torrent indexers and click "Download & Remux" to queue movies or anime episodes.</p>
+              <p>Your workspace is currently clean. Search torrent indexers and click "Download & Remux" or "Request Film" to queue movies or anime episodes.</p>
             </div>
           )}
         </div>
@@ -2356,14 +2381,19 @@ function TorrentTaskItem({
   task,
   userRole,
   isDeleting,
+  isApproving,
+  onApprove,
   onDelete,
 }: {
   task: TorrentTask;
   userRole?: "admin" | "user" | "guest";
   isDeleting?: boolean;
+  isApproving?: boolean;
+  onApprove?: (id: string) => void;
   onDelete: (id: string) => void;
 }) {
   const status = task.status;
+  const isPending = status.type === "pending_approval";
   const isReady = status.type === "ready";
   const isFailed = status.type === "failed";
   const [previewOpen, setPreviewOpen] = useState(false);
@@ -2373,16 +2403,22 @@ function TorrentTaskItem({
   const canDelete = isAdmin;
 
   return (
-    <div className={`torrent-task-card ${isReady ? "ready" : isFailed ? "failed" : ""}`}>
+    <div className={`torrent-task-card ${isReady ? "ready" : isFailed ? "failed" : isPending ? "pending" : ""}`}>
       <div className="torrent-task-header">
         <div className="torrent-task-title-group">
           <h3 className="torrent-task-title" title={task.title}>{task.title}</h3>
           <span className="torrent-task-date">
             Task ID: {task.id.slice(0, 8)} • Added {new Date(task.created_at * 1000).toLocaleTimeString()}
+            {isPending && ` • Requested by ${status.data.requester_name || status.data.requester_id}`}
           </span>
         </div>
 
         <div className={`torrent-task-status-badge ${status.type}`}>
+          {status.type === "pending_approval" && (
+            <span>
+              <Clock size={13} /> {isAdmin ? `Pending Approval (${status.data.requester_name})` : "Pending Admin Approval"}
+            </span>
+          )}
           {status.type === "queued" && <span>In Queue</span>}
           {status.type === "downloading" && (
             <span>
@@ -2398,6 +2434,16 @@ function TorrentTaskItem({
           {status.type === "failed" && <span><AlertTriangle size={13} /> Failed</span>}
         </div>
       </div>
+
+      {isPending && (
+        <div className="stage-note" style={{ margin: "0.25rem 0" }}>
+          <span>
+            {isAdmin
+              ? `Film request submitted by viewer "${status.data.requester_name}". Approve to start downloading and remuxing immediately to shared storage.`
+              : "Your request has been submitted to the family administrator. Once approved, it will be prepared in Shared Storage."}
+          </span>
+        </div>
+      )}
 
       {status.type === "downloading" && (
         <div className="torrent-task-progress-shell">
@@ -2443,6 +2489,17 @@ function TorrentTaskItem({
       )}
 
       <div className="torrent-task-actions-row">
+        {isPending && isAdmin && onApprove && (
+          <button
+            type="button"
+            className="torrent-btn-approve"
+            disabled={isApproving || isDeleting}
+            onClick={() => onApprove(task.id)}
+          >
+            {isApproving ? <Loader2 size={14} className="spin" /> : <Check size={14} />}
+            <span>{isApproving ? "Approving..." : "Approve Download"}</span>
+          </button>
+        )}
         {status.type === "ready" && (
           <>
             <button
@@ -2485,7 +2542,7 @@ function TorrentTaskItem({
             onClick={() => onDelete(task.id)}
           >
             {isDeleting ? <Loader2 size={14} className="spin" /> : <Trash2 size={14} />}
-            <span>{isDeleting ? "Deleting..." : "Delete Task"}</span>
+            <span>{isDeleting ? "Deleting..." : isPending ? "Reject Request" : "Delete Task"}</span>
           </button>
         )}
       </div>
@@ -3666,16 +3723,6 @@ function SearchStage({
                 </p>
               </div>
               <div style={{ display: "flex", alignItems: "center", gap: "0.5rem" }}>
-                {selectedSource?.websiteUrl && (
-                  <a
-                    className="provider-website-link"
-                    href={selectedSource.websiteUrl}
-                    target="_blank"
-                    rel="noopener noreferrer"
-                  >
-                    Provider site ↗
-                  </a>
-                )}
                 {providerCatalogError && (
                   <button
                     type="button"

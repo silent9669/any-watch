@@ -545,6 +545,25 @@ def mocked_page(page, vite_server):
                 state.torrent_tasks = [task, ...state.torrent_tasks];
                 saveMockState(state);
                 return task;
+            } else if (cmd === "approve_torrent_task") {
+                const task = state.torrent_tasks.find((t) => t.id === args.id);
+                if (task) {
+                    task.status = {
+                        type: "ready",
+                        data: {
+                            file_name: "prepared-film.mp4",
+                            file_size: 734003200,
+                            has_mp4: true,
+                            subtitles: [
+                                { language: "Vietnamese", language_code: "vi", format: "vtt", file_name: "prepared-film.vi.vtt" },
+                                { language: "English", language_code: "en", format: "vtt", file_name: "prepared-film.en.vtt" },
+                            ],
+                        },
+                    };
+                    saveMockState(state);
+                    return task;
+                }
+                return null;
             } else if (cmd === "list_torrent_tasks") {
                 return state.torrent_tasks;
             } else if (cmd === "get_torrent_task") {
@@ -676,6 +695,10 @@ def mocked_page(page, vite_server):
                     subPref: body.sub_pref,
                 };
             } else if (method === "GET" && path === "/torrents/tasks") cmd = "list_torrent_tasks";
+            else if (method === "POST" && path.startsWith("/torrents/tasks/") && path.endsWith("/approve")) {
+                args = { id: decodeURIComponent(path.slice("/torrents/tasks/".length, path.length - "/approve".length)) };
+                cmd = "approve_torrent_task";
+            }
             else if (path.startsWith("/torrents/tasks/") && !path.includes("/file") && !path.includes("/stream") && !path.includes("/subtitles/")) {
                 args = { id: decodeURIComponent(path.slice("/torrents/tasks/".length)) };
                 cmd = method === "DELETE" ? "delete_torrent_task" : "get_torrent_task";

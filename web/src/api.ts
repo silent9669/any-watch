@@ -187,6 +187,7 @@ export const api = {
   }),
   listTorrentTasks: () => webRequest<TorrentTask[]>("/torrents/tasks"),
   getTorrentTask: (id: string) => webRequest<TorrentTask>(`/torrents/tasks/${encodeURIComponent(id)}`),
+  approveTorrentTask: (id: string) => webPost<TorrentTask>(`/torrents/tasks/${encodeURIComponent(id)}/approve`),
   deleteTorrentTask: (id: string) => webRequest<void>(`/torrents/tasks/${encodeURIComponent(id)}`, { method: "DELETE" }),
   getTorrentDownloadUrl: (id: string) => `/api/torrents/tasks/${encodeURIComponent(id)}/file`,
   getTorrentStreamUrl: (id: string) => `/api/torrents/tasks/${encodeURIComponent(id)}/stream`,

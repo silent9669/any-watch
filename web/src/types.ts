@@ -231,6 +231,13 @@ export type TorrentSubtitleMeta = {
 };
 
 export type TorrentTaskStatus =
+  | {
+      type: "pending_approval";
+      data: {
+        requester_id: string;
+        requester_name: string;
+      };
+    }
   | { type: "queued" }
   | {
       type: "downloading";
