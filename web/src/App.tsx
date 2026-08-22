@@ -407,11 +407,10 @@ function App() {
     try {
       const currentSession = await api.getSession();
       setSession(currentSession);
-      if (!currentSession) return;
       const [sourceList, history, favorites] = await Promise.all([
-        api.listSources(),
-        api.getContinueWatching(200),
-        api.getMyList(300),
+        api.listSources().catch(() => []),
+        currentSession ? api.getContinueWatching(200).catch(() => []) : Promise.resolve([]),
+        currentSession ? api.getMyList(300).catch(() => []) : Promise.resolve([]),
       ]);
       const savedSourceName = loadSavedSourceName();
       const savedSource = sourceList.find((source) =>
@@ -445,7 +444,9 @@ function App() {
       });
       void api.getDiscovery().then((catalog) => {
         setDiscovery(catalog);
-      }).catch((err) => setError(toAppError(err, "catalog")));
+      }).catch((err) => {
+        console.warn("Discovery catalog error (fallback in use):", err);
+      });
     } catch (err) {
       const appError = toAppError(err, "bootstrap");
       setError(appError);
@@ -456,9 +457,14 @@ function App() {
   }
 
   async function refreshShelfData() {
+    if (!session) {
+      setContinueWatching([]);
+      setMyList([]);
+      return;
+    }
     const [history, favorites] = await Promise.all([
-      api.getContinueWatching(200),
-      api.getMyList(300),
+      api.getContinueWatching(200).catch(() => []),
+      api.getMyList(300).catch(() => []),
     ]);
     setContinueWatching(history);
     setMyList(favorites);
@@ -470,6 +476,7 @@ function App() {
     try {
       await api.login(username, password);
       await bootstrap();
+      setShowLoginModal(false);
     } catch (err) {
       setAuthError(toAppError(err, "login").message);
       setBootstrapping(false);
