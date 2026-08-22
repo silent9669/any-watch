@@ -216,9 +216,13 @@ impl AniDbProvider {
         let mut next_url = Url::parse(&stream.video_url)?;
         let referer = stream.headers.get("referer").map(String::as_str);
         for depth in 0..3 {
-            let (status, content_type, body) = self
-                .curl_fetch(&next_url, referer, Some("bytes=0-65535"))
-                .await?;
+            let is_manifest = next_url.path().to_ascii_lowercase().contains(".m3u8");
+            let range = if is_manifest {
+                None
+            } else {
+                Some("bytes=0-65535")
+            };
+            let (status, content_type, body) = self.curl_fetch(&next_url, referer, range).await?;
             anyhow::ensure!(
                 status == 200 || status == 206,
                 "STREAM_FORBIDDEN: media request returned HTTP {status}"

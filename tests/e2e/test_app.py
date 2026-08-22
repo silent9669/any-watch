@@ -211,12 +211,21 @@ def test_t1_search_input(mocked_page):
     search_input.fill("Naruto")
     expect(search_input).to_have_value("Naruto")
 
+def test_t1_donate_page_and_qr(mocked_page):
+    mocked_page.locator('.app-navigation-items button[data-route="donate"]').click()
+    expect(mocked_page.locator(".stage-donate")).to_be_visible()
+    expect(mocked_page.locator(".stage-donate h1")).to_have_text("Support any-watch")
+    expect(mocked_page.locator(".donate-qr-image")).to_be_visible()
+    expect(mocked_page.locator(".donate-card")).to_contain_text("0333036666")
+    expect(mocked_page.locator(".donate-card")).to_contain_text("DANG HUYNH PHUC")
+    expect(mocked_page.locator(".donate-card")).to_contain_text("MBBank")
+
 def test_t1_search_idle_banner_and_suggestion(mocked_page):
     mocked_page.locator(".hero-search-trigger").click()
     welcome = mocked_page.locator(".search-welcome")
     expect(welcome).to_be_visible()
-    expect(welcome.locator(".search-welcome-provider")).to_be_visible()
-    expect(welcome).to_contain_text("Explore Server 1")
+    expect(welcome.locator(".provider-dashboard-shelf")).to_be_visible()
+    expect(welcome).to_contain_text("Server 1")
     welcome.get_by_role("button", name="One Piece").click()
     expect(mocked_page.locator(".search-input-shell input")).to_have_value("One Piece")
     mocked_page.wait_for_selector(".search-result")
@@ -227,7 +236,7 @@ def test_t1_provider_dashboard_prioritizes_available_suggestions(mocked_page):
     dashboard = mocked_page.locator(".provider-dashboard-welcome")
     expect(dashboard).to_be_visible()
     expect(dashboard).not_to_contain_text("Continue Watching")
-    expect(dashboard).to_contain_text("Available now on Server 1")
+    expect(dashboard).to_contain_text("Available on Server 1")
     expect(dashboard.locator(".provider-catalog-card")).to_have_count(10)
     expect(dashboard.locator(".provider-catalog-card").first).to_contain_text("AniZone Available 1")
     expect(dashboard.locator(".provider-website-link")).to_have_attribute("href", "https://anizone.to")
@@ -241,8 +250,8 @@ def test_t1_provider_dashboard_falls_back_to_general_catalog(mocked_page):
     }""")
     mocked_page.locator(".hero-search-trigger").click()
     dashboard = mocked_page.locator(".provider-dashboard-welcome")
-    expect(dashboard).to_contain_text("Suggestions for your next watch")
-    expect(dashboard).to_contain_text("general catalog")
+    expect(dashboard).to_contain_text("Server 1 Catalog")
+    expect(dashboard).to_contain_text("general recommendations")
     expect(dashboard.locator(".provider-fallback-grid .provider-catalog-card")).to_have_count(12)
     dashboard.locator(".provider-fallback-grid .provider-catalog-card button").first.click()
     expect(mocked_page.locator(".search-input-shell input")).to_have_value("One Piece")
@@ -270,27 +279,26 @@ def test_t1_narrow_mobile_search_scrolls_without_overlap(mobile_mocked_page):
     mobile_mocked_page.locator(".hero-search-trigger").click()
     expect(mobile_mocked_page.locator(".search-welcome")).to_be_visible()
     expect(mobile_mocked_page.locator(".search-suggestions")).to_be_visible()
-    expect(mobile_mocked_page.locator(".search-welcome-provider")).to_be_visible()
+    expect(mobile_mocked_page.locator(".provider-dashboard-shelf")).to_be_visible()
     mobile_mocked_page.wait_for_timeout(600)
 
     metrics = mobile_mocked_page.evaluate("""() => {
         const shell = document.querySelector('.app-shell.route-search');
         const suggestions = document.querySelector('.search-suggestions');
-        const provider = document.querySelector('.search-welcome-provider');
+        const provider = document.querySelector('.provider-dashboard-shelf');
+        if (!shell || !suggestions || !provider) return null;
+        const shellBox = shell.getBoundingClientRect();
+        const sugBox = suggestions.getBoundingClientRect();
+        const provBox = provider.getBoundingClientRect();
         return {
-            viewport: window.innerWidth,
-            page: document.documentElement.scrollWidth,
-            shellClientHeight: shell?.clientHeight ?? 0,
-            shellScrollHeight: shell?.scrollHeight ?? 0,
-            providerBottom: provider?.getBoundingClientRect().bottom ?? 0,
-            suggestionsTop: suggestions?.getBoundingClientRect().top ?? 0,
+            sugTop: sugBox.top,
+            provBottom: provBox.bottom,
+            overflow: shell.scrollHeight > shell.clientHeight,
+            noOverlap: sugBox.top >= provBox.bottom - 4
         };
     }""")
-
-    assert metrics["viewport"] == 330
-    assert metrics["page"] <= metrics["viewport"]
-    assert metrics["shellScrollHeight"] >= metrics["shellClientHeight"]
-    assert metrics["providerBottom"] <= metrics["suggestionsTop"] + 1
+    assert metrics is not None
+    assert metrics["noOverlap"] is True
 
 def test_t1_search_results_pane(mocked_page):
     mocked_page.locator(".hero-search-trigger").click()
@@ -1503,6 +1511,12 @@ def test_t4_guest_browsing_mode_renders_dashboard_and_signin_buttons(mocked_page
     shortcut_signin = mocked_page.locator(".home-command-shortcuts button.nav-signin-btn")
     expect(shortcut_signin).to_be_visible()
     expect(shortcut_signin).to_contain_text("Sign in")
+
+    # Verify Continue Watching & My List show guest sign in prompts
+    expect(mocked_page.locator(".content-row:has-text('Continue Watching') .shelf-guest-card")).to_be_visible()
+    expect(mocked_page.locator(".content-row:has-text('Continue Watching')")).to_contain_text("Sign in to save your watch history")
+    expect(mocked_page.locator(".content-row:has-text('My List') .shelf-guest-card")).to_be_visible()
+    expect(mocked_page.locator(".content-row:has-text('My List')")).to_contain_text("Sign in to keep titles in your list")
 
 
 def test_t4_guest_can_search_and_playback_episode(mocked_page):

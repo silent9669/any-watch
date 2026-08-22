@@ -13,6 +13,7 @@ import {
   EyeOff,
   Film,
   HardDrive,
+  Heart,
   House,
   Loader2,
   LogIn,
@@ -90,13 +91,14 @@ const fadeUpVariant = {
   show: { opacity: 1, y: 0 },
 };
 
-type Route = "home" | "my-list" | "continue" | "admin" | "search" | "youtube" | "detail" | "catalog" | "settings" | "download";
+type Route = "home" | "my-list" | "continue" | "admin" | "search" | "youtube" | "detail" | "catalog" | "settings" | "download" | "donate";
 
 function routeFromLocation(): Route {
   switch (window.location.pathname.replace(/\/+$/, "") || "/") {
     case "/search": return "search";
     case "/youtube": return "youtube";
     case "/downloads": return "download";
+    case "/donate": return "donate";
     case "/my-list": return "my-list";
     case "/continue": return "continue";
     case "/catalog": return "catalog";
@@ -111,6 +113,7 @@ function pathForRoute(route: Route): string {
     case "search": return "/search";
     case "youtube": return "/youtube";
     case "download": return "/downloads";
+    case "donate": return "/donate";
     case "my-list": return "/my-list";
     case "continue": return "/continue";
     case "catalog": return "/catalog";
@@ -1513,6 +1516,13 @@ function App() {
               onShowSignIn={() => setShowLoginModal(true)}
             />
           )}
+
+          {route === "donate" && (
+            <DonatePage
+              key="donate"
+              onBack={goBack}
+            />
+          )}
         </AnimatePresence>
         </LayoutGroup>
       </main>
@@ -1568,6 +1578,7 @@ function AppNavigation({
     { route: "search", label: "Search", icon: <Search size={20} /> },
     { route: "download", label: "Downloads", icon: <Download size={20} /> },
     { route: "youtube", label: "YouTube", icon: <span className="youtube-nav-mark"><Play size={15} fill="currentColor" /></span> },
+    { route: "donate", label: "Donate", icon: <Heart size={20} /> },
     { route: "my-list", label: "My List", icon: <Star size={20} /> },
     { route: "settings", label: "Settings", icon: <Settings2 size={20} /> },
   ];
@@ -1641,6 +1652,110 @@ function formatEta(seconds: number): string {
   return `${seconds}s`;
 }
 
+function DonatePage({
+  onBack,
+}: {
+  onBack?: () => void;
+}) {
+  const shouldReduceMotion = useReducedMotion();
+  const [copied, setCopied] = useState(false);
+
+  const accountNumber = "0333036666";
+  const bankName = "MBBank (Ngân hàng TMCP Quân Đội)";
+  const accountHolder = "DANG HUYNH PHUC";
+  const memoText = "Donate any-watch";
+
+  const handleCopy = () => {
+    void navigator.clipboard.writeText(accountNumber);
+    setCopied(true);
+    setTimeout(() => setCopied(false), 2500);
+  };
+
+  return (
+    <motion.section
+      className="page-stage stage-donate"
+      initial="hidden"
+      animate="show"
+      exit="hidden"
+      variants={shouldReduceMotion ? { hidden: { opacity: 0 }, show: { opacity: 1 } } : fadeUpVariant}
+    >
+      <div className="page-stage-header">
+        {onBack && (
+          <button
+            type="button"
+            className="stage-back-button"
+            aria-label="Back"
+            onClick={onBack}
+          >
+            <ArrowLeft size={18} />
+          </button>
+        )}
+        <div className="page-stage-title-group">
+          <h1>Support any-watch</h1>
+          <p>
+            any-watch is a non-profit family theatre project. Your support helps maintain the homelab server, storage drives, and bandwidth for the family.
+          </p>
+        </div>
+      </div>
+
+      <div className="donate-container">
+        <div className="donate-card">
+          <div className="donate-qr-wrapper">
+            <img
+              src="/donate-qr.png"
+              alt="VietQR MBBank 0333036666 DANG HUYNH PHUC"
+              className="donate-qr-image"
+              onError={useLogoFallback}
+            />
+          </div>
+
+          <div className="donate-info">
+            <div className="donate-badge">
+              <Heart size={16} className="donate-heart-icon" />
+              <span>VietQR / MBBank Instant Transfer</span>
+            </div>
+
+            <div className="donate-field">
+              <span className="donate-label">Bank:</span>
+              <strong className="donate-value">{bankName}</strong>
+            </div>
+
+            <div className="donate-field">
+              <span className="donate-label">Account Number:</span>
+              <div className="donate-copy-row">
+                <strong className="donate-value highlight">{accountNumber}</strong>
+                <button
+                  type="button"
+                  className="donate-copy-btn"
+                  onClick={handleCopy}
+                  aria-label={copied ? "Copied" : "Copy Account Number"}
+                >
+                  {copied ? <Check size={16} /> : <Copy size={16} />}
+                  <span>{copied ? "Copied!" : "Copy"}</span>
+                </button>
+              </div>
+            </div>
+
+            <div className="donate-field">
+              <span className="donate-label">Beneficiary:</span>
+              <strong className="donate-value">{accountHolder}</strong>
+            </div>
+
+            <div className="donate-field">
+              <span className="donate-label">Transfer Memo:</span>
+              <span className="donate-value">{memoText}</span>
+            </div>
+
+            <p className="donate-thankyou">
+              Thank you for keeping any-watch fast, reliable, and ad-free! ❤️
+            </p>
+          </div>
+        </div>
+      </div>
+    </motion.section>
+  );
+}
+
 function DownloadsPage({
   onBack,
   session,
@@ -1681,6 +1796,18 @@ function DownloadsPage({
   const totalStorageBytes = useMemo(() => {
     return readyTasks.reduce((acc, t) => acc + (t.status.type === "ready" ? t.status.data.file_size : 0), 0);
   }, [readyTasks]);
+
+  const HOMELAB_QUOTA_BYTES = 100 * 1024 * 1024 * 1024; // 100 GB
+  const remainingStorageBytes = useMemo(() => {
+    return Math.max(0, HOMELAB_QUOTA_BYTES - totalStorageBytes);
+  }, [totalStorageBytes]);
+
+  const [hideExceedingQuota, setHideExceedingQuota] = useState(true);
+
+  const displayedResults = useMemo(() => {
+    if (!hideExceedingQuota) return results;
+    return results.filter((item) => !item.size_bytes || item.size_bytes <= remainingStorageBytes);
+  }, [results, hideExceedingQuota, remainingStorageBytes]);
 
   const loadTasks = async () => {
     try {
@@ -1770,6 +1897,10 @@ function DownloadsPage({
     }
     if (isGuest) {
       setError("Guest accounts can view and stream films in Shared Storage. Download privileges require a family viewer or admin account.");
+      return;
+    }
+    if (torrent.size_bytes && torrent.size_bytes > remainingStorageBytes) {
+      setError(`This release (${torrent.formatted_size}) exceeds the remaining storage quota (${formatTorrentBytes(remainingStorageBytes)} under 100 GB quota).`);
       return;
     }
     setActionLoadingId(torrent.id);
@@ -2038,6 +2169,17 @@ function DownloadsPage({
                   EngSub Only
                 </button>
               </div>
+
+              <div className="torrent-filter-group torrent-quota-group">
+                <label className="torrent-quota-toggle" title="Filter out torrents that exceed the remaining storage quota">
+                  <input
+                    type="checkbox"
+                    checked={hideExceedingQuota}
+                    onChange={(e) => setHideExceedingQuota(e.target.checked)}
+                  />
+                  <span>Fit 100GB quota ({formatTorrentBytes(remainingStorageBytes)} free)</span>
+                </label>
+              </div>
             </div>
 
             <div className="torrent-quick-queries">
@@ -2056,13 +2198,14 @@ function DownloadsPage({
               <Loader2 className="spin" size={32} />
               <p>Searching across torrent indexers & subtitle archives...</p>
             </div>
-          ) : results.length > 0 ? (
+          ) : displayedResults.length > 0 ? (
             <div className="torrent-results-grid">
-              {results.map((item) => {
+              {displayedResults.map((item) => {
                 const isCreating = actionLoadingId === item.id;
                 const isCopied = copiedId === item.id;
+                const exceedsQuota = Boolean(item.size_bytes && item.size_bytes > remainingStorageBytes);
                 return (
-                  <div key={item.id} className="torrent-result-card">
+                  <div key={item.id} className={`torrent-result-card ${exceedsQuota ? "quota-exceeded" : ""}`}>
                     <div className="torrent-result-info">
                       <h3 className="torrent-result-title" title={item.title}>
                         {item.title}
@@ -2078,6 +2221,7 @@ function DownloadsPage({
                         </span>
                         {item.has_vietsub && <span className="badge-pill badge-sub vi">VietSub</span>}
                         {item.has_engsub && <span className="badge-pill badge-sub en">EngSub</span>}
+                        {exceedsQuota && <span className="badge-pill badge-danger">Exceeds Quota</span>}
                       </div>
                     </div>
 
@@ -2095,10 +2239,11 @@ function DownloadsPage({
                         type="button"
                         className="torrent-btn-download"
                         onClick={() => void handleCreateTask(item)}
-                        disabled={isCreating}
+                        disabled={isCreating || exceedsQuota}
+                        title={exceedsQuota ? `Exceeds available storage (${formatTorrentBytes(remainingStorageBytes)})` : "Download & Remux to MP4"}
                       >
                         {isCreating ? <Loader2 size={15} className="spin" /> : <Download size={15} />}
-                        <span>Download & Remux</span>
+                        <span>{exceedsQuota ? "Exceeds Quota" : "Download & Remux"}</span>
                       </button>
                     </div>
                   </div>
@@ -2882,6 +3027,8 @@ function HomeDashboard({
           myList={myList}
           onToggleFavorite={(item) => onToggleFavorite(historyToAnime(item, myList))}
           onRemove={onRemoveHistory}
+          isGuest={!session || session.role === "guest"}
+          onShowSignIn={onShowSignIn}
         />
         <CatalogRow
           title="Top Matches"
@@ -2900,6 +3047,8 @@ function HomeDashboard({
           onRemove={onToggleFavorite}
           emptyTitle="Your list is empty"
           emptySubtitle="Search and add titles to keep them here."
+          isGuest={!session || session.role === "guest"}
+          onShowSignIn={onShowSignIn}
         />
       </div>
     </section>
@@ -2986,6 +3135,8 @@ function ContinueWatchingRow({
   myList,
   onToggleFavorite,
   onRemove,
+  isGuest,
+  onShowSignIn,
 }: {
   items: WatchHistory[];
   total: number;
@@ -2994,6 +3145,8 @@ function ContinueWatchingRow({
   myList: Favorite[];
   onToggleFavorite: (item: WatchHistory) => void;
   onRemove: (item: WatchHistory) => void;
+  isGuest?: boolean;
+  onShowSignIn?: () => void;
 }) {
   return (
     <motion.section className="content-row" initial={{ opacity: 0, y: 14 }} animate={{ opacity: 1, y: 0 }} transition={{ duration: 0.24 }}>
@@ -3010,6 +3163,12 @@ function ContinueWatchingRow({
               onRemove={onRemove}
             />
           ))
+        ) : isGuest ? (
+          <GuestShelfCard
+            title="Sign in to save your watch history"
+            subtitle="Episodes you start will sync across your family devices when signed in."
+            onShowSignIn={onShowSignIn}
+          />
         ) : (
           <ShelfEmptyCard title="Nothing to resume" subtitle="Start an episode and it will appear here." />
         )}
@@ -3030,6 +3189,8 @@ function AnimeRow({
   onRemove,
   emptyTitle = "Nothing here yet",
   emptySubtitle = "Search anime and add a title.",
+  isGuest,
+  onShowSignIn,
 }: {
   title: string;
   items: Anime[];
@@ -3042,6 +3203,8 @@ function AnimeRow({
   onRemove?: (anime: Anime) => void;
   emptyTitle?: string;
   emptySubtitle?: string;
+  isGuest?: boolean;
+  onShowSignIn?: () => void;
 }) {
   return (
     <motion.section className="content-row" initial={{ opacity: 0, y: 14 }} animate={{ opacity: 1, y: 0 }} transition={{ duration: 0.24, delay: 0.04 }}>
@@ -3060,9 +3223,47 @@ function AnimeRow({
                 onRemove={onRemove}
               />
             ))
-            : <ShelfEmptyCard title={emptyTitle} subtitle={emptySubtitle} />}
+            : isGuest ? (
+              <GuestShelfCard
+                title="Sign in to keep titles in your list"
+                subtitle="Save your favorite anime and movies to your personal watchlist."
+                onShowSignIn={onShowSignIn}
+              />
+            ) : (
+              <ShelfEmptyCard title={emptyTitle} subtitle={emptySubtitle} />
+            )}
       </div>
     </motion.section>
+  );
+}
+
+function GuestShelfCard({
+  title,
+  subtitle,
+  onShowSignIn,
+}: {
+  title: string;
+  subtitle: string;
+  onShowSignIn?: () => void;
+}) {
+  return (
+    <div className="shelf-empty-card shelf-guest-card">
+      <img src={LOGO_SRC} alt="" />
+      <div className="shelf-guest-text">
+        <strong>{title}</strong>
+        <span>{subtitle}</span>
+      </div>
+      {onShowSignIn && (
+        <button
+          type="button"
+          className="primary shelf-guest-signin-btn"
+          onClick={onShowSignIn}
+        >
+          <LogIn size={15} />
+          <span>Sign in</span>
+        </button>
+      )}
+    </div>
   );
 }
 
@@ -3445,47 +3646,36 @@ function SearchStage({
           exit={{ opacity: 0 }}
           transition={{ duration: 0.18 }}
         >
-          <div className="provider-dashboard-hero search-welcome-provider">
-            <div className="provider-hero-main">
-              <div className="provider-hero-badge">
-                <Film size={26} />
-              </div>
-              <div className="provider-hero-text">
-                <span className="eyebrow">{languageGroup === "vietnamese" ? "Vietnamese Provider" : "English Provider"}</span>
-                <h1>{selectedSource?.name ? `Explore ${serverLabel(selectedSource.name, sources)}` : "Provider Dashboard"}</h1>
-                <p>
-                  {selectedSource
-                    ? `${selectedSource.language} · ${providerStatusLabel(selectedSource)} · Direct streams and provider-backed suggestions`
-                    : "Select a provider above to explore films, series, and anime it currently offers."}
-                </p>
-              </div>
-            </div>
-            {selectedSource?.websiteUrl && (
-              <a
-                className="provider-website-link"
-                href={selectedSource.websiteUrl}
-                target="_blank"
-                rel="noopener noreferrer"
-              >
-                Provider site ↗
-              </a>
-            )}
-          </div>
-
           {/* Provider Live Catalog / Trending Shelf */}
           <div className="provider-dashboard-shelf">
             <div className="provider-shelf-heading">
               <div>
-                <h3>{providerCatalog.length > 0 && selectedSource
-                  ? `Available now on ${serverLabel(selectedSource.name, sources)}`
-                  : "Suggestions for your next watch"}</h3>
-                <p>{providerCatalog.length > 0
-                  ? "Films, series, and anime returned directly by this provider."
-                  : providerCatalogError
-                    ? "This provider could not load its catalog, so these picks come from the general catalog."
-                    : "This provider did not return a catalog, so these picks come from the general catalog."}</p>
+                <h3>
+                  {providerCatalog.length > 0 && selectedSource
+                    ? `Available on ${serverLabel(selectedSource.name, sources)}`
+                    : selectedSource
+                      ? `${serverLabel(selectedSource.name, sources)} Catalog`
+                      : "Catalog Suggestions"}
+                </h3>
+                <p>
+                  {providerCatalog.length > 0
+                    ? `Anime, movies, and series available directly from ${selectedSource ? serverLabel(selectedSource.name, sources) : "this provider"}.`
+                    : providerCatalogError
+                      ? "This provider catalog is unavailable; showing general recommendations."
+                      : "Browse titles or search for specific anime and films."}
+                </p>
               </div>
               <div style={{ display: "flex", alignItems: "center", gap: "0.5rem" }}>
+                {selectedSource?.websiteUrl && (
+                  <a
+                    className="provider-website-link"
+                    href={selectedSource.websiteUrl}
+                    target="_blank"
+                    rel="noopener noreferrer"
+                  >
+                    Provider site ↗
+                  </a>
+                )}
                 {providerCatalogError && (
                   <button
                     type="button"
@@ -3493,7 +3683,7 @@ function SearchStage({
                     onClick={() => selectedSource && fetchProviderCatalog(selectedSource.name)}
                   >
                     <RefreshCw size={13} />
-                    <span>Retry catalog</span>
+                    <span>Retry</span>
                   </button>
                 )}
                 <small>{providerCatalog.length || fallbackSuggestions.length} titles</small>
