@@ -1576,7 +1576,7 @@ function AppNavigation({
   const items: Array<{ route: Route; label: string; icon: ReactNode; badge?: number }> = [
     { route: "home", label: "Home", icon: <House size={20} /> },
     { route: "search", label: "Search", icon: <Search size={20} /> },
-    { route: "download", label: "Downloads", icon: <Download size={20} /> },
+    { route: "download", label: "Film Requests", icon: <Film size={20} /> },
     { route: "youtube", label: "YouTube", icon: <span className="youtube-nav-mark"><Play size={15} fill="currentColor" /></span> },
     { route: "donate", label: "Donate", icon: <Heart size={20} /> },
     { route: "my-list", label: "My List", icon: <Star size={20} /> },
@@ -1660,9 +1660,9 @@ function DonatePage({
   const shouldReduceMotion = useReducedMotion();
   const [copied, setCopied] = useState(false);
 
-  const accountNumber = "0333036666";
-  const bankName = "MBBank (Ngân hàng TMCP Quân Đội)";
-  const accountHolder = "DANG HUYNH PHUC";
+  const accountNumber = "31658367";
+  const bankName = "ACB (Ngân hàng TMCP Á Châu)";
+  const accountHolder = "DANG NGUYEN THIEN PHUC";
   const memoText = "Donate any-watch";
 
   const handleCopy = () => {
@@ -1703,7 +1703,7 @@ function DonatePage({
           <div className="donate-qr-wrapper">
             <img
               src="/donate-qr.png"
-              alt="VietQR MBBank 0333036666 DANG HUYNH PHUC"
+              alt="VietQR ACB 31658367 DANG NGUYEN THIEN PHUC"
               className="donate-qr-image"
               onError={useLogoFallback}
             />
@@ -1712,7 +1712,7 @@ function DonatePage({
           <div className="donate-info">
             <div className="donate-badge">
               <Heart size={16} className="donate-heart-icon" />
-              <span>VietQR / MBBank Instant Transfer</span>
+              <span>VietQR / ACB Instant Transfer</span>
             </div>
 
             <div className="donate-field">
@@ -2010,39 +2010,45 @@ function DownloadsPage({
     >
       <div className="page-stage-header">
         <div className="page-stage-title-group">
-          <h1>Shared Storage & Torrent Downloads</h1>
-          <p>Search Nyaa, YTS, The Pirate Bay & AnimeTosho. Auto-extracts to fast-start MP4 with VietSub & EngSub in shared family storage.</p>
+          <h1>Film Requests & Shared Storage</h1>
+          <p>Search Nyaa, YTS, The Pirate Bay & AnimeTosho. Family members can request films for admin approval. Approved media is extracted to fast-start MP4 with VietSub & EngSub in shared storage.</p>
         </div>
       </div>
 
       <div className="download-tabs" role="tablist">
-        <button
-          role="tab"
-          id="torrent-search-tab"
-          aria-controls="torrent-search-panel"
-          aria-selected={tab === "search"}
-          tabIndex={tab === "search" ? 0 : -1}
-          className={`download-tab-button ${tab === "search" ? "active" : ""}`}
-          onKeyDown={(event) => selectDownloadTabFromKeyboard(event, "search")}
-          onClick={() => setTab("search")}
-        >
-          <Search size={16} />
-          <span>Search Indexers</span>
-        </button>
-        <button
-          role="tab"
-          id="torrent-tasks-tab"
-          aria-controls="torrent-tasks-panel"
-          aria-selected={tab === "tasks"}
-          tabIndex={tab === "tasks" ? 0 : -1}
-          className={`download-tab-button ${tab === "tasks" ? "active" : ""}`}
-          onKeyDown={(event) => selectDownloadTabFromKeyboard(event, "tasks")}
-          onClick={() => setTab("tasks")}
-        >
-          <Download size={16} />
-          <span>Tasks Workspace</span>
-          {activeTasksCount > 0 && <span className="download-tab-badge">{activeTasksCount}</span>}
-        </button>
+        {!isGuest && (
+          <button
+            role="tab"
+            id="torrent-search-tab"
+            aria-controls="torrent-search-panel"
+            aria-selected={tab === "search"}
+            tabIndex={tab === "search" ? 0 : -1}
+            className={`download-tab-button ${tab === "search" ? "active" : ""}`}
+            onKeyDown={(event) => selectDownloadTabFromKeyboard(event, "search")}
+            onClick={() => setTab("search")}
+          >
+            <Search size={16} />
+            <span>Request a Film</span>
+          </button>
+        )}
+        {!isGuest && (
+          <button
+            role="tab"
+            id="torrent-tasks-tab"
+            aria-controls="torrent-tasks-panel"
+            aria-selected={tab === "tasks"}
+            tabIndex={tab === "tasks" ? 0 : -1}
+            className={`download-tab-button ${tab === "tasks" ? "active" : ""}`}
+            onKeyDown={(event) => selectDownloadTabFromKeyboard(event, "tasks")}
+            onClick={() => setTab("tasks")}
+          >
+            <Download size={16} />
+            <span>Requests Workspace</span>
+            {activeTasksCount + pendingRequestsCount > 0 && (
+              <span className="download-tab-badge">{activeTasksCount + pendingRequestsCount}</span>
+            )}
+          </button>
+        )}
         <button
           role="tab"
           id="torrent-storage-tab"

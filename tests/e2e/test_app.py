@@ -216,9 +216,9 @@ def test_t1_donate_page_and_qr(mocked_page):
     expect(mocked_page.locator(".stage-donate")).to_be_visible()
     expect(mocked_page.locator(".stage-donate h1")).to_have_text("Support any-watch")
     expect(mocked_page.locator(".donate-qr-image")).to_be_visible()
-    expect(mocked_page.locator(".donate-card")).to_contain_text("0333036666")
-    expect(mocked_page.locator(".donate-card")).to_contain_text("DANG HUYNH PHUC")
-    expect(mocked_page.locator(".donate-card")).to_contain_text("MBBank")
+    expect(mocked_page.locator(".donate-card")).to_contain_text("31658367")
+    expect(mocked_page.locator(".donate-card")).to_contain_text("DANG NGUYEN THIEN PHUC")
+    expect(mocked_page.locator(".donate-card")).to_contain_text("ACB")
 
 def test_t1_search_idle_banner_and_suggestion(mocked_page):
     mocked_page.locator(".hero-search-trigger").click()
@@ -1854,7 +1854,7 @@ def test_t3_youtube_inline_player_fits_mobile_viewport(mobile_mocked_page):
 
 
 def test_t3_torrent_search_paginates_and_uses_exact_source(mocked_page):
-    mocked_page.get_by_label("Primary navigation").get_by_role("button", name="Downloads").click()
+    mocked_page.locator('.app-navigation-items button[data-route="download"]').click()
     search = mocked_page.get_by_role("textbox", name="Search torrent indexers")
     search.fill("Frieren")
     mocked_page.locator(".torrent-search-panel").get_by_role("button", name="Search", exact=True).click()
@@ -1876,7 +1876,7 @@ def test_t3_torrent_search_paginates_and_uses_exact_source(mocked_page):
 
 
 def test_t3_torrent_task_can_preview_and_delete_prepared_video(mocked_page):
-    mocked_page.get_by_label("Primary navigation").get_by_role("button", name="Downloads").click()
+    mocked_page.locator('.app-navigation-items button[data-route="download"]').click()
     mocked_page.get_by_role("textbox", name="Search torrent indexers").fill("Dune")
     mocked_page.locator(".torrent-search-panel").get_by_role("button", name="Search", exact=True).click()
     mocked_page.locator(".torrent-btn-download").first.click()
@@ -1904,13 +1904,13 @@ def test_t3_torrent_task_can_preview_and_delete_prepared_video(mocked_page):
 
 
 def test_t3_downloads_page_has_no_back_button(mocked_page):
-    mocked_page.get_by_label("Primary navigation").get_by_role("button", name="Downloads").click()
+    mocked_page.locator('.app-navigation-items button[data-route="download"]').click()
     expect(mocked_page.locator(".stage-downloads .back-button")).to_have_count(0)
-    expect(mocked_page.locator(".stage-downloads h1")).to_contain_text("Shared Storage & Torrent Downloads")
+    expect(mocked_page.locator(".stage-downloads h1")).to_contain_text("Film Requests & Shared Storage")
 
 
 def test_t3_shared_storage_tab_and_rbac_permissions(mocked_page):
-    mocked_page.get_by_label("Primary navigation").get_by_role("button", name="Downloads").click()
+    mocked_page.locator('.app-navigation-items button[data-route="download"]').click()
     mocked_page.get_by_role("textbox", name="Search torrent indexers").fill("Interstellar")
     mocked_page.locator(".torrent-search-panel").get_by_role("button", name="Search", exact=True).click()
     mocked_page.locator(".torrent-btn-download").first.click()
@@ -1973,7 +1973,7 @@ def test_t3_responsive_route_matrix(mocked_page, width):
 
     if width <= 760:
         mocked_page.get_by_role("button", name="Back", exact=True).first.click()
-    mocked_page.get_by_label("Primary navigation").get_by_role("button", name="Downloads").click()
+    mocked_page.locator('.app-navigation-items button[data-route="download"]').click()
     expect(mocked_page.locator(".stage-downloads")).to_be_visible()
     assert_no_horizontal_scroll()
 
