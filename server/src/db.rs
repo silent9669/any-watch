@@ -104,7 +104,7 @@ impl WebDatabase {
                 id TEXT PRIMARY KEY,
                 username TEXT NOT NULL UNIQUE COLLATE NOCASE,
                 password_hash TEXT NOT NULL,
-                role TEXT NOT NULL CHECK(role IN ('admin', 'user')),
+                role TEXT NOT NULL CHECK(role IN ('admin', 'user', 'guest')),
                 enabled INTEGER NOT NULL DEFAULT 1,
                 created_at TEXT NOT NULL
             );
@@ -142,6 +142,34 @@ impl WebDatabase {
             CREATE INDEX IF NOT EXISTS idx_user_history_updated
                 ON user_history(user_id, updated_at DESC);",
         )?;
+        let users_sql: Option<String> = conn
+            .query_row(
+                "SELECT sql FROM sqlite_master WHERE type = 'table' AND name = 'users'",
+                [],
+                |row| row.get(0),
+            )
+            .optional()?;
+        if let Some(sql) = users_sql {
+            if !sql.contains("'guest'") {
+                conn.execute_batch(
+                    "PRAGMA foreign_keys = OFF;
+                     CREATE TABLE users_migrated (
+                         id TEXT PRIMARY KEY,
+                         username TEXT NOT NULL UNIQUE COLLATE NOCASE,
+                         password_hash TEXT NOT NULL,
+                         role TEXT NOT NULL CHECK(role IN ('admin', 'user', 'guest')),
+                         enabled INTEGER NOT NULL DEFAULT 1,
+                         created_at TEXT NOT NULL,
+                         protected INTEGER NOT NULL DEFAULT 0
+                     );
+                     INSERT INTO users_migrated (id, username, password_hash, role, enabled, created_at, protected)
+                     SELECT id, username, password_hash, role, enabled, created_at, COALESCE(protected, 0) FROM users;
+                     DROP TABLE users;
+                     ALTER TABLE users_migrated RENAME TO users;
+                     PRAGMA foreign_keys = ON;",
+                )?;
+            }
+        }
         let has_protected = conn
             .prepare("PRAGMA table_info(users)")?
             .query_map([], |row| row.get::<_, String>(1))?
@@ -386,8 +414,8 @@ impl WebDatabase {
         validate_username(username)?;
         validate_password(password)?;
         anyhow::ensure!(
-            matches!(role, "admin" | "user"),
-            "role must be admin or user"
+            matches!(role, "admin" | "user" | "guest"),
+            "role must be admin, user, or guest"
         );
         let id = Uuid::new_v4().to_string();
         let created_at = Utc::now().to_rfc3339();
@@ -426,8 +454,8 @@ impl WebDatabase {
     ) -> Result<()> {
         validate_username(username)?;
         anyhow::ensure!(
-            matches!(role, "admin" | "user"),
-            "role must be admin or user"
+            matches!(role, "admin" | "user" | "guest"),
+            "role must be admin, user, or guest"
         );
         let password_hash = if let Some(password) = password.filter(|value| !value.is_empty()) {
             validate_password(password)?;
@@ -771,6 +799,18 @@ mod tests {
             .await
             .unwrap()
             .is_some());
+
+        let guest = db
+            .create_user("guest-account", "Guest-Password-2026", "guest")
+            .await
+            .unwrap();
+        assert_eq!(guest.role, "guest");
+        let guest_auth = db
+            .authenticate("guest-account", "Guest-Password-2026")
+            .await
+            .unwrap()
+            .unwrap();
+        assert_eq!(guest_auth.role, "guest");
 
         drop(db);
         let _ = tokio::fs::remove_file(path).await;

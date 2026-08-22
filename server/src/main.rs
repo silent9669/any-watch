@@ -2774,15 +2774,17 @@ async fn my_list(
     headers: HeaderMap,
     Query(query): Query<LimitQuery>,
 ) -> ApiResult<Json<Value>> {
-    let user = require_user(&state, &headers).await?;
-    Ok(Json(json!(state
-        .db
-        .favorites(&user.id, query.limit.unwrap_or(100).min(500))
-        .await
-        .map_err(|error| ApiError::internal(
-            "favorites",
-            error
-        ))?)))
+    let user = optional_user(&state, &headers).await;
+    let favorites = if let Some(user) = user {
+        state
+            .db
+            .favorites(&user.id, query.limit.unwrap_or(100).min(500))
+            .await
+            .map_err(|error| ApiError::internal("favorites", error))?
+    } else {
+        Vec::new()
+    };
+    Ok(Json(json!(favorites)))
 }
 
 async fn add_favorite(
@@ -2830,12 +2832,17 @@ async fn history(
     headers: HeaderMap,
     Query(query): Query<LimitQuery>,
 ) -> ApiResult<Json<Value>> {
-    let user = require_user(&state, &headers).await?;
-    Ok(Json(json!(state
-        .db
-        .history(&user.id, query.limit.unwrap_or(20).min(500))
-        .await
-        .map_err(|error| ApiError::internal("history", error))?)))
+    let user = optional_user(&state, &headers).await;
+    let items = if let Some(user) = user {
+        state
+            .db
+            .history(&user.id, query.limit.unwrap_or(20).min(500))
+            .await
+            .map_err(|error| ApiError::internal("history", error))?
+    } else {
+        Vec::new()
+    };
+    Ok(Json(json!(items)))
 }
 
 async fn save_progress(
@@ -2844,25 +2851,27 @@ async fn save_progress(
     Json(input): Json<ProgressInput>,
 ) -> ApiResult<StatusCode> {
     require_app_request(&headers)?;
-    let user = require_user(&state, &headers).await?;
-    state
-        .db
-        .save_history(
-            &user.id,
-            &NewHistory {
-                anime_id: &input.anime_id,
-                catalog_id: input.catalog_id,
-                provider: &input.provider,
-                title: &input.title,
-                cover_url: &input.cover_url,
-                episode_number: input.episode_number,
-                episode_title: input.episode_title.as_deref(),
-                position_seconds: input.position_seconds,
-                total_seconds: input.total_seconds,
-            },
-        )
-        .await
-        .map_err(|error| ApiError::internal("history", error))?;
+    let user = optional_user(&state, &headers).await;
+    if let Some(user) = user {
+        state
+            .db
+            .save_history(
+                &user.id,
+                &NewHistory {
+                    anime_id: &input.anime_id,
+                    catalog_id: input.catalog_id,
+                    provider: &input.provider,
+                    title: &input.title,
+                    cover_url: &input.cover_url,
+                    episode_number: input.episode_number,
+                    episode_title: input.episode_title.as_deref(),
+                    position_seconds: input.position_seconds,
+                    total_seconds: input.total_seconds,
+                },
+            )
+            .await
+            .map_err(|error| ApiError::internal("history", error))?;
+    }
     Ok(StatusCode::NO_CONTENT)
 }
 
@@ -2872,12 +2881,14 @@ async fn remove_history(
     Json(input): Json<RemoveInput>,
 ) -> ApiResult<StatusCode> {
     require_app_request(&headers)?;
-    let user = require_user(&state, &headers).await?;
-    state
-        .db
-        .remove_history(&user.id, &input.anime_id)
-        .await
-        .map_err(|error| ApiError::internal("history", error))?;
+    let user = optional_user(&state, &headers).await;
+    if let Some(user) = user {
+        state
+            .db
+            .remove_history(&user.id, &input.anime_id)
+            .await
+            .map_err(|error| ApiError::internal("history", error))?;
+    }
     Ok(StatusCode::NO_CONTENT)
 }
 
@@ -3373,6 +3384,11 @@ async fn resolve_stream(
         })
 }
 
+async fn optional_user(state: &AppState, headers: &HeaderMap) -> Option<SessionUser> {
+    let token = cookie_value(headers, SESSION_COOKIE)?;
+    state.db.session_user(&token).await.ok().flatten()
+}
+
 async fn require_user(state: &AppState, headers: &HeaderMap) -> ApiResult<SessionUser> {
     let token = cookie_value(headers, SESSION_COOKIE).ok_or_else(|| {
         ApiError::new(
@@ -3577,10 +3593,9 @@ struct TorrentSubtitlesQuery {
 
 async fn search_torrents(
     State(state): State<AppState>,
-    headers: HeaderMap,
+    _headers: HeaderMap,
     Query(params): Query<TorrentSearchQuery>,
 ) -> ApiResult<Json<Value>> {
-    let _user = require_user(&state, &headers).await?;
     let category = match params.category.as_deref() {
         Some("anime") => TorrentCategory::Anime,
         Some("movie" | "movies") => TorrentCategory::Movies,
@@ -3601,11 +3616,10 @@ async fn search_torrents(
 }
 
 async fn search_torrent_subtitles(
-    State(state): State<AppState>,
-    headers: HeaderMap,
+    State(_state): State<AppState>,
+    _headers: HeaderMap,
     Query(params): Query<TorrentSubtitlesQuery>,
 ) -> ApiResult<Json<Value>> {
-    let _user = require_user(&state, &headers).await?;
     let finder = SubtitleFinder::new();
     let subs = finder
         .search_subtitles(&params.query, params.lang.as_deref())
@@ -3656,8 +3670,12 @@ async fn list_torrent_tasks(
     State(state): State<AppState>,
     headers: HeaderMap,
 ) -> ApiResult<Json<Value>> {
-    let user = require_user(&state, &headers).await?;
-    let tasks = state.torrent_engine.list_tasks(&user.id).await;
+    let user = optional_user(&state, &headers).await;
+    let tasks = if let Some(user) = user {
+        state.torrent_engine.list_tasks(&user.id).await
+    } else {
+        Vec::new()
+    };
     Ok(Json(json!(tasks)))
 }
 
@@ -3713,7 +3731,8 @@ async fn download_torrent_file(
     headers: HeaderMap,
     Path(id): Path<String>,
 ) -> ApiResult<Response> {
-    serve_torrent_file(state, headers, id, true).await
+    let user = require_user(&state, &headers).await?;
+    serve_torrent_file(state, headers, id, &user.id, true).await
 }
 
 async fn stream_torrent_file(
@@ -3721,19 +3740,21 @@ async fn stream_torrent_file(
     headers: HeaderMap,
     Path(id): Path<String>,
 ) -> ApiResult<Response> {
-    serve_torrent_file(state, headers, id, false).await
+    let user = optional_user(&state, &headers).await;
+    let user_id = user.map(|u| u.id).unwrap_or_else(|| "guest".to_string());
+    serve_torrent_file(state, headers, id, &user_id, false).await
 }
 
 async fn serve_torrent_file(
     state: AppState,
     headers: HeaderMap,
     id: String,
+    user_id: &str,
     attachment: bool,
 ) -> ApiResult<Response> {
-    let user = require_user(&state, &headers).await?;
     let (file_path, file_name) = state
         .torrent_engine
-        .get_task_file_path(&user.id, &id)
+        .get_task_file_path(user_id, &id)
         .await
         .ok_or_else(|| {
             ApiError::new(
@@ -3832,10 +3853,11 @@ async fn download_torrent_subtitle(
     headers: HeaderMap,
     Path((id, lang)): Path<(String, String)>,
 ) -> ApiResult<Response> {
-    let user = require_user(&state, &headers).await?;
+    let user = optional_user(&state, &headers).await;
+    let user_id = user.map(|u| u.id).unwrap_or_else(|| "guest".to_string());
     let (file_path, file_name) = state
         .torrent_engine
-        .get_subtitle_file_path(&user.id, &id, &lang)
+        .get_subtitle_file_path(&user_id, &id, &lang)
         .await
         .ok_or_else(|| {
             ApiError::new(

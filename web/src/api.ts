@@ -75,7 +75,10 @@ const webPost = <T>(path: string, body?: unknown) =>
 export const api = {
   getSession: async (): Promise<SessionUser | null> => {
     try {
-      return await webRequest<SessionUser>("/session");
+      const res = await webRequest<{ user?: SessionUser | null } | SessionUser | null>("/session");
+      if (!res) return null;
+      if (typeof res === "object" && "user" in res) return res.user ?? null;
+      return res as SessionUser;
     } catch (error) {
       const code = (error as { code?: string })?.code;
       if (code === "AUTH_REQUIRED" || code === "SESSION_EXPIRED") return null;
