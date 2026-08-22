@@ -14,6 +14,7 @@ import {
   Film,
   House,
   Loader2,
+  LogIn,
   LogOut,
   Maximize2,
   Pause,
@@ -191,6 +192,7 @@ function App() {
   const [appScale, setAppScale] = useState<AppScale>(loadSavedScale);
   const [appFont, setAppFont] = useState<AppFont>(loadSavedFont);
   const [autoSkip, setAutoSkip] = useState(loadSavedAutoSkip);
+  const [showLoginModal, setShowLoginModal] = useState(false);
 
   useEffect(() => {
     window.history.replaceState({ anyWatchRoute: routeFromLocation() }, "", window.location.href);
