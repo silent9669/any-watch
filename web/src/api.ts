@@ -75,9 +75,9 @@ const webPost = <T>(path: string, body?: unknown) =>
 export const api = {
   getSession: async (): Promise<SessionUser | null> => {
     try {
-      const res = await webRequest<{ user?: SessionUser | null } | SessionUser | null>("/session");
+      const res = await webRequest<any>("/session");
       if (!res) return null;
-      if (typeof res === "object" && "user" in res) return res.user ?? null;
+      if (typeof res === "object" && res.user !== undefined) return res.user ?? null;
       return res as SessionUser;
     } catch (error) {
       const code = (error as { code?: string })?.code;

@@ -607,6 +607,7 @@ def mocked_page(page, vite_server):
 
         const nativeFetch = window.fetch.bind(window);
         window.fetch = async (input, init = {}) => {
+            const state = getMockState();
             const url = new URL(typeof input === "string" ? input : input.url, location.href);
             if (!url.pathname.startsWith("/api")) return nativeFetch(input, init);
             const method = (init.method || "GET").toUpperCase();
@@ -616,10 +617,19 @@ def mocked_page(page, vite_server):
             let args = body;
 
             if (method === "GET" && path === "/session") {
-                return Response.json({ id: "viewer-1", username: "viewer", role: "admin" });
+                if (state.session_null || state.is_guest) {
+                    return Response.json({ user: null });
+                }
+                return Response.json({ user: { id: "viewer-1", username: "viewer", role: "admin" } });
             } else if (method === "POST" && path === "/login") {
+                state.session_null = false;
+                state.is_guest = false;
+                saveMockState(state);
                 return Response.json({ id: "viewer-1", username: body.username, role: "admin" });
             } else if (method === "POST" && path === "/logout") {
+                state.session_null = true;
+                state.is_guest = true;
+                saveMockState(state);
                 return new Response(null, { status: 204 });
             } else if (method === "GET" && path === "/sources") cmd = "list_sources";
             else if (method === "GET" && path === "/providers/health") cmd = "list_provider_health";

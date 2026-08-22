@@ -1742,7 +1742,7 @@ async fn get_media_session(state: &AppState, id: &str, user_id: &str) -> ApiResu
             true,
         )
     })?;
-    if session.user_id != user_id {
+    if session.user_id != "guest" && session.user_id != user_id {
         return Err(ApiError::new(
             StatusCode::FORBIDDEN,
             "PLAYBACK_SESSION_FORBIDDEN",
@@ -3681,19 +3681,15 @@ async fn get_torrent_task(
     Path(id): Path<String>,
 ) -> ApiResult<Json<Value>> {
     let _user = require_user(&state, &headers).await?;
-    let task = state
-        .torrent_engine
-        .get_task(&id)
-        .await
-        .ok_or_else(|| {
-            ApiError::new(
-                StatusCode::NOT_FOUND,
-                "TASK_NOT_FOUND",
-                "torrent_task",
-                "Task not found",
-                false,
-            )
-        })?;
+    let task = state.torrent_engine.get_task(&id).await.ok_or_else(|| {
+        ApiError::new(
+            StatusCode::NOT_FOUND,
+            "TASK_NOT_FOUND",
+            "torrent_task",
+            "Task not found",
+            false,
+        )
+    })?;
     Ok(Json(json!(task)))
 }
 
@@ -4532,5 +4528,92 @@ mod tests {
         );
 
         assert_eq!(client_identity(&headers), "203.0.113.7");
+    }
+
+    #[tokio::test]
+    async fn guest_media_session_allows_playback() {
+        let stream = stream("https://cdn.example/video.mp4");
+        let session = MediaSession {
+            user_id: "guest".into(),
+            expires_at: Instant::now() + Duration::from_secs(60),
+            stream,
+            secret: [1_u8; 32],
+            resources: Arc::new(StdMutex::new(MediaResourceCache::default())),
+        };
+        let app_state = AppState {
+            db: WebDatabase::open(std::path::Path::new(":memory:"))
+                .await
+                .unwrap(),
+            providers: Arc::new(ProviderRegistry::new(&Config::default())),
+            catalog: CatalogClient::new(),
+            metadata: MetadataCache::new(Arc::new(Database::new_at(":memory:").await.unwrap())),
+            secure_cookies: false,
+            login_attempts: Arc::new(Mutex::new(HashMap::new())),
+            download_tickets: Arc::new(Mutex::new(HashMap::new())),
+            media_sessions: Arc::new(Mutex::new(HashMap::from([(
+                "guest-session".into(),
+                session,
+            )]))),
+            provider_health: Arc::new(Mutex::new(ProviderHealthCache::default())),
+            provider_health_refresh: Arc::new(Mutex::new(())),
+            media_client: Client::new(),
+            torrent_hub: Arc::new(TorrentSearchHub::new()),
+            torrent_engine: Arc::new(TorrentTaskManager::new(PathBuf::from("/tmp"))),
+        };
+
+        // Guest user can retrieve guest session
+        let retrieved = get_media_session(&app_state, "guest-session", "guest").await;
+        assert!(retrieved.is_ok());
+
+        // Logged-in user can also watch a public/guest session
+        let retrieved_user = get_media_session(&app_state, "guest-session", "user-123").await;
+        assert!(retrieved_user.is_ok());
+    }
+
+    #[tokio::test]
+    async fn authenticated_media_session_rejects_other_accounts() {
+        let stream = stream("https://cdn.example/video.mp4");
+        let session = MediaSession {
+            user_id: "user-alice".into(),
+            expires_at: Instant::now() + Duration::from_secs(60),
+            stream,
+            secret: [1_u8; 32],
+            resources: Arc::new(StdMutex::new(MediaResourceCache::default())),
+        };
+        let app_state = AppState {
+            db: WebDatabase::open(std::path::Path::new(":memory:"))
+                .await
+                .unwrap(),
+            providers: Arc::new(ProviderRegistry::new(&Config::default())),
+            catalog: CatalogClient::new(),
+            metadata: MetadataCache::new(Arc::new(Database::new_at(":memory:").await.unwrap())),
+            secure_cookies: false,
+            login_attempts: Arc::new(Mutex::new(HashMap::new())),
+            download_tickets: Arc::new(Mutex::new(HashMap::new())),
+            media_sessions: Arc::new(Mutex::new(HashMap::from([(
+                "alice-session".into(),
+                session,
+            )]))),
+            provider_health: Arc::new(Mutex::new(ProviderHealthCache::default())),
+            provider_health_refresh: Arc::new(Mutex::new(())),
+            media_client: Client::new(),
+            torrent_hub: Arc::new(TorrentSearchHub::new()),
+            torrent_engine: Arc::new(TorrentTaskManager::new(PathBuf::from("/tmp"))),
+        };
+
+        // Alice can access her session
+        assert!(get_media_session(&app_state, "alice-session", "user-alice")
+            .await
+            .is_ok());
+
+        // Bob cannot access Alice's session
+        assert!(get_media_session(&app_state, "alice-session", "user-bob")
+            .await
+            .is_err());
+
+        // Unauthenticated guest cannot access Alice's session
+        assert!(get_media_session(&app_state, "alice-session", "guest")
+            .await
+            .is_err());
     }
 }

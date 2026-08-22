@@ -476,6 +476,7 @@ function App() {
     setBootstrapping(true);
     try {
       await api.login(username, password);
+      setShowLoginModal(false);
       await bootstrap();
       setShowLoginModal(false);
     } catch (err) {
@@ -1357,7 +1358,7 @@ function App() {
             />
           )}
 
-          {route === "admin" && session?.role === "admin" && (
+          {route === "admin" && session && session.role === "admin" && (
             <AdminPage key="admin" currentUser={session} onBack={goBack} />
           )}
 
@@ -1400,7 +1401,10 @@ function App() {
               selectedCatalog={catalogSelection}
               selectedAnime={searchSelection}
               suggestedCatalog={providerFallbackCatalog}
-              onQueryChange={setQuery}
+              onQueryChange={(q) => {
+                setQuery(q);
+                if (q.trim().length >= 2) void searchCatalog(q);
+              }}
               onSearch={(targetQuery) => void searchCatalog(targetQuery ?? query)}
               onLanguageChange={selectSearchLanguage}
               onProviderSelect={(option) => void selectCatalogProvider(option)}
@@ -1647,7 +1651,7 @@ function DownloadsPage({
   onShowSignIn?: () => void;
 }) {
   const shouldReduceMotion = useReducedMotion();
-  const isGuest = session?.role === "guest";
+  const isGuest = !session || session.role === "guest";
   const [tab, setTab] = useState<"search" | "tasks" | "storage">(isGuest ? "storage" : "search");
   const [query, setQuery] = useState("");
   const [category, setCategory] = useState<"all" | "anime" | "movie" | "tv">("all");
@@ -1853,7 +1857,7 @@ function DownloadsPage({
       <div className="page-stage-header">
         <div className="page-stage-title-group">
           <h1>Shared Storage & Torrent Downloads</h1>
-          <p>Search Nyaa, YTS, The Pirate Bay & AnimeTosho. Auto-extracts to fast-start MP4 with VietSub & EngSub in shared storage.</p>
+          <p>Search Nyaa, YTS, The Pirate Bay & AnimeTosho. Auto-extracts to fast-start MP4 with VietSub & EngSub in shared family storage.</p>
         </div>
       </div>
 
@@ -1900,58 +1904,6 @@ function DownloadsPage({
           {readyTasks.length > 0 && <span className="download-tab-badge storage">{readyTasks.length}</span>}
         </button>
       </div>
-
-      {error && (
-        <div className="stage-error-banner" style={{ margin: "0 0 1.25rem" }}>
-          <AlertTriangle size={18} />
-          <span>{error}</span>
-        </div>
-      )}
-
-      {tab === "storage" && (
-        <div
-          id="torrent-storage-panel"
-          className="torrent-storage-workspace"
-          role="tabpanel"
-          aria-labelledby="torrent-storage-tab"
-        >
-          <div className="storage-overview-banner">
-            <div className="storage-stat-pill">
-              <HardDrive size={16} />
-              <span><strong>{readyTasks.length}</strong> {readyTasks.length === 1 ? "film" : "films"} ready to stream</span>
-            </div>
-            <div className="storage-stat-pill">
-              <span>Storage used: <strong>{formatTorrentBytes(totalStorageBytes)}</strong> (100 GB homelab quota)</span>
-            </div>
-            {isGuest && (
-              <div className="storage-stat-pill guest-badge">
-                <ShieldCheck size={14} />
-                <span>Guest streaming access</span>
-              </div>
-            )}
-          </div>
-
-          {readyTasks.length > 0 ? (
-            <div className="torrent-tasks-list">
-              {readyTasks.map((task) => (
-                <TorrentTaskItem
-                  key={task.id}
-                  task={task}
-                  userRole={session?.role}
-                  isDeleting={deletingTaskIds.has(task.id)}
-                  onDelete={(id) => void handleDeleteTask(id)}
-                />
-              ))}
-            </div>
-          ) : (
-            <div className="downloads-empty" style={{ margin: "3rem auto", textAlign: "center" }}>
-              <div><HardDrive size={26} /></div>
-              <h3>Shared Storage Is Empty</h3>
-              <p>No extracted films in shared storage yet. Search torrent indexers and queue downloads to prepare media for all family accounts and guests.</p>
-            </div>
-          )}
-        </div>
-      )}
 
       {error && (
         <div className="stage-error-banner" style={{ margin: "0 0 1.25rem" }}>
@@ -2191,6 +2143,7 @@ function DownloadsPage({
                 <TorrentTaskItem
                   key={task.id}
                   task={task}
+                  userRole={session?.role}
                   isDeleting={deletingTaskIds.has(task.id)}
                   onDelete={(id) => void handleDeleteTask(id)}
                 />
@@ -2205,16 +2158,63 @@ function DownloadsPage({
           )}
         </div>
       )}
+
+      {tab === "storage" && (
+        <div
+          id="torrent-storage-panel"
+          className="torrent-storage-workspace"
+          role="tabpanel"
+          aria-labelledby="torrent-storage-tab"
+        >
+          <div className="storage-overview-banner">
+            <div className="storage-stat-pill">
+              <HardDrive size={16} />
+              <span><strong>{readyTasks.length}</strong> {readyTasks.length === 1 ? "film" : "films"} ready to stream</span>
+            </div>
+            <div className="storage-stat-pill">
+              <span>Storage used: <strong>{formatTorrentBytes(totalStorageBytes)}</strong> (100 GB homelab quota)</span>
+            </div>
+            {isGuest && (
+              <div className="storage-stat-pill guest-badge">
+                <ShieldCheck size={14} />
+                <span>Guest streaming access</span>
+              </div>
+            )}
+          </div>
+
+          {readyTasks.length > 0 ? (
+            <div className="torrent-tasks-list">
+              {readyTasks.map((task) => (
+                <TorrentTaskItem
+                  key={task.id}
+                  task={task}
+                  userRole={session?.role}
+                  isDeleting={deletingTaskIds.has(task.id)}
+                  onDelete={(id) => void handleDeleteTask(id)}
+                />
+              ))}
+            </div>
+          ) : (
+            <div className="downloads-empty" style={{ margin: "3rem auto", textAlign: "center" }}>
+              <div><HardDrive size={26} /></div>
+              <h3>Shared Storage Is Empty</h3>
+              <p>No extracted films in shared storage yet. Search torrent indexers and queue downloads to prepare media for all family accounts and guests.</p>
+            </div>
+          )}
+        </div>
+      )}
     </motion.section>
   );
 }
 
 function TorrentTaskItem({
   task,
+  userRole,
   isDeleting,
   onDelete,
 }: {
   task: TorrentTask;
+  userRole?: "admin" | "user" | "guest";
   isDeleting?: boolean;
   onDelete: (id: string) => void;
 }) {
@@ -2222,6 +2222,10 @@ function TorrentTaskItem({
   const isReady = status.type === "ready";
   const isFailed = status.type === "failed";
   const [previewOpen, setPreviewOpen] = useState(false);
+  const isGuest = userRole === "guest";
+  const isAdmin = userRole === "admin";
+  const canDownload = !isGuest;
+  const canDelete = isAdmin;
 
   return (
     <div className={`torrent-task-card ${isReady ? "ready" : isFailed ? "failed" : ""}`}>
@@ -2305,15 +2309,17 @@ function TorrentTaskItem({
               {previewOpen ? <X size={15} /> : <Play size={15} fill="currentColor" />}
               <span>{previewOpen ? "Close Player" : "Watch Now"}</span>
             </button>
-            <a
-              href={api.getTorrentDownloadUrl(task.id)}
-              download={status.data.file_name}
-              className="torrent-btn-file-download"
-            >
-              <Download size={15} />
-              <span>Download MP4 ({formatTorrentBytes(status.data.file_size)})</span>
-            </a>
-            {status.data.subtitles.map((sub: TorrentSubtitleMeta) => (
+            {canDownload && (
+              <a
+                href={api.getTorrentDownloadUrl(task.id)}
+                download={status.data.file_name}
+                className="torrent-btn-file-download"
+              >
+                <Download size={15} />
+                <span>Download MP4 ({formatTorrentBytes(status.data.file_size)})</span>
+              </a>
+            )}
+            {canDownload && status.data.subtitles.map((sub: TorrentSubtitleMeta) => (
               <a
                 key={sub.language_code}
                 href={api.getTorrentSubtitleUrl(task.id, sub.language_code)}
@@ -2326,15 +2332,17 @@ function TorrentTaskItem({
             ))}
           </>
         )}
-        <button
-          type="button"
-          className="torrent-btn-delete"
-          disabled={isDeleting}
-          onClick={() => onDelete(task.id)}
-        >
-          {isDeleting ? <Loader2 size={14} className="spin" /> : <Trash2 size={14} />}
-          <span>{isDeleting ? "Deleting..." : "Delete Task"}</span>
-        </button>
+        {canDelete && (
+          <button
+            type="button"
+            className="torrent-btn-delete"
+            disabled={isDeleting}
+            onClick={() => onDelete(task.id)}
+          >
+            {isDeleting ? <Loader2 size={14} className="spin" /> : <Trash2 size={14} />}
+            <span>{isDeleting ? "Deleting..." : "Delete Task"}</span>
+          </button>
+        )}
       </div>
       {status.type === "ready" && previewOpen && (
         <div className="torrent-task-player">
@@ -2691,7 +2699,7 @@ function HomeDashboard({
   onShowMyList: () => void;
   onShowDownloads: () => void;
   onShowSettings: () => void;
-  session: SessionUser | null;
+  session?: SessionUser | null;
   onShowAdmin?: () => void;
   onSignOut?: () => void;
   onShowSignIn?: () => void;
@@ -4412,7 +4420,7 @@ function AdminPage({ currentUser, onBack }: { currentUser: SessionUser; onBack: 
           <div className="admin-card-heading"><div><p className="eyebrow">New account</p><h2>Invite a viewer</h2></div><UserPlus size={22} /></div>
           <label><span>Username</span><input value={username} onChange={(event) => setUsername(event.target.value)} minLength={3} maxLength={40} autoComplete="off" autoCapitalize="none" autoCorrect="off" spellCheck={false} /></label>
           <label><span>Temporary password</span><input type="password" value={password} onChange={(event) => setPassword(event.target.value)} minLength={10} autoComplete="new-password" /></label>
-          <label><span>Access level</span><select value={role} onChange={(event) => setRole(event.target.value)}><option value="user">Viewer</option><option value="admin">Administrator</option></select></label>
+          <label><span>Access level</span><select value={role} onChange={(event) => setRole(event.target.value)}><option value="user">Viewer</option><option value="guest">Guest</option><option value="admin">Administrator</option></select></label>
           <button className="primary" disabled={creating || username.trim().length < 3 || password.length < 10}>{creating ? <Loader2 className="spin" size={17} /> : <UserPlus size={17} />}{creating ? "Creating…" : "Create account"}</button>
           <small>Passwords are hashed before storage. The password cannot be viewed again after creation.</small>
         </form>
@@ -4443,7 +4451,7 @@ function AdminUserRow({
   onError: (message: string | null) => void;
 }) {
   const [username, setUsername] = useState(user.username);
-  const [role, setRole] = useState(user.role);
+  const [role, setRole] = useState<"admin" | "user" | "guest">(user.role);
   const [password, setPassword] = useState("");
   const [saving, setSaving] = useState(false);
   const [deleting, setDeleting] = useState(false);
@@ -4474,7 +4482,7 @@ function AdminUserRow({
         <input className="admin-username" value={username} disabled={user.protected} minLength={3} maxLength={40} autoComplete="off" autoCapitalize="none" autoCorrect="off" spellCheck={false} onChange={(event) => setUsername(event.target.value)} aria-label={`Username for ${user.username}`} />
         <small>{user.protected ? "Protected administrator account" : isCurrent ? "Current session" : `Created ${formatDownloadDate(user.createdAt)}`}</small>
       </label>
-      <select value={role} disabled={user.protected || isCurrent} onChange={(event) => setRole(event.target.value as "admin" | "user")} aria-label={`Role for ${user.username}`}><option value="user">Viewer</option><option value="admin">Admin</option></select>
+      <select value={role} disabled={user.protected || isCurrent} onChange={(event) => setRole(event.target.value as "admin" | "user" | "guest")} aria-label={`Role for ${user.username}`}><option value="user">Viewer</option><option value="guest">Guest</option><option value="admin">Admin</option></select>
       <button
         type="button"
         className="admin-delete"
@@ -5537,6 +5545,7 @@ function VideoPlayer({
 
   const playerClassName = [
     "player-overlay",
+    "video-player",
     displayMode === "inline" ? "inline-player" : "",
     showControls ? "controls-visible" : "",
   ].filter(Boolean).join(" ");
