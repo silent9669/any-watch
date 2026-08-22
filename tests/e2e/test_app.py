@@ -1537,7 +1537,8 @@ def test_t4_guest_can_search_and_playback_episode(mocked_page):
 
     # Click result to open preview then open detail page
     mocked_page.locator(".search-result").first.click()
-    mocked_page.locator(".detail-actions button.primary").click()
+    mocked_page.wait_for_selector(".search-preview .detail-actions button.primary")
+    mocked_page.locator(".search-preview .detail-actions button.primary").click()
     expect(mocked_page.locator(".detail-page")).to_be_visible()
 
     # Click play on episode 1
@@ -1565,7 +1566,8 @@ def test_t4_guest_download_prompts_signin(mocked_page):
     search_input.press("Enter")
     mocked_page.wait_for_selector(".search-result")
     mocked_page.locator(".search-result").first.click()
-    mocked_page.locator(".detail-actions button.primary").click()
+    mocked_page.wait_for_selector(".search-preview .detail-actions button.primary")
+    mocked_page.locator(".search-preview .detail-actions button.primary").click()
     expect(mocked_page.locator(".detail-page")).to_be_visible()
 
     # Open episode list

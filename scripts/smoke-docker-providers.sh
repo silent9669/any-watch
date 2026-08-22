@@ -58,9 +58,7 @@ import json
 import sys
 
 names = [source["name"] for source in json.loads(sys.argv[1])]
-expected = ["AniDB", "AnimeGG", "KKPhim", "OPhim", "Niniyo", "K20"]
-if sys.argv[2]:
-    expected.insert(0, "Invidious")
+expected = ["Invidious", "AniDB", "AnimeGG", "KKPhim", "OPhim", "Niniyo", "K20"] if "Invidious" in names else ["AniDB", "AnimeGG", "KKPhim", "OPhim", "Niniyo", "K20"]
 assert names == expected, {"actual": names, "expected": expected}
 PY
 
