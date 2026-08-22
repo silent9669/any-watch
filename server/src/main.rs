@@ -651,7 +651,7 @@ async fn main() -> Result<()> {
         .layer(SetResponseHeaderLayer::if_not_present(HeaderName::from_static("strict-transport-security"), HeaderValue::from_static("max-age=31536000; includeSubDomains")))
         .layer(SetResponseHeaderLayer::if_not_present(header::REFERRER_POLICY, HeaderValue::from_static("strict-origin-when-cross-origin")))
         .layer(SetResponseHeaderLayer::if_not_present(HeaderName::from_static("permissions-policy"), HeaderValue::from_static("camera=(), microphone=(), geolocation=()")))
-        .layer(SetResponseHeaderLayer::if_not_present(HeaderName::from_static("content-security-policy"), HeaderValue::from_static("default-src 'self'; img-src 'self' https: data:; media-src 'self' https: blob:; connect-src 'self' https:; style-src 'self' 'unsafe-inline'; script-src 'self'; worker-src 'self' blob:; font-src 'self' data:; object-src 'none'; frame-ancestors 'none'; base-uri 'self'; form-action 'self'")))
+        .layer(SetResponseHeaderLayer::if_not_present(HeaderName::from_static("content-security-policy"), HeaderValue::from_static("default-src 'self'; img-src 'self' https: data:; media-src 'self' https: blob:; connect-src 'self' https: https://cloudflareinsights.com; style-src 'self' 'unsafe-inline'; script-src 'self' https://static.cloudflareinsights.com; worker-src 'self' blob:; font-src 'self' data:; object-src 'none'; frame-ancestors 'none'; base-uri 'self'; form-action 'self'")))
         .layer(CompressionLayer::new())
         .layer(TraceLayer::new_for_http());
 
@@ -871,9 +871,8 @@ async fn delete_user(
 
 async fn list_sources(
     State(state): State<AppState>,
-    headers: HeaderMap,
+    _headers: HeaderMap,
 ) -> ApiResult<Json<Vec<SourceDto>>> {
-    require_user(&state, &headers).await?;
     let cached = state.provider_health.lock().await;
     let mut sources = source_list(&state);
     for source in &mut sources {
@@ -923,9 +922,8 @@ fn source_dto(
 
 async fn list_provider_health(
     State(state): State<AppState>,
-    headers: HeaderMap,
+    _headers: HeaderMap,
 ) -> ApiResult<Json<Vec<SourceDto>>> {
-    require_user(&state, &headers).await?;
     {
         let cache = state.provider_health.lock().await;
         if cache
@@ -957,7 +955,6 @@ async fn retry_provider_health(
     Json(input): Json<ProviderHealthInput>,
 ) -> ApiResult<Json<Vec<SourceDto>>> {
     require_app_request(&headers)?;
-    require_user(&state, &headers).await?;
     let selected = input.provider.as_deref();
     let health = refresh_provider_health_coalesced(
         state.provider_health.as_ref(),
@@ -1068,15 +1065,16 @@ fn catalog_error(operation: &str, error: impl std::fmt::Display) -> ApiError {
 }
 
 async fn discovery(State(state): State<AppState>, headers: HeaderMap) -> ApiResult<Json<Value>> {
-    let user = require_user(&state, &headers).await?;
     let mut discovery = state
         .catalog
         .discovery()
         .await
         .map_err(|error| catalog_error("catalog", error))?;
-    let preferences = catalog_preferences(&state, &user.id).await;
-    apply_personal_matches(&mut discovery.trending, &preferences);
-    apply_personal_matches(&mut discovery.popular_this_season, &preferences);
+    if let Some(user) = optional_user(&state, &headers).await {
+        let preferences = catalog_preferences(&state, &user.id).await;
+        apply_personal_matches(&mut discovery.trending, &preferences);
+        apply_personal_matches(&mut discovery.popular_this_season, &preferences);
+    }
     Ok(Json(json!(discovery)))
 }
 
@@ -1085,13 +1083,14 @@ async fn search_catalog(
     headers: HeaderMap,
     Query(query): Query<SearchQuery>,
 ) -> ApiResult<Json<Value>> {
-    let user = require_user(&state, &headers).await?;
     let mut items = state
         .catalog
         .search(query.query.trim(), 24)
         .await
         .map_err(|error| catalog_error("catalog-search", error))?;
-    personalize_catalog_items(&state, &user.id, &mut items).await;
+    if let Some(user) = optional_user(&state, &headers).await {
+        personalize_catalog_items(&state, &user.id, &mut items).await;
+    }
     Ok(Json(json!(items)))
 }
 
@@ -1100,13 +1099,14 @@ async fn genre_catalog(
     headers: HeaderMap,
     Path(genre): Path<String>,
 ) -> ApiResult<Json<Value>> {
-    let user = require_user(&state, &headers).await?;
     let mut items = state
         .catalog
         .by_genre(&genre, 24)
         .await
         .map_err(|error| catalog_error("catalog", error))?;
-    personalize_catalog_items(&state, &user.id, &mut items).await;
+    if let Some(user) = optional_user(&state, &headers).await {
+        personalize_catalog_items(&state, &user.id, &mut items).await;
+    }
     Ok(Json(json!(items)))
 }
 
@@ -1116,13 +1116,14 @@ async fn catalog(
     Json(input): Json<CatalogInput>,
 ) -> ApiResult<Json<Value>> {
     require_app_request(&headers)?;
-    let user = require_user(&state, &headers).await?;
     let mut page = state
         .catalog
         .catalog(&input.filters, &input.sort, input.page.unwrap_or(1), 24)
         .await
         .map_err(|error| catalog_error("catalog", error))?;
-    personalize_catalog_items(&state, &user.id, &mut page.items).await;
+    if let Some(user) = optional_user(&state, &headers).await {
+        personalize_catalog_items(&state, &user.id, &mut page.items).await;
+    }
     Ok(Json(json!(page)))
 }
 
@@ -1200,7 +1201,6 @@ async fn availability(
     Json(input): Json<AvailabilityInput>,
 ) -> ApiResult<Json<Vec<AvailabilityDto>>> {
     require_app_request(&headers)?;
-    require_user(&state, &headers).await?;
     let mut titles = Vec::new();
     for title in std::iter::once(input.title).chain(input.title_variants) {
         let title = title.trim();
@@ -1301,7 +1301,6 @@ async fn search_source(
     Json(input): Json<SourceSearchInput>,
 ) -> ApiResult<Json<Vec<AnimeDto>>> {
     require_app_request(&headers)?;
-    require_user(&state, &headers).await?;
     if input.query.trim().len() < 2 {
         return Ok(Json(Vec::new()));
     }
@@ -1337,7 +1336,6 @@ async fn provider_catalog(
     Json(input): Json<ProviderCatalogInput>,
 ) -> ApiResult<Json<Vec<AnimeDto>>> {
     require_app_request(&headers)?;
-    require_user(&state, &headers).await?;
     let provider = state
         .providers
         .get_provider(&input.provider)
@@ -1374,10 +1372,9 @@ struct YouTubeTrendingQuery {
 
 async fn youtube_trending(
     State(state): State<AppState>,
-    headers: HeaderMap,
+    _headers: HeaderMap,
     Query(query): Query<YouTubeTrendingQuery>,
 ) -> ApiResult<Json<Vec<AnimeDto>>> {
-    require_user(&state, &headers).await?;
     let provider = state.providers.invidious().ok_or_else(|| {
         ApiError::new(
             StatusCode::NOT_FOUND,
@@ -1409,9 +1406,8 @@ async fn youtube_trending(
 
 async fn youtube_popular(
     State(state): State<AppState>,
-    headers: HeaderMap,
+    _headers: HeaderMap,
 ) -> ApiResult<Json<Vec<AnimeDto>>> {
-    require_user(&state, &headers).await?;
     let provider = state.providers.invidious().ok_or_else(|| {
         ApiError::new(
             StatusCode::NOT_FOUND,
@@ -1440,10 +1436,9 @@ async fn youtube_popular(
 
 async fn youtube_related(
     State(state): State<AppState>,
-    headers: HeaderMap,
+    _headers: HeaderMap,
     Path(video_id): Path<String>,
 ) -> ApiResult<Json<Vec<AnimeDto>>> {
-    require_user(&state, &headers).await?;
     let provider = state.providers.invidious().ok_or_else(|| {
         ApiError::new(
             StatusCode::NOT_FOUND,
@@ -1476,7 +1471,6 @@ async fn anime_details(
     Json(input): Json<AnimeDetailsInput>,
 ) -> ApiResult<Json<AnimeDetailsDto>> {
     require_app_request(&headers)?;
-    require_user(&state, &headers).await?;
     let mut details = AnimeDetailsDto::default();
     let mut metadata_allowed = true;
     if let Some(provider) = state.providers.get_provider(&input.provider) {
@@ -1517,7 +1511,6 @@ async fn episodes(
     Json(input): Json<EpisodesInput>,
 ) -> ApiResult<Json<Value>> {
     require_app_request(&headers)?;
-    require_user(&state, &headers).await?;
     let provider = state
         .providers
         .get_provider(&input.provider)
@@ -1548,14 +1541,17 @@ async fn playback(
     Json(input): Json<PlaybackInput>,
 ) -> ApiResult<Json<PlaybackDto>> {
     require_app_request(&headers)?;
-    let user = require_user(&state, &headers).await?;
+    let user_id = optional_user(&state, &headers)
+        .await
+        .map(|u| u.id)
+        .unwrap_or_else(|| "guest".into());
     let stream = resolve_stream(&state, &input.provider, &input.episode_id).await?;
     let id = Uuid::new_v4().to_string();
     let mut secret = [0_u8; 32];
     OsRng.fill_bytes(&mut secret);
     let now = Instant::now();
     let session = MediaSession {
-        user_id: user.id,
+        user_id,
         expires_at: now + Duration::from_secs(6 * 60 * 60),
         stream: stream.clone(),
         secret,
@@ -1617,12 +1613,11 @@ fn playback_dto(id: &str, session: &MediaSession) -> PlaybackDto {
 }
 
 async fn skip_times(
-    State(state): State<AppState>,
+    State(_state): State<AppState>,
     headers: HeaderMap,
     Json(input): Json<SkipTimesInput>,
 ) -> ApiResult<Json<Vec<SkipTime>>> {
     require_app_request(&headers)?;
-    require_user(&state, &headers).await?;
     if input.catalog_id <= 0 || input.episode_number == 0 {
         return Err(ApiError::new(
             StatusCode::BAD_REQUEST,
@@ -3668,19 +3663,17 @@ async fn start_torrent_download(
 
 async fn list_torrent_tasks(
     State(state): State<AppState>,
-    headers: HeaderMap,
+    _headers: HeaderMap,
 ) -> ApiResult<Json<Value>> {
-    let _user = require_user(&state, &headers).await?;
     let tasks = state.torrent_engine.list_tasks().await;
     Ok(Json(json!(tasks)))
 }
 
 async fn get_torrent_task(
     State(state): State<AppState>,
-    headers: HeaderMap,
+    _headers: HeaderMap,
     Path(id): Path<String>,
 ) -> ApiResult<Json<Value>> {
-    let _user = require_user(&state, &headers).await?;
     let task = state.torrent_engine.get_task(&id).await.ok_or_else(|| {
         ApiError::new(
             StatusCode::NOT_FOUND,
@@ -3750,7 +3743,6 @@ async fn stream_torrent_file(
     headers: HeaderMap,
     Path(id): Path<String>,
 ) -> ApiResult<Response> {
-    let _user = require_user(&state, &headers).await?;
     serve_torrent_file(state, headers, id, false).await
 }
 
@@ -3858,10 +3850,9 @@ fn parse_single_byte_range(value: &str, file_size: u64) -> Option<(u64, u64)> {
 
 async fn download_torrent_subtitle(
     State(state): State<AppState>,
-    headers: HeaderMap,
+    _headers: HeaderMap,
     Path((id, lang)): Path<(String, String)>,
 ) -> ApiResult<Response> {
-    let _user = require_user(&state, &headers).await?;
     let (file_path, file_name) = state
         .torrent_engine
         .get_subtitle_file_path(&id, &lang)
