@@ -62,7 +62,7 @@ async fn test_torrent_task_rejects_invalid_download_sources() {
         .await;
 
     assert!(result.is_err());
-    assert!(manager.list_tasks("owner-a").await.is_empty());
+    assert!(manager.list_tasks().await.is_empty());
 }
 
 #[test]

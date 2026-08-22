@@ -12,6 +12,7 @@ import {
   Eye,
   EyeOff,
   Film,
+  HardDrive,
   House,
   Loader2,
   LogIn,
@@ -1278,10 +1279,6 @@ function App() {
     return <BootSplash />;
   }
 
-  if (!session) {
-    return <LoginScreen error={authError ?? error?.message ?? null} onLogin={signIn} />;
-  }
-
   return (
     <div className={`app-shell route-${route} edition-web`}>
       <div
@@ -1292,6 +1289,8 @@ function App() {
       <AppNavigation
         route={route}
         onNavigate={navigate}
+        session={session}
+        onShowSignIn={() => setShowLoginModal(true)}
       />
 
       <main>
@@ -1323,9 +1322,10 @@ function App() {
                 onShowMyList={() => navigate("my-list")}
                 onShowDownloads={() => navigate("download")}
                 onShowSettings={() => navigate("settings")}
-                session={session}
-                onShowAdmin={session.role === "admin" ? () => navigate("admin") : undefined}
-                onSignOut={() => void signOut()}
+                session={session ?? null}
+                onShowAdmin={session?.role === "admin" ? () => navigate("admin") : undefined}
+                onSignOut={session ? () => void signOut() : undefined}
+                onShowSignIn={() => setShowLoginModal(true)}
                 myList={myList}
                 onToggleFavorite={toggleMyList}
                 onRemoveHistory={(item) => void removeHistoryItem(item)}
@@ -1357,7 +1357,7 @@ function App() {
             />
           )}
 
-          {route === "admin" && session.role === "admin" && (
+          {route === "admin" && session?.role === "admin" && (
             <AdminPage key="admin" currentUser={session} onBack={goBack} />
           )}
 
@@ -1505,6 +1505,8 @@ function App() {
             <DownloadsPage
               key="download"
               onBack={goBack}
+              session={session}
+              onShowSignIn={() => setShowLoginModal(true)}
             />
           )}
         </AnimatePresence>
@@ -1526,6 +1528,22 @@ function App() {
           />
         )}
       </AnimatePresence>
+
+      <AnimatePresence>
+        {showLoginModal && (
+          <div className="login-modal-overlay" onClick={() => setShowLoginModal(false)}>
+            <div className="login-modal-dialog" onClick={(e) => e.stopPropagation()}>
+              <LoginScreen
+                error={authError ?? error?.message ?? null}
+                onLogin={async (username, password) => {
+                  await signIn(username, password);
+                }}
+                onClose={() => setShowLoginModal(false)}
+              />
+            </div>
+          </div>
+        )}
+      </AnimatePresence>
     </div>
   );
 }
@@ -1533,9 +1551,13 @@ function App() {
 function AppNavigation({
   route,
   onNavigate,
+  session,
+  onShowSignIn,
 }: {
   route: Route;
   onNavigate: (route: Route) => void;
+  session?: SessionUser | null;
+  onShowSignIn?: () => void;
 }) {
   const items: Array<{ route: Route; label: string; icon: ReactNode; badge?: number }> = [
     { route: "home", label: "Home", icon: <House size={20} /> },
@@ -1567,6 +1589,17 @@ function AppNavigation({
             {item.badge ? <b>{item.badge}</b> : null}
           </button>
         ))}
+        {!session && (
+          <button
+            className="nav-signin-button"
+            data-route="signin"
+            aria-label="Sign in"
+            onClick={onShowSignIn}
+          >
+            <LogIn size={20} />
+            <span>Sign in</span>
+          </button>
+        )}
       </div>
     </nav>
   );
@@ -1606,11 +1639,16 @@ function formatEta(seconds: number): string {
 
 function DownloadsPage({
   onBack,
+  session,
+  onShowSignIn,
 }: {
-  onBack: () => void;
+  onBack?: () => void;
+  session?: SessionUser | null;
+  onShowSignIn?: () => void;
 }) {
   const shouldReduceMotion = useReducedMotion();
-  const [tab, setTab] = useState<"search" | "tasks">("search");
+  const isGuest = session?.role === "guest";
+  const [tab, setTab] = useState<"search" | "tasks" | "storage">(isGuest ? "storage" : "search");
   const [query, setQuery] = useState("");
   const [category, setCategory] = useState<"all" | "anime" | "movie" | "tv">("all");
   const [source, setSource] = useState("");
@@ -1631,6 +1669,14 @@ function DownloadsPage({
       (t) => t.status.type === "queued" || t.status.type === "downloading" || t.status.type === "remuxing"
     ).length;
   }, [tasks]);
+
+  const readyTasks = useMemo(() => {
+    return tasks.filter((t) => t.status.type === "ready");
+  }, [tasks]);
+
+  const totalStorageBytes = useMemo(() => {
+    return readyTasks.reduce((acc, t) => acc + (t.status.type === "ready" ? t.status.data.file_size : 0), 0);
+  }, [readyTasks]);
 
   const loadTasks = async () => {
     try {
@@ -1714,6 +1760,14 @@ function DownloadsPage({
   };
 
   const handleCreateTask = async (torrent: TorrentSearchResult) => {
+    if (!session) {
+      onShowSignIn?.();
+      return;
+    }
+    if (isGuest) {
+      setError("Guest accounts can view and stream films in Shared Storage. Download privileges require a family viewer or admin account.");
+      return;
+    }
     setActionLoadingId(torrent.id);
     setError(null);
     try {
@@ -1734,6 +1788,10 @@ function DownloadsPage({
   };
 
   const handleDeleteTask = async (id: string) => {
+    if (!session) {
+      onShowSignIn?.();
+      return;
+    }
     if (deletingTaskIds.has(id)) return;
     setDeletingTaskIds((prev) => new Set(prev).add(id));
     setTasks((current) => current.filter((t) => t.id !== id));
@@ -1769,9 +1827,15 @@ function DownloadsPage({
     void performSearch(query, category, source, page + 1, true);
   };
 
-  const selectDownloadTabFromKeyboard = (event: React.KeyboardEvent, nextTab: "search" | "tasks") => {
+  const tabsList: Array<"search" | "tasks" | "storage"> = ["search", "tasks", "storage"];
+  const selectDownloadTabFromKeyboard = (event: React.KeyboardEvent, currentTab: "search" | "tasks" | "storage") => {
     if (!['ArrowLeft', 'ArrowRight'].includes(event.key)) return;
     event.preventDefault();
+    const currentIndex = tabsList.indexOf(currentTab);
+    const nextIndex = event.key === 'ArrowRight'
+      ? (currentIndex + 1) % tabsList.length
+      : (currentIndex - 1 + tabsList.length) % tabsList.length;
+    const nextTab = tabsList[nextIndex];
     setTab(nextTab);
     window.requestAnimationFrame(() => {
       document.getElementById(`torrent-${nextTab}-tab`)?.focus();
@@ -1787,13 +1851,9 @@ function DownloadsPage({
       variants={shouldReduceMotion ? { hidden: { opacity: 0 }, show: { opacity: 1 } } : fadeUpVariant}
     >
       <div className="page-stage-header">
-        <button className="back-button" onClick={onBack} aria-label="Go back">
-          <ArrowLeft size={18} />
-          <span>Back</span>
-        </button>
         <div className="page-stage-title-group">
-          <h1>Torrent Downloads & Fast-Start Remux</h1>
-          <p>Search Nyaa, YTS, The Pirate Bay & AnimeTosho. Auto-extracts to MP4 with VietSub & EngSub.</p>
+          <h1>Shared Storage & Torrent Downloads</h1>
+          <p>Search Nyaa, YTS, The Pirate Bay & AnimeTosho. Auto-extracts to fast-start MP4 with VietSub & EngSub in shared storage.</p>
         </div>
       </div>
 
@@ -1805,7 +1865,7 @@ function DownloadsPage({
           aria-selected={tab === "search"}
           tabIndex={tab === "search" ? 0 : -1}
           className={`download-tab-button ${tab === "search" ? "active" : ""}`}
-          onKeyDown={(event) => selectDownloadTabFromKeyboard(event, "tasks")}
+          onKeyDown={(event) => selectDownloadTabFromKeyboard(event, "search")}
           onClick={() => setTab("search")}
         >
           <Search size={16} />
@@ -1818,14 +1878,80 @@ function DownloadsPage({
           aria-selected={tab === "tasks"}
           tabIndex={tab === "tasks" ? 0 : -1}
           className={`download-tab-button ${tab === "tasks" ? "active" : ""}`}
-          onKeyDown={(event) => selectDownloadTabFromKeyboard(event, "search")}
+          onKeyDown={(event) => selectDownloadTabFromKeyboard(event, "tasks")}
           onClick={() => setTab("tasks")}
         >
           <Download size={16} />
           <span>Tasks Workspace</span>
           {activeTasksCount > 0 && <span className="download-tab-badge">{activeTasksCount}</span>}
         </button>
+        <button
+          role="tab"
+          id="torrent-storage-tab"
+          aria-controls="torrent-storage-panel"
+          aria-selected={tab === "storage"}
+          tabIndex={tab === "storage" ? 0 : -1}
+          className={`download-tab-button ${tab === "storage" ? "active" : ""}`}
+          onKeyDown={(event) => selectDownloadTabFromKeyboard(event, "storage")}
+          onClick={() => setTab("storage")}
+        >
+          <HardDrive size={16} />
+          <span>Shared Storage</span>
+          {readyTasks.length > 0 && <span className="download-tab-badge storage">{readyTasks.length}</span>}
+        </button>
       </div>
+
+      {error && (
+        <div className="stage-error-banner" style={{ margin: "0 0 1.25rem" }}>
+          <AlertTriangle size={18} />
+          <span>{error}</span>
+        </div>
+      )}
+
+      {tab === "storage" && (
+        <div
+          id="torrent-storage-panel"
+          className="torrent-storage-workspace"
+          role="tabpanel"
+          aria-labelledby="torrent-storage-tab"
+        >
+          <div className="storage-overview-banner">
+            <div className="storage-stat-pill">
+              <HardDrive size={16} />
+              <span><strong>{readyTasks.length}</strong> {readyTasks.length === 1 ? "film" : "films"} ready to stream</span>
+            </div>
+            <div className="storage-stat-pill">
+              <span>Storage used: <strong>{formatTorrentBytes(totalStorageBytes)}</strong> (100 GB homelab quota)</span>
+            </div>
+            {isGuest && (
+              <div className="storage-stat-pill guest-badge">
+                <ShieldCheck size={14} />
+                <span>Guest streaming access</span>
+              </div>
+            )}
+          </div>
+
+          {readyTasks.length > 0 ? (
+            <div className="torrent-tasks-list">
+              {readyTasks.map((task) => (
+                <TorrentTaskItem
+                  key={task.id}
+                  task={task}
+                  userRole={session?.role}
+                  isDeleting={deletingTaskIds.has(task.id)}
+                  onDelete={(id) => void handleDeleteTask(id)}
+                />
+              ))}
+            </div>
+          ) : (
+            <div className="downloads-empty" style={{ margin: "3rem auto", textAlign: "center" }}>
+              <div><HardDrive size={26} /></div>
+              <h3>Shared Storage Is Empty</h3>
+              <p>No extracted films in shared storage yet. Search torrent indexers and queue downloads to prepare media for all family accounts and guests.</p>
+            </div>
+          )}
+        </div>
+      )}
 
       {error && (
         <div className="stage-error-banner" style={{ margin: "0 0 1.25rem" }}>
@@ -2360,9 +2486,11 @@ function providerStatusLabel(source: Source) {
 function LoginScreen({
   error,
   onLogin,
+  onClose,
 }: {
   error: string | null;
   onLogin: (username: string, password: string) => Promise<void>;
+  onClose?: () => void;
 }) {
   const [username, setUsername] = useState("");
   const [password, setPassword] = useState("");
@@ -2394,6 +2522,16 @@ function LoginScreen({
         animate={{ opacity: 1 }}
         transition={{ duration: 0.22 }}
       >
+        {onClose && (
+          <button
+            type="button"
+            className="login-modal-close"
+            onClick={onClose}
+            aria-label="Close sign in"
+          >
+            <X size={20} />
+          </button>
+        )}
         <div className="login-brand">
           <img src={LOGO_SRC} alt="any-watch" />
           <div><span>any-watch</span><small>Signed-in family access</small></div>
@@ -2533,6 +2671,7 @@ function HomeDashboard({
   session,
   onShowAdmin,
   onSignOut,
+  onShowSignIn,
   myList,
   onToggleFavorite,
   onRemoveHistory,
@@ -2552,9 +2691,10 @@ function HomeDashboard({
   onShowMyList: () => void;
   onShowDownloads: () => void;
   onShowSettings: () => void;
-  session: SessionUser;
+  session: SessionUser | null;
   onShowAdmin?: () => void;
   onSignOut?: () => void;
+  onShowSignIn?: () => void;
   myList: Favorite[];
   onToggleFavorite: (anime: Anime) => void;
   onRemoveHistory: (item: WatchHistory) => void;
@@ -2694,7 +2834,11 @@ function HomeDashboard({
             <button onClick={onShowDownloads}><Download size={16} /> Downloads</button>
             <button onClick={onShowSettings}><Settings2 size={16} /> Settings</button>
             {onShowAdmin && <button onClick={onShowAdmin}><ShieldCheck size={16} /> Users</button>}
-            {onSignOut && <button onClick={onSignOut}><LogOut size={16} /> Sign out {session.username}</button>}
+            {session ? (
+              onSignOut && <button onClick={onSignOut}><LogOut size={16} /> Sign out {session.username}</button>
+            ) : (
+              onShowSignIn && <button className="primary nav-signin-btn" onClick={onShowSignIn}><LogIn size={16} /> Sign in</button>
+            )}
           </div>
         </motion.div>
         {featureSlides.length > 1 ? (

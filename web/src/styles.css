@@ -7107,7 +7107,69 @@ select:focus-visible {
 .admin-message {
   border-color: var(--color-danger);
   color: var(--color-ink);
-  background: var(--color-accent-soft);
+}
+
+.app-navigation-items > .nav-signin-button {
+  color: var(--color-accent-ink);
+  background: var(--color-accent);
+  font-weight: 600;
+  border-radius: var(--radius-input);
+}
+
+.app-navigation-items > .nav-signin-button:hover {
+  filter: brightness(1.1);
+}
+
+.login-modal-overlay {
+  position: fixed;
+  inset: 0;
+  z-index: var(--z-modal, 900);
+  display: grid;
+  place-items: center;
+  padding: var(--space-md);
+  background: rgba(0, 0, 0, 0.75);
+  backdrop-filter: blur(8px);
+  -webkit-backdrop-filter: blur(8px);
+}
+
+.login-modal-dialog {
+  position: relative;
+  width: 100%;
+  max-width: 58rem;
+  max-height: 90vh;
+  overflow-y: auto;
+  border-radius: var(--radius-sheet);
+  box-shadow: 0 1.5rem 4rem rgba(0, 0, 0, 0.6);
+}
+
+.login-modal-dialog .login-screen {
+  min-height: unset;
+  border-radius: var(--radius-sheet);
+}
+
+.login-modal-close,
+.login-card-close {
+  position: absolute;
+  inset-block-start: var(--space-md);
+  inset-inline-end: var(--space-md);
+  z-index: 10;
+  display: grid;
+  place-items: center;
+  width: 2.5rem;
+  height: 2.5rem;
+  padding: 0;
+  border: var(--rule-hair) solid var(--color-glass-hairline);
+  border-radius: var(--radius-pill);
+  color: var(--color-muted);
+  background: var(--color-glass);
+  cursor: pointer;
+  transition: color var(--dur-short) var(--ease-out), background var(--dur-short) var(--ease-out);
+}
+
+.login-modal-close:hover,
+.login-card-close:hover {
+  color: var(--color-ink);
+  background: var(--color-glass-highlight);
 }
 
 .login-footnote {

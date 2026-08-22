@@ -3670,12 +3670,8 @@ async fn list_torrent_tasks(
     State(state): State<AppState>,
     headers: HeaderMap,
 ) -> ApiResult<Json<Value>> {
-    let user = optional_user(&state, &headers).await;
-    let tasks = if let Some(user) = user {
-        state.torrent_engine.list_tasks(&user.id).await
-    } else {
-        Vec::new()
-    };
+    let _user = require_user(&state, &headers).await?;
+    let tasks = state.torrent_engine.list_tasks().await;
     Ok(Json(json!(tasks)))
 }
 
@@ -3684,10 +3680,10 @@ async fn get_torrent_task(
     headers: HeaderMap,
     Path(id): Path<String>,
 ) -> ApiResult<Json<Value>> {
-    let user = require_user(&state, &headers).await?;
+    let _user = require_user(&state, &headers).await?;
     let task = state
         .torrent_engine
-        .get_task(&user.id, &id)
+        .get_task(&id)
         .await
         .ok_or_else(|| {
             ApiError::new(
@@ -3708,9 +3704,18 @@ async fn delete_torrent_task(
 ) -> ApiResult<StatusCode> {
     require_app_request(&headers)?;
     let user = require_user(&state, &headers).await?;
+    if user.role != "admin" {
+        return Err(ApiError::new(
+            StatusCode::FORBIDDEN,
+            "ADMIN_REQUIRED",
+            "torrent_delete",
+            "Only administrators are permitted to delete items from shared storage.",
+            false,
+        ));
+    }
     let deleted = state
         .torrent_engine
-        .delete_task(&user.id, &id)
+        .delete_task(&id)
         .await
         .map_err(|e| ApiError::internal("torrent_delete", e))?;
     if deleted {
@@ -3732,7 +3737,16 @@ async fn download_torrent_file(
     Path(id): Path<String>,
 ) -> ApiResult<Response> {
     let user = require_user(&state, &headers).await?;
-    serve_torrent_file(state, headers, id, &user.id, true).await
+    if user.role == "guest" {
+        return Err(ApiError::new(
+            StatusCode::FORBIDDEN,
+            "PERMISSION_DENIED",
+            "torrent_download",
+            "Guests are not permitted to download files.",
+            false,
+        ));
+    }
+    serve_torrent_file(state, headers, id, true).await
 }
 
 async fn stream_torrent_file(
@@ -3740,21 +3754,19 @@ async fn stream_torrent_file(
     headers: HeaderMap,
     Path(id): Path<String>,
 ) -> ApiResult<Response> {
-    let user = optional_user(&state, &headers).await;
-    let user_id = user.map(|u| u.id).unwrap_or_else(|| "guest".to_string());
-    serve_torrent_file(state, headers, id, &user_id, false).await
+    let _user = require_user(&state, &headers).await?;
+    serve_torrent_file(state, headers, id, false).await
 }
 
 async fn serve_torrent_file(
     state: AppState,
     headers: HeaderMap,
     id: String,
-    user_id: &str,
     attachment: bool,
 ) -> ApiResult<Response> {
     let (file_path, file_name) = state
         .torrent_engine
-        .get_task_file_path(user_id, &id)
+        .get_task_file_path(&id)
         .await
         .ok_or_else(|| {
             ApiError::new(
@@ -3853,11 +3865,10 @@ async fn download_torrent_subtitle(
     headers: HeaderMap,
     Path((id, lang)): Path<(String, String)>,
 ) -> ApiResult<Response> {
-    let user = optional_user(&state, &headers).await;
-    let user_id = user.map(|u| u.id).unwrap_or_else(|| "guest".to_string());
+    let _user = require_user(&state, &headers).await?;
     let (file_path, file_name) = state
         .torrent_engine
-        .get_subtitle_file_path(&user_id, &id, &lang)
+        .get_subtitle_file_path(&id, &lang)
         .await
         .ok_or_else(|| {
             ApiError::new(
