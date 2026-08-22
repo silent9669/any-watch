@@ -2338,17 +2338,17 @@ function DownloadsPage({
       {tab === "storage" && (
         <div
           id="torrent-storage-panel"
-          className="torrent-storage-workspace"
+          className="torrent-storage-workspace any-watch-storage-dashboard"
           role="tabpanel"
           aria-labelledby="torrent-storage-tab"
         >
           <div className="storage-overview-banner">
             <div className="storage-stat-pill">
               <HardDrive size={16} />
-              <span><strong>{readyTasks.length}</strong> {readyTasks.length === 1 ? "film" : "films"} ready to stream</span>
+              <span><strong>{readyTasks.length}</strong> {readyTasks.length === 1 ? "film" : "films"} in any-watch storage</span>
             </div>
             <div className="storage-stat-pill">
-              <span>Storage used: <strong>{formatTorrentBytes(totalStorageBytes)}</strong> (100 GB homelab quota)</span>
+              <span>Storage used: <strong>{formatTorrentBytes(totalStorageBytes)}</strong> / 100 GB (<strong>{formatTorrentBytes(remainingStorageBytes)}</strong> free)</span>
             </div>
             {isGuest && (
               <div className="storage-stat-pill guest-badge">
@@ -2358,23 +2358,56 @@ function DownloadsPage({
             )}
           </div>
 
+          <div className="storage-quota-bar-wrapper">
+            <div className="storage-quota-bar">
+              <div
+                className="storage-quota-bar-fill"
+                style={{ width: `${Math.min(100, Math.max(0, (totalStorageBytes / HOMELAB_QUOTA_BYTES) * 100))}%` }}
+              />
+            </div>
+          </div>
+
           {readyTasks.length > 0 ? (
-            <div className="torrent-tasks-list">
-              {readyTasks.map((task) => (
-                <TorrentTaskItem
-                  key={task.id}
-                  task={task}
-                  userRole={session?.role}
-                  isDeleting={deletingTaskIds.has(task.id)}
-                  onDelete={(id) => void handleDeleteTask(id)}
-                />
-              ))}
+            <div className="storage-library-section">
+              <div className="storage-section-heading">
+                <h2>Available in any-watch storage</h2>
+                <p>Fast-start MP4 films and series with embedded subtitle tracks ready for direct streaming.</p>
+              </div>
+
+              <div className="torrent-tasks-list storage-grid">
+                {readyTasks.map((task) => (
+                  <TorrentTaskItem
+                    key={task.id}
+                    task={task}
+                    userRole={session?.role}
+                    isDeleting={deletingTaskIds.has(task.id)}
+                    onDelete={(id) => void handleDeleteTask(id)}
+                  />
+                ))}
+              </div>
             </div>
           ) : (
-            <div className="downloads-empty" style={{ margin: "3rem auto", textAlign: "center" }}>
-              <div><HardDrive size={26} /></div>
-              <h3>Shared Storage Is Empty</h3>
-              <p>No extracted films in shared storage yet. Search torrent indexers and queue downloads to prepare media for all family accounts and guests.</p>
+            <div className="shelf-empty-state storage-empty-dashboard" style={{ margin: "2rem auto" }}>
+              <div className="shelf-empty-icon"><HardDrive size={24} /></div>
+              <div>
+                <strong>any-watch storage is currently empty</strong>
+                <p>
+                  {isGuest
+                    ? "No media is currently stored. Sign in with a family account to search indexers and request films."
+                    : "Search torrent indexers and click 'Request Film' or 'Download & Remux' to prepare media for the family."}
+                </p>
+              </div>
+              {!isGuest && (
+                <button
+                  type="button"
+                  className="primary"
+                  style={{ marginTop: "1rem" }}
+                  onClick={() => setTab("search")}
+                >
+                  <Search size={16} />
+                  <span>Request a Film</span>
+                </button>
+              )}
             </div>
           )}
         </div>

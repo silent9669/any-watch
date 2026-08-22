@@ -11720,3 +11720,146 @@ select:focus-visible {
   }
 }
 
+/* any-watch Storage Dashboard Styling */
+.storage-quota-bar-wrapper {
+  width: 100%;
+  margin: var(--space-xs) 0 var(--space-md);
+}
+
+.storage-quota-bar {
+  width: 100%;
+  height: 0.5rem;
+  border-radius: var(--radius-pill);
+  background: var(--color-paper-3);
+  overflow: hidden;
+  border: 1px solid var(--color-rule-2);
+}
+
+.storage-quota-bar-fill {
+  height: 100%;
+  border-radius: var(--radius-pill);
+  background: linear-gradient(90deg, #3b82f6, #ef4444);
+  transition: width 0.3s ease;
+}
+
+.storage-library-section {
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-md);
+  margin-top: var(--space-xs);
+}
+
+.storage-section-heading h2 {
+  font-size: var(--text-lg);
+  font-weight: 700;
+  color: var(--color-ink);
+  margin: 0;
+}
+
+.storage-section-heading p {
+  font-size: var(--text-xs);
+  color: var(--color-muted);
+  margin: 2px 0 0;
+}
+
+.storage-grid {
+  display: grid;
+  gap: var(--space-md);
+}
+
+/* YouTube Search Bar Redesign */
+.youtube-search {
+  display: flex !important;
+  align-items: center !important;
+  width: 100% !important;
+  max-width: 48rem !important;
+  min-height: 3.25rem !important;
+  margin: var(--space-md) auto var(--space-lg) !important;
+  padding: 0 var(--space-sm) !important;
+  border: 1px solid var(--color-glass-hairline) !important;
+  border-radius: var(--radius-pill) !important;
+  background: var(--color-paper-2) !important;
+  box-shadow: 0 4px 20px rgba(0, 0, 0, 0.3) !important;
+  backdrop-filter: blur(20px) !important;
+  gap: var(--space-xs) !important;
+  box-sizing: border-box !important;
+}
+
+.youtube-search svg {
+  flex-shrink: 0;
+  color: var(--color-muted);
+}
+
+.youtube-search input {
+  flex: 1 1 auto !important;
+  min-width: 0 !important;
+  height: 100% !important;
+  border: 0 !important;
+  outline: 0 !important;
+  background: transparent !important;
+  color: var(--color-ink) !important;
+  font-size: var(--text-md) !important;
+  padding: 0 !important;
+}
+
+.youtube-search input::placeholder {
+  color: var(--color-muted);
+}
+
+.youtube-search .youtube-search-clear,
+.youtube-search button[type="submit"] {
+  display: inline-flex !important;
+  align-items: center !important;
+  justify-content: center !important;
+  align-self: center !important;
+  height: 2.25rem !important;
+  min-height: 2.25rem !important;
+  box-sizing: border-box !important;
+  margin: 0 !important;
+}
+
+.youtube-search .youtube-search-clear {
+  width: 2.25rem !important;
+  padding: 0 !important;
+  border: 0 !important;
+  background: transparent !important;
+  color: var(--color-muted) !important;
+}
+
+.youtube-search button[type="submit"] {
+  gap: var(--space-3xs) !important;
+  padding: 0 var(--space-md) !important;
+  border: 0 !important;
+  border-radius: var(--radius-pill) !important;
+  background: var(--color-accent) !important;
+  color: var(--color-accent-ink) !important;
+  font-size: var(--text-xs) !important;
+  font-weight: 700 !important;
+  cursor: pointer !important;
+  flex-shrink: 0 !important;
+  transition: transform var(--dur-micro) var(--ease-out), filter var(--dur-short) var(--ease-out) !important;
+}
+
+.youtube-search button[type="submit"]:hover:not(:disabled) {
+  filter: brightness(1.15) !important;
+  transform: translateY(-1px) !important;
+}
+
+/* Provider Catalog Scrollable Fix */
+.search-stage:has(.search-welcome),
+.search-stage:has(.provider-recovery),
+.edition-desktop .search-stage:has(.search-welcome) {
+  height: auto !important;
+  min-height: 100% !important;
+  overflow-x: hidden !important;
+  overflow-y: auto !important;
+  overscroll-behavior-y: contain !important;
+}
+
+.provider-dashboard-welcome,
+.provider-dashboard-shelf {
+  height: auto !important;
+  overflow: visible !important;
+}
+
+

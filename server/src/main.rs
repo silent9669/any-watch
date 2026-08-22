@@ -75,6 +75,8 @@ const PROVIDER_HEALTH_TTL: Duration = Duration::from_secs(5 * 60);
 const PROVIDER_HEALTH_TIMEOUT: Duration = Duration::from_secs(60);
 const PROVIDER_HEALTH_CONCURRENCY: usize = 16;
 
+type ProviderCatalogCache = HashMap<String, (Instant, Vec<AnimeDto>)>;
+
 #[derive(Clone)]
 struct AppState {
     db: WebDatabase,
@@ -87,6 +89,7 @@ struct AppState {
     media_sessions: Arc<Mutex<HashMap<String, MediaSession>>>,
     provider_health: Arc<Mutex<ProviderHealthCache>>,
     provider_health_refresh: Arc<Mutex<()>>,
+    provider_catalog_cache: Arc<Mutex<ProviderCatalogCache>>,
     media_client: Client,
     torrent_hub: Arc<TorrentSearchHub>,
     torrent_engine: Arc<TorrentTaskManager>,
@@ -579,6 +582,7 @@ async fn main() -> Result<()> {
         media_sessions: Arc::new(Mutex::new(HashMap::new())),
         provider_health: Arc::new(Mutex::new(ProviderHealthCache::default())),
         provider_health_refresh: Arc::new(Mutex::new(())),
+        provider_catalog_cache: Arc::new(Mutex::new(HashMap::new())),
         media_client: media_client.clone(),
         torrent_hub: Arc::new(TorrentSearchHub::new()),
         torrent_engine: Arc::new(TorrentTaskManager::new(torrent_downloads_dir)),
@@ -1331,12 +1335,23 @@ async fn search_source(
     ))
 }
 
+const PROVIDER_CATALOG_CACHE_TTL: Duration = Duration::from_secs(24 * 60 * 60);
+
 async fn provider_catalog(
     State(state): State<AppState>,
     headers: HeaderMap,
     Json(input): Json<ProviderCatalogInput>,
 ) -> ApiResult<Json<Vec<AnimeDto>>> {
     require_app_request(&headers)?;
+    {
+        let cache = state.provider_catalog_cache.lock().await;
+        if let Some((cached_at, items)) = cache.get(&input.provider) {
+            if cached_at.elapsed() < PROVIDER_CATALOG_CACHE_TTL && !items.is_empty() {
+                return Ok(Json(items.clone()));
+            }
+        }
+    }
+
     let provider = state
         .providers
         .get_provider(&input.provider)
@@ -1358,12 +1373,17 @@ async fn provider_catalog(
             true,
         )
     })?;
-    Ok(Json(
-        values
-            .into_iter()
-            .map(|anime| map_anime(anime, None))
-            .collect(),
-    ))
+    let items: Vec<AnimeDto> = values
+        .into_iter()
+        .map(|anime| map_anime(anime, None))
+        .collect();
+
+    {
+        let mut cache = state.provider_catalog_cache.lock().await;
+        cache.insert(input.provider, (Instant::now(), items.clone()));
+    }
+
+    Ok(Json(items))
 }
 
 #[derive(Debug, Deserialize)]
@@ -4553,6 +4573,7 @@ mod tests {
             )]))),
             provider_health: Arc::new(Mutex::new(ProviderHealthCache::default())),
             provider_health_refresh: Arc::new(Mutex::new(())),
+            provider_catalog_cache: Arc::new(Mutex::new(HashMap::new())),
             media_client: Client::new(),
             torrent_hub: Arc::new(TorrentSearchHub::new()),
             torrent_engine: Arc::new(TorrentTaskManager::new(PathBuf::from("/tmp"))),
@@ -4593,6 +4614,7 @@ mod tests {
             )]))),
             provider_health: Arc::new(Mutex::new(ProviderHealthCache::default())),
             provider_health_refresh: Arc::new(Mutex::new(())),
+            provider_catalog_cache: Arc::new(Mutex::new(HashMap::new())),
             media_client: Client::new(),
             torrent_hub: Arc::new(TorrentSearchHub::new()),
             torrent_engine: Arc::new(TorrentTaskManager::new(PathBuf::from("/tmp"))),
