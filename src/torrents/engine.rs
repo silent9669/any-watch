@@ -162,23 +162,16 @@ impl TorrentTaskManager {
         self.event_tx.subscribe()
     }
 
-    pub async fn list_tasks(&self, owner_id: &str) -> Vec<TorrentTask> {
+    pub async fn list_tasks(&self) -> Vec<TorrentTask> {
         let tasks = self.tasks.read().await;
-        let mut list: Vec<TorrentTask> = tasks
-            .values()
-            .filter(|task| task.owner_id == owner_id)
-            .cloned()
-            .collect();
+        let mut list: Vec<TorrentTask> = tasks.values().cloned().collect();
         list.sort_by_key(|task| std::cmp::Reverse(task.created_at));
         list
     }
 
-    pub async fn get_task(&self, owner_id: &str, id: &str) -> Option<TorrentTask> {
+    pub async fn get_task(&self, id: &str) -> Option<TorrentTask> {
         let tasks = self.tasks.read().await;
-        tasks
-            .get(id)
-            .filter(|task| task.owner_id == owner_id)
-            .cloned()
+        tasks.get(id).cloned()
     }
 
     pub async fn create_task(
@@ -305,6 +298,10 @@ impl TorrentTaskManager {
                     )
                     .await;
                 }
+                // Clean up payload and extracted directories on failure/cancellation to preserve disk space under 100GB quota
+                let task_dir = base_dir.join(&task_id_for_worker);
+                let _ = fs::remove_dir_all(task_dir.join("payload")).await;
+                let _ = fs::remove_dir_all(task_dir.join("extracted")).await;
             }
             controls.write().await.remove(&task_id_for_worker);
             control.done.notify_one();
@@ -313,10 +310,10 @@ impl TorrentTaskManager {
         Ok(task)
     }
 
-    pub async fn delete_task(&self, owner_id: &str, id: &str) -> Result<bool> {
+    pub async fn delete_task(&self, id: &str) -> Result<bool> {
         {
             let tasks = self.tasks.read().await;
-            if !tasks.get(id).is_some_and(|task| task.owner_id == owner_id) {
+            if !tasks.contains_key(id) {
                 return Ok(false);
             }
         }
@@ -328,11 +325,7 @@ impl TorrentTaskManager {
 
         let removed = {
             let mut tasks = self.tasks.write().await;
-            tasks
-                .get(id)
-                .is_some_and(|task| task.owner_id == owner_id)
-                .then(|| tasks.remove(id))
-                .flatten()
+            tasks.remove(id)
         };
         if removed.is_none() {
             return Ok(false);
@@ -348,9 +341,9 @@ impl TorrentTaskManager {
         Ok(true)
     }
 
-    pub async fn get_task_file_path(&self, owner_id: &str, id: &str) -> Option<(PathBuf, String)> {
+    pub async fn get_task_file_path(&self, id: &str) -> Option<(PathBuf, String)> {
         let tasks = self.tasks.read().await;
-        let task = tasks.get(id).filter(|task| task.owner_id == owner_id)?;
+        let task = tasks.get(id)?;
         let TaskStatus::Ready { file_name, .. } = &task.status else {
             return None;
         };
@@ -360,12 +353,11 @@ impl TorrentTaskManager {
 
     pub async fn get_subtitle_file_path(
         &self,
-        owner_id: &str,
         id: &str,
         lang_code: &str,
     ) -> Option<(PathBuf, String)> {
         let tasks = self.tasks.read().await;
-        let task = tasks.get(id).filter(|task| task.owner_id == owner_id)?;
+        let task = tasks.get(id)?;
         let TaskStatus::Ready { subtitles, .. } = &task.status else {
             return None;
         };
@@ -1685,7 +1677,7 @@ mod tests {
 
         let ready = tokio::time::timeout(Duration::from_secs(45), async {
             loop {
-                if let Some(task) = manager.get_task("owner-a", &task.id).await {
+                if let Some(task) = manager.get_task(&task.id).await {
                     if matches!(
                         task.status,
                         TaskStatus::Ready { .. } | TaskStatus::Failed { .. }
@@ -1714,11 +1706,11 @@ mod tests {
             .join(file_name);
         let probe = probe_media(&ffprobe, &output).await.unwrap();
         assert_eq!(probe.video_codec.as_deref(), Some("h264"));
-        assert!(manager.get_task("owner-b", &task.id).await.is_none());
+        assert!(manager.get_task(&task.id).await.is_some());
     }
 
     #[tokio::test]
-    async fn persisted_tasks_remain_owner_scoped() {
+    async fn persisted_tasks_are_accessible_in_shared_storage() {
         let directory = tempfile::tempdir().unwrap();
         let task = TorrentTask {
             id: "task-1".to_string(),
@@ -1735,8 +1727,7 @@ mod tests {
         persist_task(directory.path(), &task).await.unwrap();
         let manager = TorrentTaskManager::new(directory.path().to_path_buf());
 
-        assert_eq!(manager.list_tasks("owner-a").await.len(), 1);
-        assert!(manager.list_tasks("owner-b").await.is_empty());
-        assert!(manager.get_task("owner-b", "task-1").await.is_none());
+        assert_eq!(manager.list_tasks().await.len(), 1);
+        assert!(manager.get_task("task-1").await.is_some());
     }
 }

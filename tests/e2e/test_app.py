@@ -1478,6 +1478,132 @@ def test_t3_youtube_search_preserves_saved_state(mocked_page):
     assert row.locator(".youtube-search-title").evaluate("element => element.tagName") == "BUTTON"
 
 
+# --- TIER 4 TESTS: GUEST ACCESS & HOMELAB CATALOG FALLBACK (Issue #10) ---
+
+def test_t4_guest_browsing_mode_renders_dashboard_and_signin_buttons(mocked_page):
+    mocked_page.evaluate("""() => {
+        const state = JSON.parse(localStorage.getItem('__API_MOCK_STATE__') || '{}');
+        state.is_guest = true;
+        state.session_null = true;
+        localStorage.setItem('__API_MOCK_STATE__', JSON.stringify(state));
+    }""")
+    mocked_page.reload()
+
+    # Verify home dashboard renders without blocking login screen
+    expect(mocked_page.locator(".login-screen")).to_have_count(0)
+    expect(mocked_page.locator(".home-command-center")).to_be_visible()
+    expect(mocked_page.locator(".content-row:has-text('Top Matches')")).to_be_visible()
+
+    # Prominent sign in button in navigation
+    nav_signin = mocked_page.locator(".nav-signin-button")
+    expect(nav_signin).to_be_visible()
+    expect(nav_signin).to_contain_text("Sign in")
+
+    # Command center shortcut has Sign in button for guests
+    shortcut_signin = mocked_page.locator(".home-command-shortcuts button.nav-signin-btn")
+    expect(shortcut_signin).to_be_visible()
+    expect(shortcut_signin).to_contain_text("Sign in")
+
+
+def test_t4_guest_can_search_and_playback_episode(mocked_page):
+    mocked_page.evaluate("""() => {
+        const state = JSON.parse(localStorage.getItem('__API_MOCK_STATE__') || '{}');
+        state.is_guest = true;
+        state.session_null = true;
+        localStorage.setItem('__API_MOCK_STATE__', JSON.stringify(state));
+    }""")
+    mocked_page.reload()
+
+    # Open search and search for Naruto
+    mocked_page.locator(".hero-search-trigger").click()
+    search_input = mocked_page.locator(".search-input-shell input")
+    search_input.fill("Naruto")
+    search_input.press("Enter")
+    mocked_page.wait_for_selector(".search-result")
+
+    # Click result to open preview then open detail page
+    mocked_page.locator(".search-result").first.click()
+    mocked_page.locator(".detail-actions button.primary").click()
+    expect(mocked_page.locator(".detail-page")).to_be_visible()
+
+    # Click play on episode 1
+    mocked_page.wait_for_selector(".episode-open-button")
+    mocked_page.locator(".episode-open-button").first.click()
+
+    # Video player should open for guest without requiring login
+    expect(mocked_page.locator(".player-overlay")).to_be_visible()
+    expect(mocked_page.locator(".player-overlay video")).to_be_visible()
+
+
+def test_t4_guest_download_prompts_signin(mocked_page):
+    mocked_page.evaluate("""() => {
+        const state = JSON.parse(localStorage.getItem('__API_MOCK_STATE__') || '{}');
+        state.is_guest = true;
+        state.session_null = true;
+        localStorage.setItem('__API_MOCK_STATE__', JSON.stringify(state));
+    }""")
+    mocked_page.reload()
+
+    # Open an anime detail page
+    mocked_page.locator(".hero-search-trigger").click()
+    search_input = mocked_page.locator(".search-input-shell input")
+    search_input.fill("Naruto")
+    search_input.press("Enter")
+    mocked_page.wait_for_selector(".search-result")
+    mocked_page.locator(".search-result").first.click()
+    mocked_page.locator(".detail-actions button.primary").click()
+    expect(mocked_page.locator(".detail-page")).to_be_visible()
+
+    # Open episode list
+    mocked_page.wait_for_selector(".episode-download-button")
+
+    # Click download on first episode
+    mocked_page.locator(".episode-download-button").first.click()
+
+    # Should open login modal
+    expect(mocked_page.locator(".login-modal-dialog")).to_be_visible()
+    expect(mocked_page.locator(".login-modal-dialog .login-card")).to_be_visible()
+
+
+def test_t4_guest_signin_modal_interaction(mocked_page):
+    mocked_page.evaluate("""() => {
+        const state = JSON.parse(localStorage.getItem('__API_MOCK_STATE__') || '{}');
+        state.is_guest = true;
+        state.session_null = true;
+        localStorage.setItem('__API_MOCK_STATE__', JSON.stringify(state));
+    }""")
+    mocked_page.reload()
+
+    # Click Sign in button in navigation
+    mocked_page.locator(".nav-signin-button").click()
+    expect(mocked_page.locator(".login-modal-dialog")).to_be_visible()
+
+    # Fill credentials and submit
+    mocked_page.locator(".login-modal-dialog input[autocomplete='username']").fill("viewer")
+    mocked_page.locator(".login-modal-dialog input[autocomplete='current-password']").fill("password123")
+    mocked_page.locator(".login-modal-dialog form button.primary").click()
+
+    # Modal should close and signed in user should be shown
+    expect(mocked_page.locator(".login-modal-dialog")).to_have_count(0)
+    expect(mocked_page.locator(".nav-signin-button")).to_have_count(0)
+    expect(mocked_page.locator(".home-command-shortcuts button:has-text('Sign out')")).to_be_visible()
+
+
+def test_t4_discovery_fallback_preserves_top_matches(mocked_page):
+    mocked_page.evaluate("""() => {
+        const state = JSON.parse(localStorage.getItem('__API_MOCK_STATE__') || '{}');
+        // Discovery returns valid catalog even during upstream hiccups
+        localStorage.setItem('__API_MOCK_STATE__', JSON.stringify(state));
+    }""")
+    mocked_page.reload()
+
+    expect(mocked_page.locator(".content-row:has-text('Top Matches')")).to_be_visible()
+    cards = mocked_page.locator(".content-row:has-text('Top Matches') .catalog-card")
+    expect(cards.first).to_be_visible()
+    assert cards.count() >= 14
+
+
+
 def test_t3_youtube_search_latest_query_wins(mocked_page):
     mocked_page.evaluate("""() => {
         const state = JSON.parse(localStorage.getItem('__API_MOCK_STATE__') || '{}');
@@ -1759,6 +1885,31 @@ def test_t3_torrent_task_can_preview_and_delete_prepared_video(mocked_page):
 
     task.get_by_role("button", name="Delete Task").click()
     expect(mocked_page.locator(".torrent-task-card")).to_have_count(0)
+
+
+def test_t3_downloads_page_has_no_back_button(mocked_page):
+    mocked_page.get_by_label("Primary navigation").get_by_role("button", name="Downloads").click()
+    expect(mocked_page.locator(".stage-downloads .back-button")).to_have_count(0)
+    expect(mocked_page.locator(".stage-downloads h1")).to_contain_text("Shared Storage & Torrent Downloads")
+
+
+def test_t3_shared_storage_tab_and_rbac_permissions(mocked_page):
+    mocked_page.get_by_label("Primary navigation").get_by_role("button", name="Downloads").click()
+    mocked_page.get_by_role("textbox", name="Search torrent indexers").fill("Interstellar")
+    mocked_page.locator(".torrent-search-panel").get_by_role("button", name="Search", exact=True).click()
+    mocked_page.locator(".torrent-btn-download").first.click()
+
+    # Navigate to Shared Storage tab
+    mocked_page.get_by_role("tab", name="Shared Storage").click()
+    expect(mocked_page.locator(".storage-overview-banner")).to_be_visible()
+    expect(mocked_page.locator(".storage-overview-banner")).to_contain_text("100 GB")
+
+    storage_card = mocked_page.locator(".torrent-storage-workspace .torrent-task-card").first
+    expect(storage_card).to_contain_text("Ready")
+    expect(storage_card.get_by_role("button", name="Watch Now")).to_be_visible()
+    # Admin has delete button and download button
+    expect(storage_card.get_by_role("button", name="Delete Task")).to_be_visible()
+    expect(storage_card.locator(".torrent-btn-file-download")).to_be_visible()
 
 
 @pytest.mark.parametrize("width", [320, 375, 414, 768, 1100, 1440, 1728])

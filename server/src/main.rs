@@ -1742,7 +1742,7 @@ async fn get_media_session(state: &AppState, id: &str, user_id: &str) -> ApiResu
             true,
         )
     })?;
-    if session.user_id != user_id {
+    if session.user_id != "guest" && session.user_id != user_id {
         return Err(ApiError::new(
             StatusCode::FORBIDDEN,
             "PLAYBACK_SESSION_FORBIDDEN",
@@ -2774,15 +2774,17 @@ async fn my_list(
     headers: HeaderMap,
     Query(query): Query<LimitQuery>,
 ) -> ApiResult<Json<Value>> {
-    let user = require_user(&state, &headers).await?;
-    Ok(Json(json!(state
-        .db
-        .favorites(&user.id, query.limit.unwrap_or(100).min(500))
-        .await
-        .map_err(|error| ApiError::internal(
-            "favorites",
-            error
-        ))?)))
+    let user = optional_user(&state, &headers).await;
+    let favorites = if let Some(user) = user {
+        state
+            .db
+            .favorites(&user.id, query.limit.unwrap_or(100).min(500))
+            .await
+            .map_err(|error| ApiError::internal("favorites", error))?
+    } else {
+        Vec::new()
+    };
+    Ok(Json(json!(favorites)))
 }
 
 async fn add_favorite(
@@ -2830,12 +2832,17 @@ async fn history(
     headers: HeaderMap,
     Query(query): Query<LimitQuery>,
 ) -> ApiResult<Json<Value>> {
-    let user = require_user(&state, &headers).await?;
-    Ok(Json(json!(state
-        .db
-        .history(&user.id, query.limit.unwrap_or(20).min(500))
-        .await
-        .map_err(|error| ApiError::internal("history", error))?)))
+    let user = optional_user(&state, &headers).await;
+    let items = if let Some(user) = user {
+        state
+            .db
+            .history(&user.id, query.limit.unwrap_or(20).min(500))
+            .await
+            .map_err(|error| ApiError::internal("history", error))?
+    } else {
+        Vec::new()
+    };
+    Ok(Json(json!(items)))
 }
 
 async fn save_progress(
@@ -2844,25 +2851,27 @@ async fn save_progress(
     Json(input): Json<ProgressInput>,
 ) -> ApiResult<StatusCode> {
     require_app_request(&headers)?;
-    let user = require_user(&state, &headers).await?;
-    state
-        .db
-        .save_history(
-            &user.id,
-            &NewHistory {
-                anime_id: &input.anime_id,
-                catalog_id: input.catalog_id,
-                provider: &input.provider,
-                title: &input.title,
-                cover_url: &input.cover_url,
-                episode_number: input.episode_number,
-                episode_title: input.episode_title.as_deref(),
-                position_seconds: input.position_seconds,
-                total_seconds: input.total_seconds,
-            },
-        )
-        .await
-        .map_err(|error| ApiError::internal("history", error))?;
+    let user = optional_user(&state, &headers).await;
+    if let Some(user) = user {
+        state
+            .db
+            .save_history(
+                &user.id,
+                &NewHistory {
+                    anime_id: &input.anime_id,
+                    catalog_id: input.catalog_id,
+                    provider: &input.provider,
+                    title: &input.title,
+                    cover_url: &input.cover_url,
+                    episode_number: input.episode_number,
+                    episode_title: input.episode_title.as_deref(),
+                    position_seconds: input.position_seconds,
+                    total_seconds: input.total_seconds,
+                },
+            )
+            .await
+            .map_err(|error| ApiError::internal("history", error))?;
+    }
     Ok(StatusCode::NO_CONTENT)
 }
 
@@ -2872,12 +2881,14 @@ async fn remove_history(
     Json(input): Json<RemoveInput>,
 ) -> ApiResult<StatusCode> {
     require_app_request(&headers)?;
-    let user = require_user(&state, &headers).await?;
-    state
-        .db
-        .remove_history(&user.id, &input.anime_id)
-        .await
-        .map_err(|error| ApiError::internal("history", error))?;
+    let user = optional_user(&state, &headers).await;
+    if let Some(user) = user {
+        state
+            .db
+            .remove_history(&user.id, &input.anime_id)
+            .await
+            .map_err(|error| ApiError::internal("history", error))?;
+    }
     Ok(StatusCode::NO_CONTENT)
 }
 
@@ -3373,6 +3384,11 @@ async fn resolve_stream(
         })
 }
 
+async fn optional_user(state: &AppState, headers: &HeaderMap) -> Option<SessionUser> {
+    let token = cookie_value(headers, SESSION_COOKIE)?;
+    state.db.session_user(&token).await.ok().flatten()
+}
+
 async fn require_user(state: &AppState, headers: &HeaderMap) -> ApiResult<SessionUser> {
     let token = cookie_value(headers, SESSION_COOKIE).ok_or_else(|| {
         ApiError::new(
@@ -3577,10 +3593,9 @@ struct TorrentSubtitlesQuery {
 
 async fn search_torrents(
     State(state): State<AppState>,
-    headers: HeaderMap,
+    _headers: HeaderMap,
     Query(params): Query<TorrentSearchQuery>,
 ) -> ApiResult<Json<Value>> {
-    let _user = require_user(&state, &headers).await?;
     let category = match params.category.as_deref() {
         Some("anime") => TorrentCategory::Anime,
         Some("movie" | "movies") => TorrentCategory::Movies,
@@ -3601,11 +3616,10 @@ async fn search_torrents(
 }
 
 async fn search_torrent_subtitles(
-    State(state): State<AppState>,
-    headers: HeaderMap,
+    State(_state): State<AppState>,
+    _headers: HeaderMap,
     Query(params): Query<TorrentSubtitlesQuery>,
 ) -> ApiResult<Json<Value>> {
-    let _user = require_user(&state, &headers).await?;
     let finder = SubtitleFinder::new();
     let subs = finder
         .search_subtitles(&params.query, params.lang.as_deref())
@@ -3656,8 +3670,8 @@ async fn list_torrent_tasks(
     State(state): State<AppState>,
     headers: HeaderMap,
 ) -> ApiResult<Json<Value>> {
-    let user = require_user(&state, &headers).await?;
-    let tasks = state.torrent_engine.list_tasks(&user.id).await;
+    let _user = require_user(&state, &headers).await?;
+    let tasks = state.torrent_engine.list_tasks().await;
     Ok(Json(json!(tasks)))
 }
 
@@ -3666,20 +3680,16 @@ async fn get_torrent_task(
     headers: HeaderMap,
     Path(id): Path<String>,
 ) -> ApiResult<Json<Value>> {
-    let user = require_user(&state, &headers).await?;
-    let task = state
-        .torrent_engine
-        .get_task(&user.id, &id)
-        .await
-        .ok_or_else(|| {
-            ApiError::new(
-                StatusCode::NOT_FOUND,
-                "TASK_NOT_FOUND",
-                "torrent_task",
-                "Task not found",
-                false,
-            )
-        })?;
+    let _user = require_user(&state, &headers).await?;
+    let task = state.torrent_engine.get_task(&id).await.ok_or_else(|| {
+        ApiError::new(
+            StatusCode::NOT_FOUND,
+            "TASK_NOT_FOUND",
+            "torrent_task",
+            "Task not found",
+            false,
+        )
+    })?;
     Ok(Json(json!(task)))
 }
 
@@ -3690,9 +3700,18 @@ async fn delete_torrent_task(
 ) -> ApiResult<StatusCode> {
     require_app_request(&headers)?;
     let user = require_user(&state, &headers).await?;
+    if user.role != "admin" {
+        return Err(ApiError::new(
+            StatusCode::FORBIDDEN,
+            "ADMIN_REQUIRED",
+            "torrent_delete",
+            "Only administrators are permitted to delete items from shared storage.",
+            false,
+        ));
+    }
     let deleted = state
         .torrent_engine
-        .delete_task(&user.id, &id)
+        .delete_task(&id)
         .await
         .map_err(|e| ApiError::internal("torrent_delete", e))?;
     if deleted {
@@ -3713,6 +3732,16 @@ async fn download_torrent_file(
     headers: HeaderMap,
     Path(id): Path<String>,
 ) -> ApiResult<Response> {
+    let user = require_user(&state, &headers).await?;
+    if user.role == "guest" {
+        return Err(ApiError::new(
+            StatusCode::FORBIDDEN,
+            "PERMISSION_DENIED",
+            "torrent_download",
+            "Guests are not permitted to download files.",
+            false,
+        ));
+    }
     serve_torrent_file(state, headers, id, true).await
 }
 
@@ -3721,6 +3750,7 @@ async fn stream_torrent_file(
     headers: HeaderMap,
     Path(id): Path<String>,
 ) -> ApiResult<Response> {
+    let _user = require_user(&state, &headers).await?;
     serve_torrent_file(state, headers, id, false).await
 }
 
@@ -3730,10 +3760,9 @@ async fn serve_torrent_file(
     id: String,
     attachment: bool,
 ) -> ApiResult<Response> {
-    let user = require_user(&state, &headers).await?;
     let (file_path, file_name) = state
         .torrent_engine
-        .get_task_file_path(&user.id, &id)
+        .get_task_file_path(&id)
         .await
         .ok_or_else(|| {
             ApiError::new(
@@ -3832,10 +3861,10 @@ async fn download_torrent_subtitle(
     headers: HeaderMap,
     Path((id, lang)): Path<(String, String)>,
 ) -> ApiResult<Response> {
-    let user = require_user(&state, &headers).await?;
+    let _user = require_user(&state, &headers).await?;
     let (file_path, file_name) = state
         .torrent_engine
-        .get_subtitle_file_path(&user.id, &id, &lang)
+        .get_subtitle_file_path(&id, &lang)
         .await
         .ok_or_else(|| {
             ApiError::new(
@@ -4499,5 +4528,92 @@ mod tests {
         );
 
         assert_eq!(client_identity(&headers), "203.0.113.7");
+    }
+
+    #[tokio::test]
+    async fn guest_media_session_allows_playback() {
+        let stream = stream("https://cdn.example/video.mp4");
+        let session = MediaSession {
+            user_id: "guest".into(),
+            expires_at: Instant::now() + Duration::from_secs(60),
+            stream,
+            secret: [1_u8; 32],
+            resources: Arc::new(StdMutex::new(MediaResourceCache::default())),
+        };
+        let app_state = AppState {
+            db: WebDatabase::open(std::path::Path::new(":memory:"))
+                .await
+                .unwrap(),
+            providers: Arc::new(ProviderRegistry::new(&Config::default())),
+            catalog: CatalogClient::new(),
+            metadata: MetadataCache::new(Arc::new(Database::new_at(":memory:").await.unwrap())),
+            secure_cookies: false,
+            login_attempts: Arc::new(Mutex::new(HashMap::new())),
+            download_tickets: Arc::new(Mutex::new(HashMap::new())),
+            media_sessions: Arc::new(Mutex::new(HashMap::from([(
+                "guest-session".into(),
+                session,
+            )]))),
+            provider_health: Arc::new(Mutex::new(ProviderHealthCache::default())),
+            provider_health_refresh: Arc::new(Mutex::new(())),
+            media_client: Client::new(),
+            torrent_hub: Arc::new(TorrentSearchHub::new()),
+            torrent_engine: Arc::new(TorrentTaskManager::new(PathBuf::from("/tmp"))),
+        };
+
+        // Guest user can retrieve guest session
+        let retrieved = get_media_session(&app_state, "guest-session", "guest").await;
+        assert!(retrieved.is_ok());
+
+        // Logged-in user can also watch a public/guest session
+        let retrieved_user = get_media_session(&app_state, "guest-session", "user-123").await;
+        assert!(retrieved_user.is_ok());
+    }
+
+    #[tokio::test]
+    async fn authenticated_media_session_rejects_other_accounts() {
+        let stream = stream("https://cdn.example/video.mp4");
+        let session = MediaSession {
+            user_id: "user-alice".into(),
+            expires_at: Instant::now() + Duration::from_secs(60),
+            stream,
+            secret: [1_u8; 32],
+            resources: Arc::new(StdMutex::new(MediaResourceCache::default())),
+        };
+        let app_state = AppState {
+            db: WebDatabase::open(std::path::Path::new(":memory:"))
+                .await
+                .unwrap(),
+            providers: Arc::new(ProviderRegistry::new(&Config::default())),
+            catalog: CatalogClient::new(),
+            metadata: MetadataCache::new(Arc::new(Database::new_at(":memory:").await.unwrap())),
+            secure_cookies: false,
+            login_attempts: Arc::new(Mutex::new(HashMap::new())),
+            download_tickets: Arc::new(Mutex::new(HashMap::new())),
+            media_sessions: Arc::new(Mutex::new(HashMap::from([(
+                "alice-session".into(),
+                session,
+            )]))),
+            provider_health: Arc::new(Mutex::new(ProviderHealthCache::default())),
+            provider_health_refresh: Arc::new(Mutex::new(())),
+            media_client: Client::new(),
+            torrent_hub: Arc::new(TorrentSearchHub::new()),
+            torrent_engine: Arc::new(TorrentTaskManager::new(PathBuf::from("/tmp"))),
+        };
+
+        // Alice can access her session
+        assert!(get_media_session(&app_state, "alice-session", "user-alice")
+            .await
+            .is_ok());
+
+        // Bob cannot access Alice's session
+        assert!(get_media_session(&app_state, "alice-session", "user-bob")
+            .await
+            .is_err());
+
+        // Unauthenticated guest cannot access Alice's session
+        assert!(get_media_session(&app_state, "alice-session", "guest")
+            .await
+            .is_err());
     }
 }
