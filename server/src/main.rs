@@ -526,17 +526,17 @@ async fn main() -> Result<()> {
             .context("Failed to load hosted provider configuration")?,
         _ => Config::default(),
     };
-    if let Ok(instance_url) = env::var("ANY_WATCH_INVIDIOUS_URL") {
-        if !instance_url.trim().is_empty() {
-            config.sources.invidious = true;
-            config.invidious = Some(any_watch_core::config::InvidiousConfig {
-                instance_url,
-                local_proxy: env::var("ANY_WATCH_INVIDIOUS_LOCAL_PROXY").map_or(true, |value| {
-                    value != "0" && !value.eq_ignore_ascii_case("false")
-                }),
-            });
-        }
-    }
+    let invidious_url = env::var("ANY_WATCH_INVIDIOUS_URL")
+        .ok()
+        .filter(|url| !url.trim().is_empty())
+        .unwrap_or_else(|| "https://inv.nadeko.net".to_string());
+    config.sources.invidious = true;
+    config.invidious = Some(any_watch_core::config::InvidiousConfig {
+        instance_url: invidious_url,
+        local_proxy: env::var("ANY_WATCH_INVIDIOUS_LOCAL_PROXY").map_or(true, |value| {
+            value != "0" && !value.eq_ignore_ascii_case("false")
+        }),
+    });
     if let Ok(overrides) = env::var("ANY_WATCH_PROVIDER_OVERRIDES") {
         apply_provider_overrides(&mut config, &overrides)?;
     }
