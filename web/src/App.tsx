@@ -1163,6 +1163,10 @@ function App() {
   }
 
   async function downloadEpisode(anime: Anime, episode: Episode) {
+    if (!session) {
+      setShowLoginModal(true);
+      return;
+    }
     const key = episodeDownloadKey(anime, episode);
     const current = episodeDownloads[key];
     if (current?.status === "preparing" || current?.status === "downloading") return;
