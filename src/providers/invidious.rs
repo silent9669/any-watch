@@ -100,7 +100,7 @@ impl InvidiousProvider {
             Url::parse(config.instance_url.trim()).expect("validated Invidious instance URL");
         let client = reqwest::Client::builder()
             .timeout(REQUEST_TIMEOUT)
-            .user_agent("any-watch/1.0 Invidious provider")
+            .user_agent("Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/126.0.0.0 Safari/537.36")
             .build()
             .expect("Failed to create Invidious HTTP client");
         Self {
@@ -203,14 +203,20 @@ impl InvidiousProvider {
         if let Some(topic) = topic.filter(|t| !t.trim().is_empty() && *t != "all") {
             url.query_pairs_mut().append_pair("type", topic);
         }
-        let items: Vec<SearchItem> = self
-            .client
-            .get(url)
-            .send()
-            .await
-            .context("Failed to reach Invidious trending API")?
-            .error_for_status()
-            .context("Invidious trending returned an error")?
+        let response = match self.client.get(url).send().await {
+            Ok(res) if res.status().is_success() => res,
+            _ => {
+                let pop_url = self.endpoint("api/v1/popular")?;
+                self.client
+                    .get(pop_url)
+                    .send()
+                    .await
+                    .context("Failed to reach Invidious trending or popular API")?
+                    .error_for_status()
+                    .context("Invidious popular returned an error")?
+            }
+        };
+        let items: Vec<SearchItem> = response
             .json()
             .await
             .context("Failed to parse Invidious trending response")?;
@@ -345,7 +351,10 @@ impl AnimeProvider for InvidiousProvider {
             .context("Failed to reach Invidious")?
             .error_for_status()
             .context("Invidious health endpoint returned an error")?;
-        let videos = self.trending(None).await?;
+        let videos = match self.trending(None).await {
+            Ok(v) if !v.is_empty() => v,
+            _ => self.popular().await.unwrap_or_default(),
+        };
         let mut last_error = None;
         for video in videos.into_iter().take(2) {
             match self.get_stream_url(&video.id).await {
