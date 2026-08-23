@@ -14,7 +14,7 @@ if [[ -z "${CLOUDFLARE_API_TOKEN:-}" ]]; then
   if [[ -r /etc/any-watch-worker.env ]]; then
     set -a; source /etc/any-watch-worker.env; set +a
   else
-    ssh -i /Users/phucdang/.ssh/ani-desk-homelab dangphuc@192.168.1.181 \
+    ssh dangphuc@192.168.1.66 \
       'docker run --rm -v /:/host alpine cat /host/etc/any-watch-worker.env' \
       > /tmp/any-watch-worker.env
     set -a; source /tmp/any-watch-worker.env; rm -f /tmp/any-watch-worker.env; set +a
