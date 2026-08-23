@@ -17,13 +17,16 @@ const REQUEST_TIMEOUT: Duration = Duration::from_secs(15);
 const PUBLIC_INVIDIOUS_INSTANCES: &[&str] = &[
     "https://inv.nadeko.net",
     "https://invidious.nerdvpn.de",
+    "https://invidious.tiekoetter.com",
     "https://invidious.drgns.space",
+    "https://yt.chocolatemoo53.com",
+    "https://invidious.private.coffee",
     "https://yewtu.be",
+    "https://invidious.privacydev.net",
+    "https://inv.tux.pizza",
+    "https://iv.ggtyler.dev",
     "https://invidious.no-valis.space",
     "https://vid.priv.au",
-    "https://inv.tux.pizza",
-    "https://invidious.projectsegfau.lt",
-    "https://iv.ggtyler.dev",
 ];
 
 pub struct InvidiousProvider {
@@ -201,7 +204,27 @@ impl InvidiousProvider {
                     continue;
                 }
             };
-            if let Ok(parsed) = response.json::<VideoResponse>().await {
+            if let Ok(mut parsed) = response.json::<VideoResponse>().await {
+                for s in &mut parsed.format_streams {
+                    if let Ok(abs) = base.join(&s.url) {
+                        s.url = abs.to_string();
+                    }
+                }
+                if let Some(ref mut d) = parsed.dash_url {
+                    if let Ok(abs) = base.join(d) {
+                        *d = abs.to_string();
+                    }
+                }
+                if let Some(ref mut h) = parsed.hls_url {
+                    if let Ok(abs) = base.join(h) {
+                        *h = abs.to_string();
+                    }
+                }
+                for c in &mut parsed.captions {
+                    if let Ok(abs) = base.join(&c.url) {
+                        c.url = abs.to_string();
+                    }
+                }
                 video_opt = Some(parsed);
                 break;
             }
@@ -306,6 +329,25 @@ impl InvidiousProvider {
             }
         }
 
+        if !is_local_test {
+            let fallback_query = match topic
+                .map(str::trim)
+                .filter(|s| !s.is_empty() && *s != "all")
+            {
+                Some("Music") => "trending music official audio",
+                Some("Gaming") => "trending gaming gameplay walkthrough",
+                Some("News") => "breaking news global",
+                Some("Films") | Some("Movies") => "official movie trailer short film",
+                Some("Anime") | Some("Animations") => "anime animation short official preview",
+                _ => "popular trending videos",
+            };
+            if let Ok(items) = self.search(fallback_query).await {
+                if !items.is_empty() {
+                    return Ok(items);
+                }
+            }
+        }
+
         Err(last_error.unwrap_or_else(|| {
             anyhow::anyhow!("Failed to reach Invidious trending or popular API")
         }))
@@ -403,12 +445,20 @@ impl InvidiousProvider {
                     (None, Some(description)) => Some(format!("{author}\n{description}")),
                     (None, None) => Some(author),
                 };
+                let cover_url = {
+                    let thumb = preferred_thumbnail(&item.video_thumbnails);
+                    if thumb.is_empty() {
+                        format!("https://i.ytimg.com/vi/{id}/hqdefault.jpg")
+                    } else {
+                        thumb
+                    }
+                };
                 Some(Anime {
-                    id,
+                    id: id.clone(),
                     provider: PROVIDER_NAME.to_string(),
                     title,
-                    cover_url: preferred_thumbnail(&item.video_thumbnails),
-                    banner_url: None,
+                    cover_url: cover_url.clone(),
+                    banner_url: Some(cover_url),
                     language: Language::Youtube,
                     total_episodes: None,
                     synopsis,
@@ -419,7 +469,7 @@ impl InvidiousProvider {
 }
 
 fn preferred_thumbnail(thumbnails: &[Thumbnail]) -> String {
-    thumbnails
+    let best = thumbnails
         .iter()
         .filter(|thumbnail| !thumbnail.url.trim().is_empty())
         .max_by_key(|thumbnail| {
@@ -433,7 +483,13 @@ fn preferred_thumbnail(thumbnails: &[Thumbnail]) -> String {
             (quality, thumbnail.width.unwrap_or_default())
         })
         .map(|thumbnail| thumbnail.url.clone())
-        .unwrap_or_default()
+        .unwrap_or_default();
+
+    if best.starts_with("//") {
+        format!("https:{best}")
+    } else {
+        best
+    }
 }
 
 #[async_trait]
