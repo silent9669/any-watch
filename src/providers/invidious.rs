@@ -330,7 +330,10 @@ impl InvidiousProvider {
         }
 
         if !is_local_test {
-            let fallback_query = match topic.map(str::trim).filter(|s| !s.is_empty() && *s != "all") {
+            let fallback_query = match topic
+                .map(str::trim)
+                .filter(|s| !s.is_empty() && *s != "all")
+            {
                 Some("Music") => "trending music official audio",
                 Some("Gaming") => "trending gaming gameplay walkthrough",
                 Some("News") => "breaking news global",
