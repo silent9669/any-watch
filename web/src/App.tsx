@@ -785,7 +785,28 @@ function App() {
     }
 
     if (topic === "All") {
+      setYoutubeFeedLoading(true);
+      setYoutubeFeedError(null);
       void loadAllYoutubeCatalogs();
+      try {
+        let items: Anime[];
+        try {
+          items = await api.getYouTubeTrending();
+          if (!items.length) items = await api.getYouTubePopular();
+        } catch {
+          items = await api.getYouTubePopular();
+        }
+        if (generation !== youtubeFeedGenerationRef.current) return;
+        const enriched = withFavoriteState(items);
+        setYoutubeFeed(enriched);
+      } catch (err) {
+        if (generation !== youtubeFeedGenerationRef.current) return;
+        const appError = toAppError(err, "youtube-feed");
+        setYoutubeFeed([]);
+        setYoutubeFeedError(appError.message);
+      } finally {
+        if (generation === youtubeFeedGenerationRef.current) setYoutubeFeedLoading(false);
+      }
       return;
     }
 
@@ -814,12 +835,11 @@ function App() {
           items = await api.getYouTubePopular();
         }
       } else if (topic === "Music") {
-        try {
-          items = await api.getYouTubeTrending("Music");
-          if (!items.length) items = await api.searchSource(source.name, "trending music official audio top hits");
-        } catch {
-          items = await api.searchSource(source.name, "trending music official audio top hits");
-        }
+        items = await api.getYouTubeTrending("Music");
+      } else if (topic === "Gaming") {
+        items = await api.getYouTubeTrending("Gaming");
+      } else if (topic === "News") {
+        items = await api.getYouTubeTrending("News");
       } else if (topic === "Films") {
         try {
           items = await api.getYouTubeTrending("Movies");
@@ -829,20 +849,6 @@ function App() {
         }
       } else if (topic === "Anime") {
         items = await api.searchSource(source.name, "anime animation opening ending trailer short");
-      } else if (topic === "Gaming") {
-        try {
-          items = await api.getYouTubeTrending("Gaming");
-          if (!items.length) items = await api.searchSource(source.name, "trending gaming gameplay walkthrough");
-        } catch {
-          items = await api.searchSource(source.name, "trending gaming gameplay walkthrough");
-        }
-      } else if (topic === "News") {
-        try {
-          items = await api.getYouTubeTrending("News");
-          if (!items.length) items = await api.searchSource(source.name, "breaking news world tech latest");
-        } catch {
-          items = await api.searchSource(source.name, "breaking news world tech latest");
-        }
       } else {
         items = await api.getYouTubeTrending();
       }
@@ -882,6 +888,9 @@ function App() {
   }
 
   function selectYoutubeVideo(video: Anime, openWatchRoom = true) {
+    if (video.provider === "YouTube") {
+      video = { ...video, provider: "Invidious" };
+    }
     setYoutubeSelection(video);
     if (openWatchRoom) {
       const url = `/youtube?v=${encodeURIComponent(video.id)}`;
@@ -890,6 +899,9 @@ function App() {
       }
       setYoutubeWatchMode(true);
       void loadYoutubeRelated(video.id);
+      void api.getAnimeDetails(video.provider, video.id, video.title).then((details) => {
+        setYoutubeSelection((curr) => curr && curr.id === video.id ? mergeAnimeDetails(curr, detailPatch(details)) : curr);
+      }).catch(() => undefined);
     }
   }
 
@@ -5210,195 +5222,205 @@ function YouTubePage({
       {sourceReady && !watchMode && query.trim().length < 2 && (
         <div className="youtube-home-feed">
           {topic === "All" ? (
-            /* Multi-Catalog Dashboard Overview with Horizontal Shelves */
-            <div className="youtube-dashboard-shelves">
-              {/* Continue Watching Shelf */}
-              {youtubeContinueWatching.length > 0 && (
-                <section className="youtube-shelf-section">
-                  <div className="youtube-shelf-header">
-                    <div className="youtube-shelf-title-group">
-                      <div className="youtube-shelf-icon history"><Clock size={20} /></div>
-                      <div className="youtube-shelf-titles">
-                        <h2>Continue Watching</h2>
-                        <p>{youtubeContinueWatching.length} videos · Saved progress</p>
+            feedError ? (
+              <section className="youtube-feed-section">
+                <div className="youtube-inline-error" role="alert">
+                  <AlertTriangle size={18} />
+                  <span>{feedError}</span>
+                  <button type="button" onClick={onRetryFeed}>Retry feed</button>
+                </div>
+              </section>
+            ) : (
+              /* Multi-Catalog Dashboard Overview with Horizontal Shelves */
+              <div className="youtube-dashboard-shelves">
+                {/* Continue Watching Shelf */}
+                {youtubeContinueWatching.length > 0 && (
+                  <section className="youtube-shelf-section">
+                    <div className="youtube-shelf-header">
+                      <div className="youtube-shelf-title-group">
+                        <div className="youtube-shelf-icon history"><Clock size={20} /></div>
+                        <div className="youtube-shelf-titles">
+                          <h2>Continue Watching</h2>
+                          <p>{youtubeContinueWatching.length} videos · Saved progress</p>
+                        </div>
                       </div>
-                    </div>
-                    {onClearContinueWatching && (
-                      <div className="youtube-shelf-controls">
-                        <button
-                          type="button"
-                          className="youtube-clear-btn"
-                          onClick={onClearContinueWatching}
-                          title="Clear all YouTube watch history"
-                        >
-                          <Trash2 size={13} />
-                          <span>Clear All</span>
-                        </button>
-                      </div>
-                    )}
-                  </div>
-                  <div className="youtube-shelf-track">
-                    {youtubeContinueWatching.map((item) => {
-                      const progress = item.totalSeconds > 0
-                        ? Math.min(100, (item.positionSeconds / item.totalSeconds) * 100)
-                        : 0;
-                      const videoObj: Anime = {
-                        id: item.animeId.includes(":") ? item.animeId.split(":").slice(1).join(":") : item.animeId,
-                        provider: "Invidious",
-                        catalogId: item.catalogId ?? null,
-                        title: item.title,
-                        coverUrl: item.coverUrl,
-                        bannerUrl: null,
-                        language: "YouTube",
-                        totalEpisodes: null,
-                        synopsis: null,
-                        isFavorite: false,
-                      };
-                      return (
-                        <div key={item.animeId} className="youtube-shelf-card youtube-continue-card">
-                          {onRemoveContinueWatching && (
-                            <button
-                              type="button"
-                              className="youtube-continue-remove"
-                              onClick={() => onRemoveContinueWatching(item.animeId)}
-                              aria-label={`Remove ${item.title} from history`}
-                              title="Remove from history"
-                            >
-                              <X size={13} />
-                            </button>
-                          )}
+                      {onClearContinueWatching && (
+                        <div className="youtube-shelf-controls">
                           <button
                             type="button"
-                            className="youtube-shelf-card-thumb"
-                            onClick={() => onPlay(videoObj)}
+                            className="youtube-clear-btn"
+                            onClick={onClearContinueWatching}
+                            title="Clear all YouTube watch history"
                           >
-                            <img src={item.coverUrl || LOGO_SRC} alt="" onError={useLogoFallback} />
-                            <span className="youtube-play-hover"><Play size={20} fill="currentColor" /></span>
-                            <i className="youtube-progress" style={{ "--youtube-progress": `${progress}%` } as React.CSSProperties} />
-                            <span className="youtube-duration-pill">{formatTime(item.positionSeconds)}</span>
+                            <Trash2 size={13} />
+                            <span>Clear All</span>
                           </button>
-                          <div className="youtube-shelf-card-copy">
+                        </div>
+                      )}
+                    </div>
+                    <div className="youtube-shelf-track">
+                      {youtubeContinueWatching.map((item) => {
+                        const progress = item.totalSeconds > 0
+                          ? Math.min(100, (item.positionSeconds / item.totalSeconds) * 100)
+                          : 0;
+                        const videoObj: Anime = {
+                          id: item.animeId.includes(":") ? item.animeId.split(":").slice(1).join(":") : item.animeId,
+                          provider: "Invidious",
+                          catalogId: item.catalogId ?? null,
+                          title: item.title,
+                          coverUrl: item.coverUrl,
+                          bannerUrl: null,
+                          language: "YouTube",
+                          totalEpisodes: null,
+                          synopsis: null,
+                          isFavorite: false,
+                        };
+                        return (
+                          <div key={item.animeId} className="youtube-shelf-card youtube-continue-card">
+                            {onRemoveContinueWatching && (
+                              <button
+                                type="button"
+                                className="youtube-continue-remove"
+                                onClick={() => onRemoveContinueWatching(item.animeId)}
+                                aria-label={`Remove ${item.title} from history`}
+                                title="Remove from history"
+                              >
+                                <X size={13} />
+                              </button>
+                            )}
                             <button
                               type="button"
-                              className="youtube-shelf-card-title"
-                              onClick={() => onSelect(videoObj)}
-                              title={item.title}
+                              className="youtube-shelf-card-thumb"
+                              onClick={() => onPlay(videoObj)}
                             >
-                              {item.title}
+                              <img src={item.coverUrl || LOGO_SRC} alt="" onError={useLogoFallback} />
+                              <span className="youtube-play-hover"><Play size={20} fill="currentColor" /></span>
+                              <i className="youtube-progress" style={{ "--youtube-progress": `${progress}%` } as React.CSSProperties} />
+                              <span className="youtube-duration-pill">{formatTime(item.positionSeconds)}</span>
                             </button>
-                            <small className="youtube-video-stats">Watched {Math.round(progress)}%</small>
-                            <div className="youtube-shelf-card-actions">
-                              <button type="button" className="primary" onClick={() => onPlay(videoObj)}>
-                                <Play size={12} fill="currentColor" /> Resume
+                            <div className="youtube-shelf-card-copy">
+                              <button
+                                type="button"
+                                className="youtube-shelf-card-title"
+                                onClick={() => onSelect(videoObj)}
+                                title={item.title}
+                              >
+                                {item.title}
                               </button>
-                              <button type="button" onClick={() => onSelect(videoObj)}>
-                                <Tv size={12} /> Room
-                              </button>
+                              <small className="youtube-video-stats">Watched {Math.round(progress)}%</small>
+                              <div className="youtube-shelf-card-actions">
+                                <button type="button" className="primary" onClick={() => onPlay(videoObj)}>
+                                  <Play size={12} fill="currentColor" /> Resume
+                                </button>
+                                <button type="button" onClick={() => onSelect(videoObj)}>
+                                  <Tv size={12} /> Room
+                                </button>
+                              </div>
                             </div>
                           </div>
-                        </div>
-                      );
-                    })}
-                  </div>
-                </section>
-              )}
+                        );
+                      })}
+                    </div>
+                  </section>
+                )}
 
-              {/* 1. Trending Today Shelf */}
-              <YouTubeShelf
-                title="Trending Today"
-                subtitle="Top trending videos on YouTube"
-                icon={<Flame size={20} />}
-                iconClass="trending"
-                videos={catalogs.trending}
-                loading={Boolean(catalogs.loading.trending)}
-                error={catalogs.errors.trending}
-                onSeeMore={() => onTopicChange("Trending", "grid")}
-                onPlay={onPlay}
-                onSelect={onSelect}
-                onToggleMyList={onToggleMyList}
-                onRetry={onRetryFeed}
-              />
+                {/* 1. Trending Today Shelf */}
+                <YouTubeShelf
+                  title="Trending Today"
+                  subtitle="Top trending videos on YouTube"
+                  icon={<Flame size={20} />}
+                  iconClass="trending"
+                  videos={catalogs.trending.length > 0 ? catalogs.trending : feedVideos}
+                  loading={Boolean(catalogs.loading.trending || feedLoading)}
+                  error={catalogs.errors.trending}
+                  onSeeMore={() => onTopicChange("Trending", "grid")}
+                  onPlay={onPlay}
+                  onSelect={onSelect}
+                  onToggleMyList={onToggleMyList}
+                  onRetry={onRetryFeed}
+                />
 
-              {/* 2. Music Hub Shelf */}
-              <YouTubeShelf
-                title="Music Hub"
-                subtitle="Hot music videos, top tracks & lofi beats"
-                icon={<Music size={20} />}
-                iconClass="music"
-                videos={catalogs.music}
-                loading={Boolean(catalogs.loading.music)}
-                error={catalogs.errors.music}
-                onSeeMore={() => onTopicChange("Music", "grid")}
-                onPlay={onPlay}
-                onSelect={onSelect}
-                onToggleMyList={onToggleMyList}
-                onRetry={onRetryFeed}
-              />
+                {/* 2. Music Hub Shelf */}
+                <YouTubeShelf
+                  title="Music Hub"
+                  subtitle="Hot music videos, top tracks & lofi beats"
+                  icon={<Music size={20} />}
+                  iconClass="music"
+                  videos={catalogs.music}
+                  loading={Boolean(catalogs.loading.music)}
+                  error={catalogs.errors.music}
+                  onSeeMore={() => onTopicChange("Music", "grid")}
+                  onPlay={onPlay}
+                  onSelect={onSelect}
+                  onToggleMyList={onToggleMyList}
+                  onRetry={onRetryFeed}
+                />
 
-              {/* 3. Films & Cinema Shelf */}
-              <YouTubeShelf
-                title="Films & Cinema"
-                subtitle="Trailers, short films & movie clips"
-                icon={<Film size={20} />}
-                iconClass="films"
-                videos={catalogs.films}
-                loading={Boolean(catalogs.loading.films)}
-                error={catalogs.errors.films}
-                onSeeMore={() => onTopicChange("Films", "grid")}
-                onPlay={onPlay}
-                onSelect={onSelect}
-                onToggleMyList={onToggleMyList}
-                onRetry={onRetryFeed}
-              />
+                {/* 3. Films & Cinema Shelf */}
+                <YouTubeShelf
+                  title="Films & Cinema"
+                  subtitle="Trailers, short films & movie clips"
+                  icon={<Film size={20} />}
+                  iconClass="films"
+                  videos={catalogs.films}
+                  loading={Boolean(catalogs.loading.films)}
+                  error={catalogs.errors.films}
+                  onSeeMore={() => onTopicChange("Films", "grid")}
+                  onPlay={onPlay}
+                  onSelect={onSelect}
+                  onToggleMyList={onToggleMyList}
+                  onRetry={onRetryFeed}
+                />
 
-              {/* 4. Anime & Animation Shelf */}
-              <YouTubeShelf
-                title="Anime & Animation"
-                subtitle="Openings, endings, trailers & anime shorts"
-                icon={<Sparkles size={20} />}
-                iconClass="anime"
-                videos={catalogs.anime}
-                loading={Boolean(catalogs.loading.anime)}
-                error={catalogs.errors.anime}
-                onSeeMore={() => onTopicChange("Anime", "grid")}
-                onPlay={onPlay}
-                onSelect={onSelect}
-                onToggleMyList={onToggleMyList}
-                onRetry={onRetryFeed}
-              />
+                {/* 4. Anime & Animation Shelf */}
+                <YouTubeShelf
+                  title="Anime & Animation"
+                  subtitle="Openings, endings, trailers & anime shorts"
+                  icon={<Sparkles size={20} />}
+                  iconClass="anime"
+                  videos={catalogs.anime}
+                  loading={Boolean(catalogs.loading.anime)}
+                  error={catalogs.errors.anime}
+                  onSeeMore={() => onTopicChange("Anime", "grid")}
+                  onPlay={onPlay}
+                  onSelect={onSelect}
+                  onToggleMyList={onToggleMyList}
+                  onRetry={onRetryFeed}
+                />
 
-              {/* 5. Gaming & Esports Shelf */}
-              <YouTubeShelf
-                title="Gaming & Esports"
-                subtitle="Top games, walkthroughs & highlights"
-                icon={<Gamepad2 size={20} />}
-                iconClass="gaming"
-                videos={catalogs.gaming}
-                loading={Boolean(catalogs.loading.gaming)}
-                error={catalogs.errors.gaming}
-                onSeeMore={() => onTopicChange("Gaming", "grid")}
-                onPlay={onPlay}
-                onSelect={onSelect}
-                onToggleMyList={onToggleMyList}
-                onRetry={onRetryFeed}
-              />
+                {/* 5. Gaming & Esports Shelf */}
+                <YouTubeShelf
+                  title="Gaming & Esports"
+                  subtitle="Top games, walkthroughs & highlights"
+                  icon={<Gamepad2 size={20} />}
+                  iconClass="gaming"
+                  videos={catalogs.gaming}
+                  loading={Boolean(catalogs.loading.gaming)}
+                  error={catalogs.errors.gaming}
+                  onSeeMore={() => onTopicChange("Gaming", "grid")}
+                  onPlay={onPlay}
+                  onSelect={onSelect}
+                  onToggleMyList={onToggleMyList}
+                  onRetry={onRetryFeed}
+                />
 
-              {/* 6. News & Tech Shelf */}
-              <YouTubeShelf
-                title="News & Tech"
-                subtitle="Latest global news, tech reviews & updates"
-                icon={<Newspaper size={20} />}
-                iconClass="news"
-                videos={catalogs.news}
-                loading={Boolean(catalogs.loading.news)}
-                error={catalogs.errors.news}
-                onSeeMore={() => onTopicChange("News", "grid")}
-                onPlay={onPlay}
-                onSelect={onSelect}
-                onToggleMyList={onToggleMyList}
-                onRetry={onRetryFeed}
-              />
-            </div>
+                {/* 6. News & Tech Shelf */}
+                <YouTubeShelf
+                  title="News & Tech"
+                  subtitle="Latest global news, tech reviews & updates"
+                  icon={<Newspaper size={20} />}
+                  iconClass="news"
+                  videos={catalogs.news}
+                  loading={Boolean(catalogs.loading.news)}
+                  error={catalogs.errors.news}
+                  onSeeMore={() => onTopicChange("News", "grid")}
+                  onPlay={onPlay}
+                  onSelect={onSelect}
+                  onToggleMyList={onToggleMyList}
+                  onRetry={onRetryFeed}
+                />
+              </div>
+            )
           ) : (
             /* Specific Category View (Grid or Shelf) */
             <div className="youtube-grid-view">
@@ -6958,10 +6980,10 @@ function VideoPlayer({
             }
           }}
           disabled={(!nextEpisode && !onPlayNext) || switchingEpisode}
-          aria-label="Next episode or video"
+          aria-label="Next episode"
           aria-busy={switchingEpisode}
           data-state={switchingEpisode ? "loading" : undefined}
-          title="Next (])"
+          title="Next episode (])"
         >
           <SkipForward size={30} />
         </button>
