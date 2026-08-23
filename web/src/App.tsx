@@ -2509,7 +2509,7 @@ function StorageFilmCard({
   const canDelete = isAdmin;
 
   return (
-    <article className="storage-film-card">
+    <article className="torrent-task-card storage-film-card ready">
       <div className="storage-film-poster-wrap">
         <img
           src={LOGO_SRC}
@@ -2519,6 +2519,7 @@ function StorageFilmCard({
           }}
         />
         <div className="storage-film-badges">
+          <span className="torrent-task-status-badge ready"><Check size={12} /> Ready</span>
           {info.quality && <span className="storage-badge quality">{info.quality}</span>}
           {info.isVietSub && <span className="storage-badge vietsub">VietSub</span>}
           {info.isEngSub && <span className="storage-badge engsub">EngSub</span>}
@@ -2537,7 +2538,7 @@ function StorageFilmCard({
       </div>
 
       <div className="storage-film-info">
-        <h3 className="storage-film-title" title={task.title}>
+        <h3 className="storage-film-title torrent-task-title" title={task.title}>
           {info.cleanTitle}
         </h3>
         <div className="storage-film-meta">
@@ -2545,41 +2546,41 @@ function StorageFilmCard({
           {info.codec && <span>{info.codec}</span>}
         </div>
 
-        <div className="storage-film-actions">
+        <div className="storage-film-actions torrent-task-actions-row">
           <button
             type="button"
-            className={`storage-film-btn ${playing ? "" : "primary"}`}
+            className={`storage-film-btn torrent-btn-watch ${playing ? "" : "primary"}`}
             onClick={() => setPlaying((p) => !p)}
           >
             {playing ? <X size={14} /> : <Play size={14} fill="currentColor" />}
-            <span>{playing ? "Close" : "Watch"}</span>
+            <span>{playing ? "Close Player" : "Watch Now"}</span>
           </button>
           {canDownload && (
             <a
               href={api.getTorrentDownloadUrl(task.id)}
               download={status.data.file_name}
-              className="storage-film-btn"
+              className="storage-film-btn torrent-btn-file-download"
               title="Download MP4 file"
             >
               <Download size={14} />
-              <span>MP4</span>
+              <span>Download MP4 ({formatTorrentBytes(status.data.file_size)})</span>
             </a>
           )}
           {canDelete && (
             <button
               type="button"
-              className="storage-film-btn"
+              className="storage-film-btn torrent-btn-delete"
               style={{ flex: "0 0 auto", color: "var(--color-danger)" }}
               disabled={isDeleting}
               onClick={() => onDelete(task.id)}
               title="Delete from storage"
             >
               {isDeleting ? <Loader2 size={14} className="spin" /> : <Trash2 size={14} />}
+              <span>Delete Task</span>
             </button>
           )}
         </div>
       </div>
-
       {playing && (
         <div className="torrent-task-player" style={{ padding: "0.5rem" }}>
           <video
@@ -3826,12 +3827,7 @@ function SearchStage({
     selectedCatalog?.coverUrl ||
     selectedAnime?.coverUrl ||
     LOGO_SRC;
-  const healthyLanguageSources = sources.filter(
-    (source) => source.languageGroup === languageGroup && source.status === "healthy" && source.capabilities.search
-  );
-  const languageSources = healthyLanguageSources.length > 0
-    ? healthyLanguageSources
-    : sources.filter((source) => source.languageGroup === languageGroup);
+  const languageSources = sources.filter((source) => source.languageGroup === languageGroup);
   const previewTitle = selectedCatalog?.title ?? selectedAnime?.title ?? "";
   const previewDescription = selectedCatalog?.description ?? selectedAnime?.synopsis ?? "";
   const previewMeta = selectedCatalog
