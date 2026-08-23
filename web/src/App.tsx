@@ -810,18 +810,6 @@ function App() {
       return;
     }
 
-    const catKey = topic.toLowerCase() as keyof typeof youtubeCatalogs;
-    if (
-      youtubeCatalogs[catKey]
-      && Array.isArray(youtubeCatalogs[catKey])
-      && (youtubeCatalogs[catKey] as Anime[]).length > 0
-    ) {
-      setYoutubeFeed(withFavoriteState(youtubeCatalogs[catKey] as Anime[]));
-      setYoutubeFeedError(null);
-      setYoutubeFeedLoading(false);
-      return;
-    }
-
     setYoutubeFeed([]);
     setYoutubeFeedError(null);
     setYoutubeFeedLoading(true);
@@ -855,6 +843,7 @@ function App() {
       if (generation !== youtubeFeedGenerationRef.current) return;
       const enriched = withFavoriteState(items);
       setYoutubeFeed(enriched);
+      const catKey = topic.toLowerCase() as keyof typeof youtubeCatalogs;
       if (catKey) {
         setYoutubeCatalogs((prev) => ({ ...prev, [catKey]: enriched }));
       }
@@ -7032,19 +7021,21 @@ function VideoPlayer({
                 <Tv size={18} />
               </button>
             )}
-            <label title="Playback speed">
-              <span>Speed</span>
-              <select value={playbackSpeed} onChange={(event) => changePlaybackSpeed(Number(event.target.value))}>
-                <option value={0.25}>0.25x</option>
-                <option value={0.5}>0.5x</option>
-                <option value={0.75}>0.75x</option>
-                <option value={1}>1x</option>
-                <option value={1.25}>1.25x</option>
-                <option value={1.5}>1.5x</option>
-                <option value={1.75}>1.75x</option>
-                <option value={2}>2x</option>
-              </select>
-            </label>
+            {(displayMode === "inline" || context.anime.provider === "Invidious") && (
+              <label title="Playback speed">
+                <span>Speed</span>
+                <select value={playbackSpeed} onChange={(event) => changePlaybackSpeed(Number(event.target.value))}>
+                  <option value={0.25}>0.25x</option>
+                  <option value={0.5}>0.5x</option>
+                  <option value={0.75}>0.75x</option>
+                  <option value={1}>1x</option>
+                  <option value={1.25}>1.25x</option>
+                  <option value={1.5}>1.5x</option>
+                  <option value={1.75}>1.75x</option>
+                  <option value={2}>2x</option>
+                </select>
+              </label>
+            )}
             <label title="Video quality">
               <span>Quality</span>
               <select value={quality} onChange={(event) => changeQuality(event.target.value)} disabled={(!streamIsHls && !streamIsDash) || !levels.length}>
