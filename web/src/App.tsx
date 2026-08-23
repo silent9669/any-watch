@@ -124,9 +124,20 @@ function pathForRoute(route: Route): string {
   }
 }
 
-type AppTheme = "obsidian" | "oled" | "ember" | "crimson" | "system";
+type AppTheme =
+  | "obsidian"
+  | "oled"
+  | "ember"
+  | "crimson"
+  | "tokyo"
+  | "cyberpunk"
+  | "emerald"
+  | "amethyst"
+  | "sunset"
+  | "nordic"
+  | "system";
 type AppScale = "compact" | "comfortable" | "large" | "tv";
-type AppFont = "manrope" | "noto" | "system";
+type AppFont = "manrope" | "noto" | "jakarta" | "outfit" | "vietnam" | "mono" | "system";
 type QualityLevel = { index: number; label: string; id?: string };
 type ShelfSort = "recent" | "title" | "provider";
 type HomeFeatureSlide = {
@@ -1756,6 +1767,50 @@ function DonatePage({
   );
 }
 
+function parseFilmReleaseInfo(rawTitle: string): {
+  cleanTitle: string;
+  year?: string;
+  quality?: string;
+  codec?: string;
+  isVietSub: boolean;
+  isEngSub: boolean;
+} {
+  const lower = rawTitle.toLowerCase();
+  const yearMatch = rawTitle.match(/(?:19|20)\d{2}/);
+  const year = yearMatch ? yearMatch[0] : undefined;
+
+  let clean = rawTitle
+    .replace(/[._-]/g, " ")
+    .replace(/(?:19|20)\d{2}.*$/i, "")
+    .replace(/\[.*?\]|\(.*?\)/g, "")
+    .replace(/\b(1080p|720p|2160p|4k|uhd|fhd|hd|telesync|web-dl|webrip|bluray|x264|x265|hevc|aac\d*\.?\d*|dks|splice|yts|nyaa)\b.*$/i, "")
+    .trim();
+
+  if (!clean || clean.length < 2) {
+    clean = rawTitle.replace(/[._]/g, " ").trim();
+  }
+
+  const quality = lower.includes("2160p") || lower.includes("4k")
+    ? "4K"
+    : lower.includes("1080p")
+    ? "1080p"
+    : lower.includes("720p")
+    ? "720p"
+    : undefined;
+
+  const isVietSub = lower.includes("vietsub") || lower.includes("viet sub") || lower.includes("thuyết minh") || lower.includes("thuyet minh");
+  const isEngSub = lower.includes("engsub") || lower.includes("eng sub") || lower.includes("english") || (!lower.includes("raw") && !lower.includes(".ita.") && !lower.includes(".spa."));
+
+  return {
+    cleanTitle: clean,
+    year,
+    quality,
+    codec: lower.includes("hevc") || lower.includes("x265") ? "HEVC" : lower.includes("x264") ? "x264" : undefined,
+    isVietSub,
+    isEngSub,
+  };
+}
+
 function DownloadsPage({
   onBack,
   session,
@@ -1783,7 +1838,6 @@ function DownloadsPage({
   const [actionLoadingId, setActionLoadingId] = useState<string | null>(null);
   const [deletingTaskIds, setDeletingTaskIds] = useState<Set<string>>(new Set());
   const [approvingTaskIds, setApprovingTaskIds] = useState<Set<string>>(new Set());
-
   const activeTasksCount = useMemo(() => {
     return tasks.filter(
       (t) => t.status.type === "queued" || t.status.type === "downloading" || t.status.type === "remuxing"
@@ -1867,8 +1921,8 @@ function DownloadsPage({
         const seen = new Set(current.map((item) => item.id));
         return [...current, ...data.filter((item) => !seen.has(item.id))];
       });
-    } catch (err: any) {
-      setError(err?.message || "Failed to search torrent providers.");
+    } catch (err: unknown) {
+      setError(err instanceof Error ? err.message : "Failed to search torrent providers.");
       if (!append) setResults([]);
     } finally {
       setLoading(false);
@@ -1920,8 +1974,8 @@ function DownloadsPage({
       );
       await loadTasks();
       setTab("tasks");
-    } catch (err: any) {
-      setError(err?.message || "Failed to create download task.");
+    } catch (err: unknown) {
+      setError(err instanceof Error ? err.message : "Failed to create download task.");
     } finally {
       setActionLoadingId(null);
     }
@@ -1933,11 +1987,29 @@ function DownloadsPage({
     try {
       const updated = await api.approveTorrentTask(id);
       setTasks((current) => current.map((t) => (t.id === id ? updated : t)));
-    } catch (err: any) {
+    } catch (err: unknown) {
       console.error("Failed to approve task:", err);
-      setError(err?.message || "Failed to approve download task.");
+      setError(err instanceof Error ? err.message : "Failed to approve download task.");
     } finally {
       setApprovingTaskIds((prev) => {
+        const next = new Set(prev);
+        next.delete(id);
+        return next;
+      });
+    }
+  };
+
+  const handleRejectTask = async (id: string) => {
+    if (session?.role !== "admin") return;
+    setDeletingTaskIds((prev) => new Set(prev).add(id));
+    try {
+      const updated = await api.rejectTorrentTask(id);
+      setTasks((current) => current.map((t) => (t.id === id ? updated : t)));
+    } catch (err: unknown) {
+      console.error("Failed to reject task:", err);
+      setError(err instanceof Error ? err.message : "Failed to reject download task.");
+    } finally {
+      setDeletingTaskIds((prev) => {
         const next = new Set(prev);
         next.delete(id);
         return next;
@@ -1956,7 +2028,7 @@ function DownloadsPage({
 
     try {
       await api.deleteTorrentTask(id);
-    } catch (err: any) {
+    } catch (err: unknown) {
       console.error("Failed to delete task:", err);
       void loadTasks();
     } finally {
@@ -2321,6 +2393,7 @@ function DownloadsPage({
                   isDeleting={deletingTaskIds.has(task.id)}
                   isApproving={approvingTaskIds.has(task.id)}
                   onApprove={(id) => void handleApproveTask(id)}
+                  onReject={(id) => void handleRejectTask(id)}
                   onDelete={(id) => void handleDeleteTask(id)}
                 />
               ))}
@@ -2373,10 +2446,9 @@ function DownloadsPage({
                 <h2>Available in any-watch storage</h2>
                 <p>Fast-start MP4 films and series with embedded subtitle tracks ready for direct streaming.</p>
               </div>
-
-              <div className="torrent-tasks-list storage-grid">
+              <div className="storage-dashboard-grid">
                 {readyTasks.map((task) => (
-                  <TorrentTaskItem
+                  <StorageFilmCard
                     key={task.id}
                     task={task}
                     userRole={session?.role}
@@ -2388,7 +2460,6 @@ function DownloadsPage({
             </div>
           ) : (
             <div className="shelf-empty-state storage-empty-dashboard" style={{ margin: "2rem auto" }}>
-              <div className="shelf-empty-icon"><HardDrive size={24} /></div>
               <div>
                 <strong>any-watch storage is currently empty</strong>
                 <p>
@@ -2416,12 +2487,133 @@ function DownloadsPage({
   );
 }
 
+function StorageFilmCard({
+  task,
+  userRole,
+  isDeleting,
+  onDelete,
+}: {
+  task: TorrentTask;
+  userRole?: "admin" | "user" | "guest";
+  isDeleting?: boolean;
+  onDelete: (id: string) => void;
+}) {
+  const [playing, setPlaying] = useState(false);
+  const info = useMemo(() => parseFilmReleaseInfo(task.title), [task.title]);
+  const status = task.status;
+  if (status.type !== "ready") return null;
+
+  const isGuest = userRole === "guest";
+  const isAdmin = userRole === "admin";
+  const canDownload = !isGuest;
+  const canDelete = isAdmin;
+
+  return (
+    <article className="storage-film-card">
+      <div className="storage-film-poster-wrap">
+        <img
+          src={LOGO_SRC}
+          alt={info.cleanTitle}
+          onError={(e) => {
+            (e.target as HTMLImageElement).src = LOGO_SRC;
+          }}
+        />
+        <div className="storage-film-badges">
+          {info.quality && <span className="storage-badge quality">{info.quality}</span>}
+          {info.isVietSub && <span className="storage-badge vietsub">VietSub</span>}
+          {info.isEngSub && <span className="storage-badge engsub">EngSub</span>}
+        </div>
+        <div
+          className="storage-film-play-overlay"
+          onClick={() => setPlaying((p) => !p)}
+          role="button"
+          tabIndex={0}
+          aria-label={playing ? `Close player for ${info.cleanTitle}` : `Play ${info.cleanTitle}`}
+        >
+          <div className="storage-film-play-btn">
+            {playing ? <X size={20} /> : <Play size={20} fill="currentColor" />}
+          </div>
+        </div>
+      </div>
+
+      <div className="storage-film-info">
+        <h3 className="storage-film-title" title={task.title}>
+          {info.cleanTitle}
+        </h3>
+        <div className="storage-film-meta">
+          <span>{info.year ? `${info.year} • ` : ""}{formatTorrentBytes(status.data.file_size)}</span>
+          {info.codec && <span>{info.codec}</span>}
+        </div>
+
+        <div className="storage-film-actions">
+          <button
+            type="button"
+            className={`storage-film-btn ${playing ? "" : "primary"}`}
+            onClick={() => setPlaying((p) => !p)}
+          >
+            {playing ? <X size={14} /> : <Play size={14} fill="currentColor" />}
+            <span>{playing ? "Close" : "Watch"}</span>
+          </button>
+          {canDownload && (
+            <a
+              href={api.getTorrentDownloadUrl(task.id)}
+              download={status.data.file_name}
+              className="storage-film-btn"
+              title="Download MP4 file"
+            >
+              <Download size={14} />
+              <span>MP4</span>
+            </a>
+          )}
+          {canDelete && (
+            <button
+              type="button"
+              className="storage-film-btn"
+              style={{ flex: "0 0 auto", color: "var(--color-danger)" }}
+              disabled={isDeleting}
+              onClick={() => onDelete(task.id)}
+              title="Delete from storage"
+            >
+              {isDeleting ? <Loader2 size={14} className="spin" /> : <Trash2 size={14} />}
+            </button>
+          )}
+        </div>
+      </div>
+
+      {playing && (
+        <div className="torrent-task-player" style={{ padding: "0.5rem" }}>
+          <video
+            controls
+            autoPlay
+            playsInline
+            preload="metadata"
+            src={api.getTorrentStreamUrl(task.id)}
+            style={{ width: "100%", borderRadius: "var(--radius-input)", maxHeight: "240px" }}
+          >
+            {status.data.subtitles.map((sub: TorrentSubtitleMeta) => (
+              <track
+                key={sub.language_code}
+                kind="subtitles"
+                src={api.getTorrentSubtitleUrl(task.id, sub.language_code)}
+                srcLang={sub.language_code}
+                label={sub.language}
+                default={sub.language_code === "vi"}
+              />
+            ))}
+          </video>
+        </div>
+      )}
+    </article>
+  );
+}
+
 function TorrentTaskItem({
   task,
   userRole,
   isDeleting,
   isApproving,
   onApprove,
+  onReject,
   onDelete,
 }: {
   task: TorrentTask;
@@ -2429,6 +2621,7 @@ function TorrentTaskItem({
   isDeleting?: boolean;
   isApproving?: boolean;
   onApprove?: (id: string) => void;
+  onReject?: (id: string) => void;
   onDelete: (id: string) => void;
 }) {
   const status = task.status;
@@ -2440,12 +2633,15 @@ function TorrentTaskItem({
   const isAdmin = userRole === "admin";
   const canDownload = !isGuest;
   const canDelete = isAdmin;
+  const info = useMemo(() => parseFilmReleaseInfo(task.title), [task.title]);
 
   return (
     <div className={`torrent-task-card ${isReady ? "ready" : isFailed ? "failed" : isPending ? "pending" : ""}`}>
       <div className="torrent-task-header">
         <div className="torrent-task-title-group">
-          <h3 className="torrent-task-title" title={task.title}>{task.title}</h3>
+          <h3 className="torrent-task-title" title={task.title}>
+            {info.cleanTitle} {info.year ? `(${info.year})` : ""}
+          </h3>
           <span className="torrent-task-date">
             Task ID: {task.id.slice(0, 8)} • Added {new Date(task.created_at * 1000).toLocaleTimeString()}
             {isPending && ` • Requested by ${status.data.requester_name || status.data.requester_id}`}
@@ -2539,6 +2735,18 @@ function TorrentTaskItem({
             <span>{isApproving ? "Approving..." : "Approve Download"}</span>
           </button>
         )}
+        {isPending && isAdmin && onReject && (
+          <button
+            type="button"
+            className="torrent-btn-delete"
+            disabled={isApproving || isDeleting}
+            onClick={() => onReject(task.id)}
+            style={{ background: "rgba(239, 68, 68, 0.15)", borderColor: "rgba(239, 68, 68, 0.4)", color: "#f87171" }}
+          >
+            <X size={14} />
+            <span>Reject</span>
+          </button>
+        )}
         {status.type === "ready" && (
           <>
             <button
@@ -2573,7 +2781,7 @@ function TorrentTaskItem({
             ))}
           </>
         )}
-        {canDelete && (
+        {canDelete && !isPending && (
           <button
             type="button"
             className="torrent-btn-delete"
@@ -2581,7 +2789,7 @@ function TorrentTaskItem({
             onClick={() => onDelete(task.id)}
           >
             {isDeleting ? <Loader2 size={14} className="spin" /> : <Trash2 size={14} />}
-            <span>{isDeleting ? "Deleting..." : isPending ? "Reject Request" : "Delete Task"}</span>
+            <span>{isDeleting ? "Deleting..." : "Delete Task"}</span>
           </button>
         )}
       </div>
@@ -2633,10 +2841,16 @@ function SettingsPage({
 }) {
   const themes: Array<{ id: AppTheme; name: string; description: string }> = [
     { id: "obsidian", name: "Obsidian Cinema", description: "Warm black, restrained red, full artwork." },
-    { id: "oled", name: "OLED Theatre", description: "Deeper surfaces for dark rooms and phones." },
-    { id: "ember", name: "Ember Room", description: "Warm charcoal with a softer vermilion accent." },
-    { id: "crimson", name: "Crimson Noir", description: "Wine-black surfaces with a richer theatrical red." },
-    { id: "system", name: "Device Contrast", description: "Follows the device contrast preference." },
+    { id: "oled", name: "OLED Theatre", description: "Deeper pitch black for dark rooms and OLED displays." },
+    { id: "ember", name: "Ember Room", description: "Warm charcoal with radiant vermilion amber glow." },
+    { id: "crimson", name: "Crimson Noir", description: "Wine-black surfaces with richer theatrical ruby red." },
+    { id: "tokyo", name: "Tokyo Night", description: "Deep midnight indigo with vibrant magenta and cyan accents." },
+    { id: "cyberpunk", name: "Cyberpunk Neon", description: "Dark cyber surfaces with electric neon yellow & teal." },
+    { id: "emerald", name: "Emerald Forest", description: "Deep obsidian-jade with luminous mint accents." },
+    { id: "amethyst", name: "Amethyst Violet", description: "Royal twilight with vibrant lilac & purple glow." },
+    { id: "sunset", name: "Sunset Velvet", description: "Dark espresso with warm amber & coral tones." },
+    { id: "nordic", name: "Nordic Frost", description: "Deep arctic navy with crystal ice blue accents." },
+    { id: "system", name: "Device Contrast", description: "Follows the device system contrast preference." },
   ];
   const scales: Array<{ id: AppScale; name: string; description: string }> = [
     { id: "compact", name: "Compact", description: "More titles and controls on a 16-inch display." },
@@ -2645,9 +2859,13 @@ function SettingsPage({
     { id: "tv", name: "TV / remote", description: "10-foot text, generous safe margins, and arrow-key focus navigation." },
   ];
   const fonts: Array<{ id: AppFont; name: string; description: string }> = [
-    { id: "manrope", name: "Manrope", description: "Modern interface face with Vietnamese support." },
-    { id: "noto", name: "Noto Sans", description: "Highly legible Vietnamese and multilingual text." },
-    { id: "system", name: "System", description: "Uses the native font on macOS, iPhone, or browser." },
+    { id: "manrope", name: "Manrope", description: "Modern interface geometric font with Vietnamese support." },
+    { id: "noto", name: "Noto Sans", description: "Highly legible Vietnamese and multilingual typography." },
+    { id: "vietnam", name: "Be Vietnam Pro", description: "Carefully engineered for elegant Vietnamese diacritics." },
+    { id: "jakarta", name: "Plus Jakarta Sans", description: "Clean, crisp contemporary geometric grotesque." },
+    { id: "outfit", name: "Outfit", description: "Distinctive modern display and UI typography." },
+    { id: "mono", name: "JetBrains / IBM Mono", description: "Precision cinematic technical monospace." },
+    { id: "system", name: "System Native", description: "Native system font on macOS, iPhone, or browser." },
   ];
 
   return (
@@ -3125,6 +3343,7 @@ function HomeDashboard({
           onRemove={onRemoveHistory}
           isGuest={!session || session.role === "guest"}
           onShowSignIn={onShowSignIn}
+          onOpenSearch={onOpenSearch}
         />
         <CatalogRow
           title="Top Matches"
@@ -3233,6 +3452,7 @@ function ContinueWatchingRow({
   onRemove,
   isGuest,
   onShowSignIn,
+  onOpenSearch,
 }: {
   items: WatchHistory[];
   total: number;
@@ -3243,6 +3463,7 @@ function ContinueWatchingRow({
   onRemove: (item: WatchHistory) => void;
   isGuest?: boolean;
   onShowSignIn?: () => void;
+  onOpenSearch?: () => void;
 }) {
   return (
     <motion.section className="content-row" initial={{ opacity: 0, y: 14 }} animate={{ opacity: 1, y: 0 }} transition={{ duration: 0.24 }}>
@@ -3266,7 +3487,12 @@ function ContinueWatchingRow({
             onShowSignIn={onShowSignIn}
           />
         ) : (
-          <ShelfEmptyCard title="Nothing to resume" subtitle="Start an episode and it will appear here." />
+          <ShelfEmptyCard
+            title="Nothing to resume"
+            subtitle="Start an episode and it will appear here."
+            actionLabel="Find something to watch"
+            onAction={onOpenSearch}
+          />
         )}
       </div>
     </motion.section>
@@ -3363,7 +3589,17 @@ function GuestShelfCard({
   );
 }
 
-function ShelfEmptyCard({ title, subtitle }: { title: string; subtitle: string }) {
+function ShelfEmptyCard({
+  title,
+  subtitle,
+  actionLabel,
+  onAction,
+}: {
+  title: string;
+  subtitle: string;
+  actionLabel?: string;
+  onAction?: () => void;
+}) {
   return (
     <div className="shelf-empty-card">
       <img src={LOGO_SRC} alt="" />
@@ -3371,6 +3607,31 @@ function ShelfEmptyCard({ title, subtitle }: { title: string; subtitle: string }
         <strong>{title}</strong>
         <span>{subtitle}</span>
       </div>
+      {actionLabel && onAction && (
+        <button
+          type="button"
+          className="shelf-empty-action-btn"
+          style={{
+            marginLeft: "auto",
+            padding: "0.4rem 0.85rem",
+            borderRadius: "var(--radius-pill)",
+            border: "1px solid var(--color-glass-hairline)",
+            background: "var(--color-paper-3)",
+            color: "var(--color-ink)",
+            fontSize: "var(--text-xs)",
+            fontWeight: 700,
+            cursor: "pointer",
+            display: "inline-flex",
+            alignItems: "center",
+            gap: "0.35rem",
+            whiteSpace: "nowrap",
+          }}
+          onClick={onAction}
+        >
+          <Search size={13} />
+          <span>{actionLabel}</span>
+        </button>
+      )}
     </div>
   );
 }
@@ -3565,7 +3826,12 @@ function SearchStage({
     selectedCatalog?.coverUrl ||
     selectedAnime?.coverUrl ||
     LOGO_SRC;
-  const languageSources = sources.filter((source) => source.languageGroup === languageGroup);
+  const healthyLanguageSources = sources.filter(
+    (source) => source.languageGroup === languageGroup && source.status === "healthy" && source.capabilities.search
+  );
+  const languageSources = healthyLanguageSources.length > 0
+    ? healthyLanguageSources
+    : sources.filter((source) => source.languageGroup === languageGroup);
   const previewTitle = selectedCatalog?.title ?? selectedAnime?.title ?? "";
   const previewDescription = selectedCatalog?.description ?? selectedAnime?.synopsis ?? "";
   const previewMeta = selectedCatalog
@@ -3590,19 +3856,64 @@ function SearchStage({
     ...curatedTopics,
   ])].slice(0, 12);
 
-  function fetchProviderCatalog(sourceName: string) {
+  function getCachedProviderCatalog(name: string): Anime[] | null {
+    try {
+      const raw = localStorage.getItem(`any-watch:provider-catalog-v2:${name}`);
+      if (!raw) return null;
+      const parsed = JSON.parse(raw);
+      if (parsed && Array.isArray(parsed.items) && typeof parsed.timestamp === "number") {
+        if (Date.now() - parsed.timestamp < 24 * 60 * 60 * 1000 && parsed.items.length > 0) {
+          return parsed.items;
+        }
+      }
+    } catch {
+      // Ignore cache parse error
+    }
+    return null;
+  }
+
+  function saveCachedProviderCatalog(name: string, items: Anime[]) {
+    try {
+      if (items.length > 0) {
+        localStorage.setItem(
+          `any-watch:provider-catalog-v2:${name}`,
+          JSON.stringify({ timestamp: Date.now(), items })
+        );
+      }
+    } catch {
+      // Ignore localStorage error
+    }
+  }
+
+  function fetchProviderCatalog(sourceName: string, force = false) {
+    if (!force) {
+      const cached = getCachedProviderCatalog(sourceName);
+      if (cached && cached.length > 0) {
+        setProviderCatalog(cached);
+        setProviderCatalogLoading(false);
+        setProviderCatalogError(false);
+        return;
+      }
+    }
     setProviderCatalogLoading(true);
     setProviderCatalogError(false);
     api
       .getProviderCatalog(sourceName)
       .then((items) => {
         setProviderCatalog(items);
+        saveCachedProviderCatalog(sourceName, items);
         setProviderCatalogError(false);
         setProviderCatalogLoading(false);
       })
       .catch(() => {
-        setProviderCatalog([]);
-        setProviderCatalogError(true);
+        const fallback = getCachedProviderCatalog(sourceName);
+        if (fallback && fallback.length > 0) {
+          setProviderCatalog(fallback);
+          setProviderCatalogError(false);
+        } else {
+          setProviderCatalog([]);
+          setProviderCatalogError(true);
+        }
         setProviderCatalogLoading(false);
       });
   }
@@ -3613,30 +3924,8 @@ function SearchStage({
       setProviderCatalogError(false);
       return;
     }
-    let active = true;
-    setProviderCatalogLoading(true);
-    setProviderCatalogError(false);
-    api
-      .getProviderCatalog(selectedSource.name)
-      .then((items) => {
-        if (active) {
-          setProviderCatalog(items);
-          setProviderCatalogError(false);
-          setProviderCatalogLoading(false);
-        }
-      })
-      .catch(() => {
-        if (active) {
-          setProviderCatalog([]);
-          setProviderCatalogError(true);
-          setProviderCatalogLoading(false);
-        }
-      });
-    return () => {
-      active = false;
-    };
+    fetchProviderCatalog(selectedSource.name);
   }, [selectedSource?.name]);
-
   function setMobileSearchStep(previewOpen: boolean) {
     setMobilePreviewOpen(previewOpen);
     if (!window.matchMedia("(max-width: 760px)").matches) return;
@@ -6220,7 +6509,21 @@ function saveSourceName(sourceName: string) {
 function loadSavedTheme(): AppTheme {
   try {
     const saved = localStorage.getItem(THEME_STORAGE_KEY) ?? localStorage.getItem("any-watch:theme");
-    if (saved === "obsidian" || saved === "oled" || saved === "ember" || saved === "crimson" || saved === "system") return saved;
+    if (
+      saved === "obsidian" ||
+      saved === "oled" ||
+      saved === "ember" ||
+      saved === "crimson" ||
+      saved === "tokyo" ||
+      saved === "cyberpunk" ||
+      saved === "emerald" ||
+      saved === "amethyst" ||
+      saved === "sunset" ||
+      saved === "nordic" ||
+      saved === "system"
+    ) {
+      return saved;
+    }
   } catch {
     // localStorage can be unavailable in restricted WebView contexts.
   }
@@ -6256,7 +6559,17 @@ function saveScale(scale: AppScale) {
 function loadSavedFont(): AppFont {
   try {
     const saved = localStorage.getItem(APP_FONT_STORAGE_KEY) ?? localStorage.getItem("any-watch:font");
-    if (saved === "manrope" || saved === "noto" || saved === "system") return saved;
+    if (
+      saved === "manrope" ||
+      saved === "noto" ||
+      saved === "jakarta" ||
+      saved === "outfit" ||
+      saved === "vietnam" ||
+      saved === "mono" ||
+      saved === "system"
+    ) {
+      return saved;
+    }
   } catch {
     // localStorage can be unavailable in restricted WebView contexts.
   }

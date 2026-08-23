@@ -31,6 +31,10 @@
   --font-body: "Manrope", ui-sans-serif, system-ui, sans-serif;
   --font-body-manrope: "Manrope", ui-sans-serif, system-ui, sans-serif;
   --font-body-noto: "Noto Sans", ui-sans-serif, system-ui, sans-serif;
+  --font-body-jakarta: "Plus Jakarta Sans", "Manrope", ui-sans-serif, system-ui, sans-serif;
+  --font-body-outfit: "Outfit", "Manrope", ui-sans-serif, system-ui, sans-serif;
+  --font-body-vietnam: "Be Vietnam Pro", "Noto Sans", "Manrope", ui-sans-serif, system-ui, sans-serif;
+  --font-body-mono: "JetBrains Mono", "IBM Plex Mono", "SFMono-Regular", consolas, monospace;
   --font-body-system: -apple-system, blinkmacsystemfont, "Segoe UI", ui-sans-serif, sans-serif;
   --font-outlier: "IBM Plex Mono", "SFMono-Regular", consolas, monospace;
   --display-weight: 700;
@@ -82,6 +86,10 @@
 
 :root[data-font="manrope"] { --font-body: var(--font-body-manrope); }
 :root[data-font="noto"] { --font-body: var(--font-body-noto); }
+:root[data-font="jakarta"] { --font-body: var(--font-body-jakarta); }
+:root[data-font="outfit"] { --font-body: var(--font-body-outfit); }
+:root[data-font="vietnam"] { --font-body: var(--font-body-vietnam); }
+:root[data-font="mono"] { --font-body: var(--font-body-mono); }
 :root[data-font="system"] { --font-body: var(--font-body-system); }
 
 :root[data-scale="compact"] { font-size: 15px; }
@@ -95,16 +103,18 @@
   --color-paper-3: oklch(11% 0.01 25);
   --color-glass: oklch(5% 0.006 25 / 0.82);
   --color-glass-strong: oklch(8% 0.008 25 / 0.94);
+  --color-accent: oklch(63% 0.25 25);
+  --color-focus: oklch(74% 0.22 25);
 }
 
 :root[data-theme="ember"] {
   --color-paper: oklch(10% 0.016 35);
   --color-paper-2: oklch(15% 0.024 35);
   --color-paper-3: oklch(21% 0.03 35);
-  --color-accent: oklch(66% 0.22 32);
+  --color-accent: oklch(66% 0.22 35);
   --color-focus: oklch(75% 0.18 38);
-  --color-accent-soft: oklch(66% 0.22 32 / 0.2);
-  --color-accent-faint: oklch(66% 0.22 32 / 0.1);
+  --color-accent-soft: oklch(66% 0.22 35 / 0.2);
+  --color-accent-faint: oklch(66% 0.22 35 / 0.1);
 }
 
 :root[data-theme="crimson"] {
@@ -115,6 +125,86 @@
   --color-focus: oklch(70% 0.22 18);
   --color-accent-soft: oklch(58% 0.27 18 / 0.22);
   --color-accent-faint: oklch(58% 0.27 18 / 0.11);
+}
+
+:root[data-theme="tokyo"] {
+  --color-paper: oklch(11% 0.022 265);
+  --color-paper-2: oklch(16% 0.032 265);
+  --color-paper-3: oklch(22% 0.042 265);
+  --color-rule: oklch(34% 0.04 265);
+  --color-rule-2: oklch(26% 0.03 265);
+  --color-accent: oklch(72% 0.19 320);
+  --color-focus: oklch(78% 0.17 210);
+  --color-accent-soft: oklch(72% 0.19 320 / 0.22);
+  --color-accent-faint: oklch(72% 0.19 320 / 0.11);
+  --color-glass: oklch(16% 0.032 265 / 0.78);
+  --color-glass-strong: oklch(20% 0.038 265 / 0.92);
+}
+
+:root[data-theme="cyberpunk"] {
+  --color-paper: oklch(9% 0.012 280);
+  --color-paper-2: oklch(14% 0.018 280);
+  --color-paper-3: oklch(19% 0.025 280);
+  --color-rule: oklch(38% 0.06 100);
+  --color-rule-2: oklch(26% 0.04 100);
+  --color-accent: oklch(86% 0.21 105);
+  --color-accent-ink: oklch(10% 0.02 105);
+  --color-focus: oklch(80% 0.18 195);
+  --color-accent-soft: oklch(86% 0.21 105 / 0.22);
+  --color-accent-faint: oklch(86% 0.21 105 / 0.11);
+  --color-glass: oklch(14% 0.018 280 / 0.8);
+}
+
+:root[data-theme="emerald"] {
+  --color-paper: oklch(9% 0.018 160);
+  --color-paper-2: oklch(14% 0.028 160);
+  --color-paper-3: oklch(19% 0.038 160);
+  --color-rule: oklch(32% 0.04 160);
+  --color-rule-2: oklch(24% 0.03 160);
+  --color-accent: oklch(74% 0.18 155);
+  --color-focus: oklch(82% 0.14 150);
+  --color-accent-soft: oklch(74% 0.18 155 / 0.22);
+  --color-accent-faint: oklch(74% 0.18 155 / 0.11);
+  --color-glass: oklch(14% 0.028 160 / 0.78);
+}
+
+:root[data-theme="amethyst"] {
+  --color-paper: oklch(9% 0.018 300);
+  --color-paper-2: oklch(14% 0.028 300);
+  --color-paper-3: oklch(20% 0.038 300);
+  --color-rule: oklch(33% 0.045 300);
+  --color-rule-2: oklch(25% 0.035 300);
+  --color-accent: oklch(70% 0.22 305);
+  --color-focus: oklch(78% 0.18 300);
+  --color-accent-soft: oklch(70% 0.22 305 / 0.22);
+  --color-accent-faint: oklch(70% 0.22 305 / 0.11);
+  --color-glass: oklch(14% 0.028 300 / 0.78);
+}
+
+:root[data-theme="sunset"] {
+  --color-paper: oklch(10% 0.016 45);
+  --color-paper-2: oklch(15% 0.025 45);
+  --color-paper-3: oklch(21% 0.035 45);
+  --color-rule: oklch(34% 0.045 45);
+  --color-rule-2: oklch(25% 0.035 45);
+  --color-accent: oklch(68% 0.22 45);
+  --color-focus: oklch(76% 0.19 55);
+  --color-accent-soft: oklch(68% 0.22 45 / 0.22);
+  --color-accent-faint: oklch(68% 0.22 45 / 0.11);
+  --color-glass: oklch(15% 0.025 45 / 0.78);
+}
+
+:root[data-theme="nordic"] {
+  --color-paper: oklch(10% 0.018 220);
+  --color-paper-2: oklch(15% 0.028 220);
+  --color-paper-3: oklch(21% 0.038 220);
+  --color-rule: oklch(32% 0.04 220);
+  --color-rule-2: oklch(24% 0.03 220);
+  --color-accent: oklch(76% 0.14 215);
+  --color-focus: oklch(84% 0.11 210);
+  --color-accent-soft: oklch(76% 0.14 215 / 0.22);
+  --color-accent-faint: oklch(76% 0.14 215 / 0.11);
+  --color-glass: oklch(15% 0.028 220 / 0.78);
 }
 
 @media (prefers-contrast: more) {

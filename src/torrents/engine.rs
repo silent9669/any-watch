@@ -310,6 +310,27 @@ impl TorrentTaskManager {
         Ok(task)
     }
 
+    pub async fn reject_task(&self, task_id: &str, reason: &str) -> Result<TorrentTask> {
+        let task = {
+            let mut tasks = self.tasks.write().await;
+            let task = tasks.get_mut(task_id).context("Task not found")?;
+            task.status = TaskStatus::Failed {
+                reason: reason.to_string(),
+            };
+            task.completed_at = Some(
+                SystemTime::now()
+                    .duration_since(UNIX_EPOCH)
+                    .unwrap_or_default()
+                    .as_secs(),
+            );
+            task.clone()
+        };
+
+        let _ = persist_task(&self.base_dir, &task).await;
+        let _ = self.event_tx.send(task.clone());
+        Ok(task)
+    }
+
     async fn spawn_worker_for_task(
         &self,
         task_id: &str,

@@ -631,6 +631,7 @@ async fn main() -> Result<()> {
         .route("/torrents/download", post(start_torrent_download))
         .route("/torrents/tasks", get(list_torrent_tasks))
         .route("/torrents/tasks/:id/approve", post(approve_torrent_task))
+        .route("/torrents/tasks/:id/reject", post(reject_torrent_task))
         .route(
             "/torrents/tasks/:id",
             get(get_torrent_task).delete(delete_torrent_task),
@@ -3684,6 +3685,29 @@ async fn approve_torrent_task(
             false,
         )
     })?;
+    Ok(Json(json!(task)))
+}
+
+async fn reject_torrent_task(
+    State(state): State<AppState>,
+    headers: HeaderMap,
+    Path(id): Path<String>,
+) -> ApiResult<Json<Value>> {
+    require_app_request(&headers)?;
+    require_admin(&state, &headers).await?;
+    let task = state
+        .torrent_engine
+        .reject_task(&id, "Rejected by admin")
+        .await
+        .map_err(|e| {
+            ApiError::new(
+                StatusCode::BAD_REQUEST,
+                "TASK_REJECTION_FAILED",
+                "torrent_reject",
+                e.to_string(),
+                false,
+            )
+        })?;
     Ok(Json(json!(task)))
 }
 

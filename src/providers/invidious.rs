@@ -14,6 +14,18 @@ use std::time::{Duration, Instant};
 const PROVIDER_NAME: &str = "Invidious";
 const REQUEST_TIMEOUT: Duration = Duration::from_secs(15);
 
+const PUBLIC_INVIDIOUS_INSTANCES: &[&str] = &[
+    "https://inv.nadeko.net",
+    "https://invidious.nerdvpn.de",
+    "https://invidious.drgns.space",
+    "https://yewtu.be",
+    "https://invidious.no-valis.space",
+    "https://vid.priv.au",
+    "https://inv.tux.pizza",
+    "https://invidious.projectsegfau.lt",
+    "https://iv.ggtyler.dev",
+];
+
 pub struct InvidiousProvider {
     client: reqwest::Client,
     base_url: Url,
@@ -147,21 +159,56 @@ impl InvidiousProvider {
             }
         }
 
-        let fetch_result: Result<VideoResponse> = async {
-            let url = self.endpoint(&format!("api/v1/videos/{video_id}"))?;
-            self.client
+        let is_local_test = self
+            .base_url
+            .host_str()
+            .is_some_and(|h| h == "127.0.0.1" || h == "localhost");
+        let mut instances = vec![self.base_url.clone()];
+        if !is_local_test {
+            for &inst in PUBLIC_INVIDIOUS_INSTANCES {
+                if let Ok(u) = Url::parse(inst) {
+                    if u != self.base_url && !instances.contains(&u) {
+                        instances.push(u);
+                    }
+                }
+            }
+        }
+
+        let mut last_error = None;
+        let mut video_opt = None;
+        for base in instances {
+            let url = match base.join(&format!("api/v1/videos/{video_id}")) {
+                Ok(u) => u,
+                Err(e) => {
+                    last_error = Some(e.into());
+                    continue;
+                }
+            };
+            let response = match self
+                .client
                 .get(url)
                 .query(&[("local", self.local_proxy.to_string())])
                 .send()
                 .await
-                .context("Failed to reach Invidious video API")?
-                .error_for_status()
-                .context("Invidious could not resolve this video")?
-                .json()
-                .await
-                .context("Failed to parse Invidious video response")
+            {
+                Ok(res) if res.status().is_success() => res,
+                Ok(res) => {
+                    last_error = Some(anyhow::anyhow!("Invidious video HTTP {}", res.status()));
+                    continue;
+                }
+                Err(e) => {
+                    last_error = Some(e.into());
+                    continue;
+                }
+            };
+            if let Ok(parsed) = response.json::<VideoResponse>().await {
+                video_opt = Some(parsed);
+                break;
+            }
         }
-        .await;
+        let fetch_result = video_opt.ok_or_else(|| {
+            last_error.unwrap_or_else(|| anyhow::anyhow!("Invidious could not resolve this video"))
+        });
         let video = match fetch_result {
             Ok(video) => video,
             Err(error) => {
@@ -199,46 +246,115 @@ impl InvidiousProvider {
     }
 
     pub async fn trending(&self, topic: Option<&str>) -> Result<Vec<Anime>> {
-        let mut url = self.endpoint("api/v1/trending")?;
-        if let Some(topic) = topic.filter(|t| !t.trim().is_empty() && *t != "all") {
-            url.query_pairs_mut().append_pair("type", topic);
-        }
-        let response = match self.client.get(url).send().await {
-            Ok(res) if res.status().is_success() => res,
-            _ => {
-                let pop_url = self.endpoint("api/v1/popular")?;
-                self.client
-                    .get(pop_url)
-                    .send()
-                    .await
-                    .context("Failed to reach Invidious trending or popular API")?
-                    .error_for_status()
-                    .context("Invidious popular returned an error")?
+        let is_local_test = self
+            .base_url
+            .host_str()
+            .is_some_and(|h| h == "127.0.0.1" || h == "localhost");
+        let mut instances = vec![self.base_url.clone()];
+        if !is_local_test {
+            for &inst in PUBLIC_INVIDIOUS_INSTANCES {
+                if let Ok(u) = Url::parse(inst) {
+                    if u != self.base_url && !instances.contains(&u) {
+                        instances.push(u);
+                    }
+                }
             }
-        };
-        let items: Vec<SearchItem> = response
-            .json()
-            .await
-            .context("Failed to parse Invidious trending response")?;
+        }
 
-        Ok(self.parse_feed_items(items))
+        let mut last_error = None;
+        for base in instances {
+            let endpoint_res = base.join("api/v1/trending");
+            let mut url = match endpoint_res {
+                Ok(u) => u,
+                Err(e) => {
+                    last_error = Some(e.into());
+                    continue;
+                }
+            };
+            if let Some(t) = topic.filter(|t| !t.trim().is_empty() && *t != "all") {
+                url.query_pairs_mut().append_pair("type", t);
+            }
+            let response = match self.client.get(url).send().await {
+                Ok(res) if res.status().is_success() => res,
+                _ => {
+                    let pop_url = match base.join("api/v1/popular") {
+                        Ok(u) => u,
+                        Err(e) => {
+                            last_error = Some(e.into());
+                            continue;
+                        }
+                    };
+                    match self.client.get(pop_url).send().await {
+                        Ok(res) if res.status().is_success() => res,
+                        Ok(res) => {
+                            last_error =
+                                Some(anyhow::anyhow!("Invidious returned HTTP {}", res.status()));
+                            continue;
+                        }
+                        Err(e) => {
+                            last_error = Some(e.into());
+                            continue;
+                        }
+                    }
+                }
+            };
+
+            if let Ok(items) = response.json::<Vec<SearchItem>>().await {
+                if !items.is_empty() {
+                    return Ok(self.parse_feed_items(items));
+                }
+            }
+        }
+
+        Err(last_error.unwrap_or_else(|| {
+            anyhow::anyhow!("Failed to reach Invidious trending or popular API")
+        }))
     }
 
     pub async fn popular(&self) -> Result<Vec<Anime>> {
-        let url = self.endpoint("api/v1/popular")?;
-        let items: Vec<SearchItem> = self
-            .client
-            .get(url)
-            .send()
-            .await
-            .context("Failed to reach Invidious popular API")?
-            .error_for_status()
-            .context("Invidious popular returned an error")?
-            .json()
-            .await
-            .context("Failed to parse Invidious popular response")?;
+        let is_local_test = self
+            .base_url
+            .host_str()
+            .is_some_and(|h| h == "127.0.0.1" || h == "localhost");
+        let mut instances = vec![self.base_url.clone()];
+        if !is_local_test {
+            for &inst in PUBLIC_INVIDIOUS_INSTANCES {
+                if let Ok(u) = Url::parse(inst) {
+                    if u != self.base_url && !instances.contains(&u) {
+                        instances.push(u);
+                    }
+                }
+            }
+        }
 
-        Ok(self.parse_feed_items(items))
+        let mut last_error = None;
+        for base in instances {
+            let url = match base.join("api/v1/popular") {
+                Ok(u) => u,
+                Err(e) => {
+                    last_error = Some(e.into());
+                    continue;
+                }
+            };
+            let response = match self.client.get(url).send().await {
+                Ok(res) if res.status().is_success() => res,
+                Ok(res) => {
+                    last_error = Some(anyhow::anyhow!("Invidious popular HTTP {}", res.status()));
+                    continue;
+                }
+                Err(e) => {
+                    last_error = Some(e.into());
+                    continue;
+                }
+            };
+            if let Ok(items) = response.json::<Vec<SearchItem>>().await {
+                if !items.is_empty() {
+                    return Ok(self.parse_feed_items(items));
+                }
+            }
+        }
+
+        Err(last_error.unwrap_or_else(|| anyhow::anyhow!("Failed to reach Invidious popular API")))
     }
 
     pub async fn related(&self, video_id: &str) -> Result<Vec<Anime>> {
@@ -377,21 +493,53 @@ impl AnimeProvider for InvidiousProvider {
     }
 
     async fn search(&self, query: &str) -> Result<Vec<Anime>> {
-        let url = self.endpoint("api/v1/search")?;
-        let items: Vec<SearchItem> = self
-            .client
-            .get(url)
-            .query(&[("q", query), ("type", "video")])
-            .send()
-            .await
-            .context("Failed to search Invidious")?
-            .error_for_status()
-            .context("Invidious search returned an error")?
-            .json()
-            .await
-            .context("Failed to parse Invidious search response")?;
+        let is_local_test = self
+            .base_url
+            .host_str()
+            .is_some_and(|h| h == "127.0.0.1" || h == "localhost");
+        let mut instances = vec![self.base_url.clone()];
+        if !is_local_test {
+            for &inst in PUBLIC_INVIDIOUS_INSTANCES {
+                if let Ok(u) = Url::parse(inst) {
+                    if u != self.base_url && !instances.contains(&u) {
+                        instances.push(u);
+                    }
+                }
+            }
+        }
 
-        Ok(self.parse_feed_items(items))
+        let mut last_error = None;
+        for base in instances {
+            let url = match base.join("api/v1/search") {
+                Ok(u) => u,
+                Err(e) => {
+                    last_error = Some(e.into());
+                    continue;
+                }
+            };
+            let response = match self
+                .client
+                .get(url)
+                .query(&[("q", query), ("type", "video")])
+                .send()
+                .await
+            {
+                Ok(res) if res.status().is_success() => res,
+                Ok(res) => {
+                    last_error = Some(anyhow::anyhow!("Invidious search HTTP {}", res.status()));
+                    continue;
+                }
+                Err(e) => {
+                    last_error = Some(e.into());
+                    continue;
+                }
+            };
+            if let Ok(items) = response.json::<Vec<SearchItem>>().await {
+                return Ok(self.parse_feed_items(items));
+            }
+        }
+
+        Err(last_error.unwrap_or_else(|| anyhow::anyhow!("Invidious search returned an error")))
     }
 
     async fn catalog(&self) -> Result<Vec<Anime>> {

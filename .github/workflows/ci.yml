@@ -88,9 +88,13 @@ jobs:
         run: npm audit --audit-level=high
 
   browser-e2e:
-    name: Browser E2E (Chromium)
+    name: Browser E2E (${{ matrix.browser }})
     runs-on: ubuntu-latest
     timeout-minutes: 15
+    strategy:
+      fail-fast: false
+      matrix:
+        browser: [chromium, webkit]
     steps:
       - uses: actions/checkout@v4
         with:
@@ -111,18 +115,19 @@ jobs:
         uses: actions/cache@v4
         with:
           path: ${{ env.PLAYWRIGHT_BROWSERS_PATH }}
-          key: ${{ runner.os }}-playwright-chromium-${{ hashFiles('tests/e2e/requirements.txt') }}
+          key: ${{ runner.os }}-playwright-${{ matrix.browser }}-${{ hashFiles('tests/e2e/requirements.txt') }}
 
       - name: Install browser test dependencies
         run: |
           npm ci
           python -m pip install -r tests/e2e/requirements.txt
-          python -m playwright install --with-deps chromium
+          python -m playwright install --with-deps ${{ matrix.browser }}
 
       - name: Run application behavior and responsive tests
-        run: pytest tests/e2e/test_app.py --browser chromium -q
+        run: pytest tests/e2e/test_app.py --browser ${{ matrix.browser }} -q
 
       - name: Run independent maintenance-page tests
+        if: matrix.browser == 'chromium'
         run: pytest tests/e2e/test_maintenance.py -q
 
   web-container:
