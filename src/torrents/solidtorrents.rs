@@ -53,6 +53,7 @@ impl TorrentSearchProvider for SolidTorrentsProvider {
             TorrentCategory::Movies,
             TorrentCategory::Tv,
             TorrentCategory::Anime,
+            TorrentCategory::Documentaries,
         ]
     }
 

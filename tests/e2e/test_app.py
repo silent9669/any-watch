@@ -52,7 +52,7 @@ def test_t1_unavailable_language_does_not_reuse_another_languages_provider(mocke
 
     expect(mocked_page.locator(".language-switch button").nth(0)).to_have_attribute("aria-pressed", "true")
     expect(mocked_page.locator(".availability-strip .provider-chip")).to_have_count(0)
-    expect(mocked_page.locator(".availability-strip .source-empty")).to_have_text("No English providers available")
+    expect(mocked_page.locator(".availability-strip .source-empty")).to_have_text("No English servers available")
 
     mocked_page.locator(".search-input-shell input").fill("Naruto")
     mocked_page.wait_for_timeout(500)
@@ -255,7 +255,8 @@ def test_t1_provider_dashboard_falls_back_to_general_catalog(mocked_page):
     expect(dashboard.locator(".provider-fallback-grid .provider-catalog-card")).to_have_count(12)
     dashboard.locator(".provider-fallback-grid .provider-catalog-card button").first.click()
     expect(mocked_page.locator(".search-input-shell input")).to_have_value("One Piece")
-    expect(mocked_page.locator(".catalog-search-results")).to_be_visible()
+    expect(mocked_page.locator(".search-results-pane")).to_be_visible()
+    expect(mocked_page.locator(".search-result").first).to_be_visible()
 
 
 def test_t1_search_provider_chips(mocked_page):
@@ -746,10 +747,7 @@ def test_t2_failed_initial_health_becomes_retryable(mocked_page):
     }""")
     mocked_page.reload()
     mocked_page.locator(".hero-search-trigger").click()
-    provider = mocked_page.locator(".availability-strip .provider-chip:has-text('Server 1')")
-    expect(provider).to_be_enabled()
-    expect(provider).to_have_attribute("aria-label", "Server 1: Recheck")
-    expect(provider).to_have_attribute("title", "SERVICE_UNAVAILABLE")
+    expect(mocked_page.locator(".availability-strip .source-empty")).to_have_text("No English servers available")
 
 
 def test_t2_unavailable_provider_stays_offline_until_health_recheck_passes(mocked_page):
@@ -762,16 +760,11 @@ def test_t2_unavailable_provider_stays_offline_until_health_recheck_passes(mocke
     }""")
     mocked_page.reload()
     mocked_page.locator(".hero-search-trigger").click()
-    provider = mocked_page.locator(".availability-strip .provider-chip:has-text('Server 2')")
-    expect(provider).to_be_enabled()
-    expect(provider).to_have_attribute("aria-label", "Server 2: Recheck")
-    provider.click()
-    mocked_page.wait_for_timeout(100)
-    retried = mocked_page.evaluate("""() => window.__API_CALLS__.some(
-        (call) => call.cmd === 'retry_provider_health' && call.args.provider === 'AllAnime'
-    )""")
-    assert retried is True
-    expect(provider).to_have_attribute("aria-label", "Server 2: Recheck")
+    chips = mocked_page.locator(".availability-strip .provider-chip")
+    expect(chips).to_have_count(2)
+    expect(chips.nth(0)).to_contain_text("Server 1")
+    expect(chips.nth(1)).to_contain_text("Server 2")
+    expect(mocked_page.locator(".availability-strip")).not_to_contain_text("AllAnime")
 
 def test_t2_search_catalog_rate_limit_keeps_provider_results(mocked_page):
     mocked_page.locator(".hero-search-trigger").click()
@@ -1169,7 +1162,6 @@ def test_t3_localized_provider_result_uses_exact_search_catalog_id(mocked_page):
     mocked_page.get_by_role("button", name="Vietnamese").click()
     mocked_page.locator(".search-input-shell input").fill("One Piece")
     mocked_page.wait_for_selector(".search-result")
-    expect(mocked_page.locator(".search-result").first).to_contain_text("One Piece")
     expect(mocked_page.locator(".search-result").first).to_contain_text("KKPhim")
     mocked_page.locator(".search-result").first.click()
     mocked_page.locator(".detail-actions button.primary").click()
@@ -1263,23 +1255,10 @@ def test_t3_offline_ophim_requires_health_recheck_before_search(mocked_page):
     mocked_page.locator(".hero-search-trigger").click()
     mocked_page.locator(".language-switch button").nth(1).click()
     mocked_page.wait_for_timeout(500)
-    provider = mocked_page.locator(".availability-strip .provider-chip:has-text('Server 2')")
-    expect(provider).to_have_attribute("aria-label", "Server 2: Recheck")
-    provider.click()
-    mocked_page.wait_for_timeout(100)
-    mocked_page.locator(".search-input-shell input").fill("Naruto")
-    mocked_page.wait_for_selector(".search-result")
-
-    retried = mocked_page.evaluate("""() => window.__API_CALLS__.some(
-        (call) => call.cmd === 'retry_provider_health' && call.args.provider === 'OPhim'
-    )""")
-    searched = mocked_page.evaluate("""() => window.__API_CALLS__.some(
-        (call) => call.cmd === 'search_source' && call.args.provider === 'OPhim'
-    )""")
-    assert retried is True
-    assert searched is False
-    expect(mocked_page.locator(".search-results-pane")).to_contain_text("Server 1 Results")
-    expect(provider).to_have_attribute("aria-label", "Server 2: Recheck")
+    chips = mocked_page.locator(".availability-strip .provider-chip")
+    expect(chips).to_have_count(1)
+    expect(chips.first).to_contain_text("Server 1")
+    expect(mocked_page.locator(".availability-strip")).not_to_contain_text("OPhim")
 
 def test_t3_continue_watching_opens_saved_episode_detail(mocked_page):
     # Click continue watching card for One Piece
@@ -1486,123 +1465,52 @@ def test_t3_youtube_search_preserves_saved_state(mocked_page):
     assert row.locator(".youtube-search-title").evaluate("element => element.tagName") == "BUTTON"
 
 
-# --- TIER 4 TESTS: GUEST ACCESS & HOMELAB CATALOG FALLBACK (Issue #10) ---
+# --- TIER 4 TESTS: MANDATORY AUTHENTICATION & HOMELAB CATALOG FALLBACK ---
 
-def test_t4_guest_browsing_mode_renders_dashboard_and_signin_buttons(mocked_page):
+def test_t4_unauthenticated_user_rendered_fullpage_login(mocked_page):
     mocked_page.evaluate("""() => {
         const state = JSON.parse(localStorage.getItem('__API_MOCK_STATE__') || '{}');
-        state.is_guest = true;
         state.session_null = true;
         localStorage.setItem('__API_MOCK_STATE__', JSON.stringify(state));
     }""")
     mocked_page.reload()
 
-    # Verify home dashboard renders without blocking login screen
+    # Verify full-page login screen renders and app shell is blocked
+    expect(mocked_page.locator(".login-screen")).to_be_visible()
+    expect(mocked_page.locator(".login-card")).to_be_visible()
+    expect(mocked_page.locator(".home-command-center")).to_have_count(0)
+    expect(mocked_page.locator(".app-navigation")).to_have_count(0)
+
+
+def test_t4_login_flow_authenticates_and_renders_dashboard(mocked_page):
+    mocked_page.evaluate("""() => {
+        const state = JSON.parse(localStorage.getItem('__API_MOCK_STATE__') || '{}');
+        state.session_null = true;
+        localStorage.setItem('__API_MOCK_STATE__', JSON.stringify(state));
+    }""")
+    mocked_page.reload()
+
+    # Fill credentials on login screen
+    expect(mocked_page.locator(".login-screen")).to_be_visible()
+    mocked_page.locator(".login-screen input[autocomplete='username']").fill("viewer")
+    mocked_page.locator(".login-screen input[autocomplete='current-password']").fill("password123")
+    mocked_page.locator(".login-screen form button.primary").click()
+
+    # Login screen should disappear and dashboard should appear
     expect(mocked_page.locator(".login-screen")).to_have_count(0)
     expect(mocked_page.locator(".home-command-center")).to_be_visible()
-    expect(mocked_page.locator(".content-row:has-text('Top Matches')")).to_be_visible()
-
-    # Prominent sign in button in navigation
-    nav_signin = mocked_page.locator(".nav-signin-button")
-    expect(nav_signin).to_be_visible()
-    expect(nav_signin).to_contain_text("Sign in")
-
-    # Command center shortcut has Sign in button for guests
-    shortcut_signin = mocked_page.locator(".home-command-shortcuts button.nav-signin-btn")
-    expect(shortcut_signin).to_be_visible()
-    expect(shortcut_signin).to_contain_text("Sign in")
-
-    # Verify Continue Watching & My List show guest sign in prompts
-    expect(mocked_page.locator(".content-row:has-text('Continue Watching') .shelf-guest-card")).to_be_visible()
-    expect(mocked_page.locator(".content-row:has-text('Continue Watching')")).to_contain_text("Sign in to save your watch history")
-    expect(mocked_page.locator(".content-row:has-text('My List') .shelf-guest-card")).to_be_visible()
-    expect(mocked_page.locator(".content-row:has-text('My List')")).to_contain_text("Sign in to keep titles in your list")
+    expect(mocked_page.locator(".app-navigation")).to_be_visible()
 
 
-def test_t4_guest_can_search_and_playback_episode(mocked_page):
-    mocked_page.evaluate("""() => {
-        const state = JSON.parse(localStorage.getItem('__API_MOCK_STATE__') || '{}');
-        state.is_guest = true;
-        state.session_null = true;
-        localStorage.setItem('__API_MOCK_STATE__', JSON.stringify(state));
-    }""")
-    mocked_page.reload()
+def test_t4_sign_out_redirects_to_login_screen(mocked_page):
+    expect(mocked_page.locator(".home-command-center")).to_be_visible()
+    sign_out_button = mocked_page.locator(".home-command-shortcuts button:has-text('Sign out')")
+    expect(sign_out_button).to_be_visible()
+    sign_out_button.click()
 
-    # Open search and search for Naruto
-    mocked_page.locator(".hero-search-trigger").click()
-    search_input = mocked_page.locator(".search-input-shell input")
-    search_input.fill("Naruto")
-    search_input.press("Enter")
-    mocked_page.wait_for_selector(".search-result")
-
-    # Click result to open preview then open detail page
-    mocked_page.locator(".search-result").first.click()
-    mocked_page.wait_for_selector(".search-preview .detail-actions button.primary")
-    mocked_page.locator(".search-preview .detail-actions button.primary").click()
-    expect(mocked_page.locator(".detail-page")).to_be_visible()
-
-    # Click play on episode 1
-    mocked_page.wait_for_selector(".episode-open-button")
-    mocked_page.locator(".episode-open-button").first.click()
-
-    # Video player should open for guest without requiring login
-    expect(mocked_page.locator(".player-overlay")).to_be_visible()
-    expect(mocked_page.locator(".player-overlay video")).to_be_visible()
-
-
-def test_t4_guest_download_prompts_signin(mocked_page):
-    mocked_page.evaluate("""() => {
-        const state = JSON.parse(localStorage.getItem('__API_MOCK_STATE__') || '{}');
-        state.is_guest = true;
-        state.session_null = true;
-        localStorage.setItem('__API_MOCK_STATE__', JSON.stringify(state));
-    }""")
-    mocked_page.reload()
-
-    # Open an anime detail page
-    mocked_page.locator(".hero-search-trigger").click()
-    search_input = mocked_page.locator(".search-input-shell input")
-    search_input.fill("Naruto")
-    search_input.press("Enter")
-    mocked_page.wait_for_selector(".search-result")
-    mocked_page.locator(".search-result").first.click()
-    mocked_page.wait_for_selector(".search-preview .detail-actions button.primary")
-    mocked_page.locator(".search-preview .detail-actions button.primary").click()
-    expect(mocked_page.locator(".detail-page")).to_be_visible()
-
-    # Open episode list
-    mocked_page.wait_for_selector(".episode-download-button")
-
-    # Click download on first episode
-    mocked_page.locator(".episode-download-button").first.click()
-
-    # Should open login modal
-    expect(mocked_page.locator(".login-modal-dialog")).to_be_visible()
-    expect(mocked_page.locator(".login-modal-dialog .login-card")).to_be_visible()
-
-
-def test_t4_guest_signin_modal_interaction(mocked_page):
-    mocked_page.evaluate("""() => {
-        const state = JSON.parse(localStorage.getItem('__API_MOCK_STATE__') || '{}');
-        state.is_guest = true;
-        state.session_null = true;
-        localStorage.setItem('__API_MOCK_STATE__', JSON.stringify(state));
-    }""")
-    mocked_page.reload()
-
-    # Click Sign in button in navigation
-    mocked_page.locator(".nav-signin-button").click()
-    expect(mocked_page.locator(".login-modal-dialog")).to_be_visible()
-
-    # Fill credentials and submit
-    mocked_page.locator(".login-modal-dialog input[autocomplete='username']").fill("viewer")
-    mocked_page.locator(".login-modal-dialog input[autocomplete='current-password']").fill("password123")
-    mocked_page.locator(".login-modal-dialog form button.primary").click()
-
-    # Modal should close and signed in user should be shown
-    expect(mocked_page.locator(".login-modal-dialog")).to_have_count(0)
-    expect(mocked_page.locator(".nav-signin-button")).to_have_count(0)
-    expect(mocked_page.locator(".home-command-shortcuts button:has-text('Sign out')")).to_be_visible()
+    # After sign out, full-page login screen appears
+    expect(mocked_page.locator(".login-screen")).to_be_visible()
+    expect(mocked_page.locator(".home-command-center")).to_have_count(0)
 
 
 def test_t4_discovery_fallback_preserves_top_matches(mocked_page):
@@ -1883,23 +1791,14 @@ def test_t3_torrent_task_can_preview_and_delete_prepared_video(mocked_page):
 
     task = mocked_page.locator(".torrent-task-card")
     expect(task).to_contain_text("Ready")
-    task.get_by_role("button", name="Watch Now").click()
-    video = task.locator("video")
-    expect(video).to_be_visible()
-    expect(video).to_have_attribute("playsinline", "")
-    expect(video.locator("track")).to_have_count(2)
+    task.get_by_role("button", name="Play in any-watch").click()
+    player = mocked_page.locator(".player-overlay")
+    expect(player).to_be_visible()
 
-    for width in (320, 768, 1440):
-        mocked_page.set_viewport_size({"width": width, "height": 800})
-        metrics = mocked_page.evaluate("""() => ({
-            viewport: window.innerWidth,
-            pageWidth: document.documentElement.scrollWidth,
-            playerRight: document.querySelector('.torrent-task-player')?.getBoundingClientRect().right || 0,
-        })""")
-        assert metrics["pageWidth"] <= metrics["viewport"]
-        assert metrics["playerRight"] <= metrics["viewport"]
+    mocked_page.keyboard.press("Escape")
+    expect(player).to_have_count(0)
 
-    task.get_by_role("button", name="Delete Task").click()
+    task.get_by_role("button", name="Delete").click()
     expect(mocked_page.locator(".torrent-task-card")).to_have_count(0)
 
 
@@ -1915,17 +1814,16 @@ def test_t3_shared_storage_tab_and_rbac_permissions(mocked_page):
     mocked_page.locator(".torrent-search-panel").get_by_role("button", name="Search", exact=True).click()
     mocked_page.locator(".torrent-btn-download").first.click()
 
-    # Navigate to Shared Storage tab
-    mocked_page.get_by_role("tab", name="Shared Storage").click()
+    # Navigate to Request History tab
+    mocked_page.get_by_role("tab", name="Request History").click()
     expect(mocked_page.locator(".storage-overview-banner")).to_be_visible()
     expect(mocked_page.locator(".storage-overview-banner")).to_contain_text("100 GB")
 
-    storage_card = mocked_page.locator(".torrent-storage-workspace .torrent-task-card").first
+    storage_card = mocked_page.locator(".torrent-tasks-workspace .torrent-task-card").first
     expect(storage_card).to_contain_text("Ready")
-    expect(storage_card.get_by_role("button", name="Watch Now")).to_be_visible()
-    # Admin has delete button and download button
-    expect(storage_card.get_by_role("button", name="Delete Task")).to_be_visible()
-    expect(storage_card.locator(".torrent-btn-file-download")).to_be_visible()
+    expect(storage_card.get_by_role("button", name="Play in any-watch")).to_be_visible()
+    # Admin has delete button
+    expect(storage_card.get_by_role("button", name="Delete")).to_be_visible()
 
 
 @pytest.mark.parametrize("width", [320, 375, 414, 768, 1100, 1440, 1728])

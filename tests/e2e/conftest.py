@@ -217,7 +217,7 @@ def mocked_page(page, vite_server):
                 if (state.search_error) throw state.search_error;
                 if ((args.query || "").toLowerCase().includes("empty")) return [];
                 if ((args.query || "").toLowerCase().includes("cinema")) return [];
-                const onePiece = (args.query || "").toLowerCase().includes("one piece");
+                const onePiece = (args.query || "").toLowerCase().includes("one piece") || (args.query || "").toLowerCase().includes("đảo hải tặc");
                 return Array.from({ length: 16 }, (_, index) => ({
                     catalogId: index === 0 && onePiece ? 21 : 3000 + index,
                     title: index === 0 ? (onePiece ? "One Piece" : "Naruto Shippuden") : `Sample Anime ${index + 1}`,
@@ -661,18 +661,16 @@ def mocked_page(page, vite_server):
             let args = body;
 
             if (method === "GET" && path === "/session") {
-                if (state.session_null || state.is_guest) {
+                if (state.session_null) {
                     return Response.json({ user: null });
                 }
                 return Response.json({ user: { id: "viewer-1", username: "viewer", role: "admin" } });
             } else if (method === "POST" && path === "/login") {
                 state.session_null = false;
-                state.is_guest = false;
                 saveMockState(state);
                 return Response.json({ id: "viewer-1", username: body.username, role: "admin" });
             } else if (method === "POST" && path === "/logout") {
                 state.session_null = true;
-                state.is_guest = true;
                 saveMockState(state);
                 return new Response(null, { status: 204 });
             } else if (method === "GET" && path === "/sources") cmd = "list_sources";

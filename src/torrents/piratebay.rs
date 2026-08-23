@@ -43,6 +43,7 @@ impl TorrentSearchProvider for ThePirateBayProvider {
             TorrentCategory::Movies,
             TorrentCategory::Tv,
             TorrentCategory::Anime,
+            TorrentCategory::Documentaries,
         ]
     }
 

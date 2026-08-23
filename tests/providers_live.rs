@@ -1,8 +1,11 @@
-use any_watch_core::providers::{
-    allanime::AllAnimeProvider, anidb::AniDbProvider, animegg::AnimeGgProvider,
-    animevietsub::AnimeVietSubProvider, anizone::AniZoneProvider, k20::K20Provider,
-    kkphim::KkphimProvider, moviebox::MovieBoxProvider, niniyo::NiniyoProvider, normalize_title,
-    ophim::OphimProvider, AnimeProvider, StreamInfo,
+use any_watch_core::{
+    config::InvidiousConfig,
+    providers::{
+        allanime::AllAnimeProvider, anidb::AniDbProvider, animegg::AnimeGgProvider,
+        animevietsub::AnimeVietSubProvider, anizone::AniZoneProvider, invidious::InvidiousProvider,
+        k20::K20Provider, kkphim::KkphimProvider, moviebox::MovieBoxProvider,
+        niniyo::NiniyoProvider, normalize_title, ophim::OphimProvider, AnimeProvider, StreamInfo,
+    },
 };
 use anyhow::{Context, Result};
 use reqwest::{header, Client, Url};
@@ -281,4 +284,35 @@ async fn test_animevietsub_live_playback() -> Result<()> {
 #[ignore = "requires live provider network access"]
 async fn test_k20_live_playback() -> Result<()> {
     assert_live_playback(&K20Provider::new(), "One Piece").await
+}
+
+#[tokio::test]
+#[ignore = "requires live provider network access"]
+async fn test_invidious_live_health() -> Result<()> {
+    let provider = InvidiousProvider::new(&InvidiousConfig {
+        instance_url: "https://inv.nadeko.net".into(),
+        local_proxy: true,
+    });
+    provider.health_check().await
+}
+
+#[tokio::test]
+#[ignore = "requires live provider network access"]
+async fn test_invidious_live_playback() -> Result<()> {
+    let provider = InvidiousProvider::new(&InvidiousConfig {
+        instance_url: "https://inv.nadeko.net".into(),
+        local_proxy: true,
+    });
+    let results = provider.search("Rick Astley").await?;
+    assert!(!results.is_empty(), "Invidious search returned results");
+    let video = &results[0];
+    let episodes = provider.get_episodes(&video.id).await?;
+    assert!(!episodes.is_empty(), "Invidious returned episode");
+    let stream = provider.get_stream_url(&episodes[0].id).await?;
+    assert!(
+        !stream.video_url.is_empty(),
+        "Invidious resolved stream URL"
+    );
+    eprintln!("Invidious resolved stream: {}", stream.video_url);
+    Ok(())
 }

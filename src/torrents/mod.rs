@@ -21,6 +21,7 @@ pub enum TorrentCategory {
     Anime,
     Movies,
     Tv,
+    Documentaries,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]

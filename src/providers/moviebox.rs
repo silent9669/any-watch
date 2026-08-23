@@ -620,10 +620,12 @@ fn stream_priority(url: &str) -> u8 {
     let lowercase = url.to_lowercase();
     if lowercase.contains(".m3u8") {
         3
-    } else if lowercase.contains(".mpd") {
+    } else if lowercase.contains(".mp4") {
         2
-    } else {
+    } else if lowercase.contains(".mpd") {
         1
+    } else {
+        0
     }
 }
 

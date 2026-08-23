@@ -104,7 +104,7 @@ impl WebDatabase {
                 id TEXT PRIMARY KEY,
                 username TEXT NOT NULL UNIQUE COLLATE NOCASE,
                 password_hash TEXT NOT NULL,
-                role TEXT NOT NULL CHECK(role IN ('admin', 'user', 'guest')),
+                role TEXT NOT NULL CHECK(role IN ('admin', 'user')),
                 enabled INTEGER NOT NULL DEFAULT 1,
                 created_at TEXT NOT NULL
             );
@@ -150,20 +150,20 @@ impl WebDatabase {
             )
             .optional()?;
         if let Some(sql) = users_sql {
-            if !sql.contains("'guest'") {
+            if sql.contains("'guest'") || !sql.contains("('admin', 'user')") {
                 conn.execute_batch(
                     "PRAGMA foreign_keys = OFF;
                      CREATE TABLE users_migrated (
                          id TEXT PRIMARY KEY,
                          username TEXT NOT NULL UNIQUE COLLATE NOCASE,
                          password_hash TEXT NOT NULL,
-                         role TEXT NOT NULL CHECK(role IN ('admin', 'user', 'guest')),
+                         role TEXT NOT NULL CHECK(role IN ('admin', 'user')),
                          enabled INTEGER NOT NULL DEFAULT 1,
                          created_at TEXT NOT NULL,
                          protected INTEGER NOT NULL DEFAULT 0
                      );
                      INSERT INTO users_migrated (id, username, password_hash, role, enabled, created_at, protected)
-                     SELECT id, username, password_hash, role, enabled, created_at, COALESCE(protected, 0) FROM users;
+                     SELECT id, username, password_hash, CASE WHEN role = 'guest' THEN 'user' ELSE role END, enabled, created_at, COALESCE(protected, 0) FROM users;
                      DROP TABLE users;
                      ALTER TABLE users_migrated RENAME TO users;
                      PRAGMA foreign_keys = ON;",
@@ -414,8 +414,8 @@ impl WebDatabase {
         validate_username(username)?;
         validate_password(password)?;
         anyhow::ensure!(
-            matches!(role, "admin" | "user" | "guest"),
-            "role must be admin, user, or guest"
+            matches!(role, "admin" | "user"),
+            "role must be admin or user"
         );
         let id = Uuid::new_v4().to_string();
         let created_at = Utc::now().to_rfc3339();
@@ -454,8 +454,8 @@ impl WebDatabase {
     ) -> Result<()> {
         validate_username(username)?;
         anyhow::ensure!(
-            matches!(role, "admin" | "user" | "guest"),
-            "role must be admin, user, or guest"
+            matches!(role, "admin" | "user"),
+            "role must be admin or user"
         );
         let password_hash = if let Some(password) = password.filter(|value| !value.is_empty()) {
             validate_password(password)?;
@@ -800,17 +800,22 @@ mod tests {
             .unwrap()
             .is_some());
 
-        let guest = db
-            .create_user("guest-account", "Guest-Password-2026", "guest")
+        let regular_user = db
+            .create_user("user-account", "User-Password-2026", "user")
             .await
             .unwrap();
-        assert_eq!(guest.role, "guest");
-        let guest_auth = db
-            .authenticate("guest-account", "Guest-Password-2026")
+        assert_eq!(regular_user.role, "user");
+        let user_auth = db
+            .authenticate("user-account", "User-Password-2026")
             .await
             .unwrap()
             .unwrap();
-        assert_eq!(guest_auth.role, "guest");
+        assert_eq!(user_auth.role, "user");
+
+        assert!(db
+            .create_user("guest-account", "Guest-Password-2026", "guest")
+            .await
+            .is_err());
 
         drop(db);
         let _ = tokio::fs::remove_file(path).await;

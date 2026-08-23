@@ -551,6 +551,7 @@ async fn main() -> Result<()> {
     config.validate()?;
 
     let media_client = Client::builder()
+        .user_agent("Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/126.0.0.0 Safari/537.36")
         .connect_timeout(Duration::from_secs(20))
         .timeout(Duration::from_secs(6 * 60 * 60))
         .redirect(reqwest::redirect::Policy::custom(|attempt| {
@@ -1606,17 +1607,14 @@ async fn playback(
     Json(input): Json<PlaybackInput>,
 ) -> ApiResult<Json<PlaybackDto>> {
     require_app_request(&headers)?;
-    let user_id = optional_user(&state, &headers)
-        .await
-        .map(|u| u.id)
-        .unwrap_or_else(|| "guest".into());
+    let user = require_user(&state, &headers).await?;
     let stream = resolve_stream(&state, &input.provider, &input.episode_id).await?;
     let id = Uuid::new_v4().to_string();
     let mut secret = [0_u8; 32];
     OsRng.fill_bytes(&mut secret);
     let now = Instant::now();
     let session = MediaSession {
-        user_id,
+        user_id: user.id,
         expires_at: now + Duration::from_secs(6 * 60 * 60),
         stream: stream.clone(),
         secret,
@@ -1702,11 +1700,8 @@ async fn media_main(
     headers: HeaderMap,
     Path(id): Path<String>,
 ) -> ApiResult<Response> {
-    let user_id = optional_user(&state, &headers)
-        .await
-        .map(|u| u.id)
-        .unwrap_or_else(|| "guest".into());
-    let session = get_media_session(&state, &id, &user_id).await?;
+    let user = require_user(&state, &headers).await?;
+    let session = get_media_session(&state, &id, &user.id).await?;
     let url = Url::parse(&session.stream.video_url).map_err(|error| {
         ApiError::new(
             StatusCode::BAD_GATEWAY,
@@ -1724,11 +1719,8 @@ async fn media_resource(
     headers: HeaderMap,
     Path((id, resource_id)): Path<(String, String)>,
 ) -> ApiResult<Response> {
-    let user_id = optional_user(&state, &headers)
-        .await
-        .map(|u| u.id)
-        .unwrap_or_else(|| "guest".into());
-    let session = get_media_session(&state, &id, &user_id).await?;
+    let user = require_user(&state, &headers).await?;
+    let session = get_media_session(&state, &id, &user.id).await?;
     let resource = resolve_media_resource(&session, &resource_id)?;
     if matches!(
         resource.transform,
@@ -1744,11 +1736,8 @@ async fn media_resource_path(
     headers: HeaderMap,
     Path((id, resource_id, path)): Path<(String, String, String)>,
 ) -> ApiResult<Response> {
-    let user_id = optional_user(&state, &headers)
-        .await
-        .map(|u| u.id)
-        .unwrap_or_else(|| "guest".into());
-    let session = get_media_session(&state, &id, &user_id).await?;
+    let user = require_user(&state, &headers).await?;
+    let session = get_media_session(&state, &id, &user.id).await?;
     let upstream = resolve_opaque_resource(&session, &resource_id, Some(&path))?;
     proxy_media_url(&state, &id, &session, upstream, &headers).await
 }
@@ -1796,7 +1785,7 @@ async fn get_media_session(state: &AppState, id: &str, user_id: &str) -> ApiResu
             true,
         )
     })?;
-    if session.user_id != "guest" && session.user_id != user_id {
+    if session.user_id != user_id {
         return Err(ApiError::new(
             StatusCode::FORBIDDEN,
             "PLAYBACK_SESSION_FORBIDDEN",
@@ -1977,6 +1966,15 @@ async fn proxy_media_url(
             .status(StatusCode::OK)
             .header(header::CONTENT_TYPE, "application/vnd.apple.mpegurl")
             .header(header::CACHE_CONTROL, "no-store")
+            .header(header::ACCESS_CONTROL_ALLOW_ORIGIN, "*")
+            .header(
+                header::ACCESS_CONTROL_ALLOW_HEADERS,
+                "Range, Content-Type, Accept, Origin, User-Agent",
+            )
+            .header(
+                header::ACCESS_CONTROL_EXPOSE_HEADERS,
+                "Content-Length, Content-Range, Accept-Ranges, Content-Type",
+            )
             .body(Body::from(rewritten))
             .map_err(|error| ApiError::internal("playback", error));
     }
@@ -1999,13 +1997,31 @@ async fn proxy_media_url(
             .status(StatusCode::OK)
             .header(header::CONTENT_TYPE, "application/dash+xml; charset=utf-8")
             .header(header::CACHE_CONTROL, "no-store")
+            .header(header::ACCESS_CONTROL_ALLOW_ORIGIN, "*")
+            .header(
+                header::ACCESS_CONTROL_ALLOW_HEADERS,
+                "Range, Content-Type, Accept, Origin, User-Agent",
+            )
+            .header(
+                header::ACCESS_CONTROL_EXPOSE_HEADERS,
+                "Content-Length, Content-Range, Accept-Ranges, Content-Type",
+            )
             .body(Body::from(rewritten))
             .map_err(|error| ApiError::internal("playback", error));
     }
 
     let mut builder = Response::builder()
         .status(status)
-        .header(header::CACHE_CONTROL, "private, no-store");
+        .header(header::CACHE_CONTROL, "private, no-store")
+        .header(header::ACCESS_CONTROL_ALLOW_ORIGIN, "*")
+        .header(
+            header::ACCESS_CONTROL_ALLOW_HEADERS,
+            "Range, Content-Type, Accept, Origin, User-Agent",
+        )
+        .header(
+            header::ACCESS_CONTROL_EXPOSE_HEADERS,
+            "Content-Length, Content-Range, Accept-Ranges, Content-Type",
+        );
     if let Some(value) = content_type {
         builder = builder.header(header::CONTENT_TYPE, value);
     }
@@ -2828,16 +2844,12 @@ async fn my_list(
     headers: HeaderMap,
     Query(query): Query<LimitQuery>,
 ) -> ApiResult<Json<Value>> {
-    let user = optional_user(&state, &headers).await;
-    let favorites = if let Some(user) = user {
-        state
-            .db
-            .favorites(&user.id, query.limit.unwrap_or(100).min(500))
-            .await
-            .map_err(|error| ApiError::internal("favorites", error))?
-    } else {
-        Vec::new()
-    };
+    let user = require_user(&state, &headers).await?;
+    let favorites = state
+        .db
+        .favorites(&user.id, query.limit.unwrap_or(100).min(500))
+        .await
+        .map_err(|error| ApiError::internal("favorites", error))?;
     Ok(Json(json!(favorites)))
 }
 
@@ -2886,16 +2898,12 @@ async fn history(
     headers: HeaderMap,
     Query(query): Query<LimitQuery>,
 ) -> ApiResult<Json<Value>> {
-    let user = optional_user(&state, &headers).await;
-    let items = if let Some(user) = user {
-        state
-            .db
-            .history(&user.id, query.limit.unwrap_or(20).min(500))
-            .await
-            .map_err(|error| ApiError::internal("history", error))?
-    } else {
-        Vec::new()
-    };
+    let user = require_user(&state, &headers).await?;
+    let items = state
+        .db
+        .history(&user.id, query.limit.unwrap_or(20).min(500))
+        .await
+        .map_err(|error| ApiError::internal("history", error))?;
     Ok(Json(json!(items)))
 }
 
@@ -2905,27 +2913,25 @@ async fn save_progress(
     Json(input): Json<ProgressInput>,
 ) -> ApiResult<StatusCode> {
     require_app_request(&headers)?;
-    let user = optional_user(&state, &headers).await;
-    if let Some(user) = user {
-        state
-            .db
-            .save_history(
-                &user.id,
-                &NewHistory {
-                    anime_id: &input.anime_id,
-                    catalog_id: input.catalog_id,
-                    provider: &input.provider,
-                    title: &input.title,
-                    cover_url: &input.cover_url,
-                    episode_number: input.episode_number,
-                    episode_title: input.episode_title.as_deref(),
-                    position_seconds: input.position_seconds,
-                    total_seconds: input.total_seconds,
-                },
-            )
-            .await
-            .map_err(|error| ApiError::internal("history", error))?;
-    }
+    let user = require_user(&state, &headers).await?;
+    state
+        .db
+        .save_history(
+            &user.id,
+            &NewHistory {
+                anime_id: &input.anime_id,
+                catalog_id: input.catalog_id,
+                provider: &input.provider,
+                title: &input.title,
+                cover_url: &input.cover_url,
+                episode_number: input.episode_number,
+                episode_title: input.episode_title.as_deref(),
+                position_seconds: input.position_seconds,
+                total_seconds: input.total_seconds,
+            },
+        )
+        .await
+        .map_err(|error| ApiError::internal("history", error))?;
     Ok(StatusCode::NO_CONTENT)
 }
 
@@ -2935,14 +2941,12 @@ async fn remove_history(
     Json(input): Json<RemoveInput>,
 ) -> ApiResult<StatusCode> {
     require_app_request(&headers)?;
-    let user = optional_user(&state, &headers).await;
-    if let Some(user) = user {
-        state
-            .db
-            .remove_history(&user.id, &input.anime_id)
-            .await
-            .map_err(|error| ApiError::internal("history", error))?;
-    }
+    let user = require_user(&state, &headers).await?;
+    state
+        .db
+        .remove_history(&user.id, &input.anime_id)
+        .await
+        .map_err(|error| ApiError::internal("history", error))?;
     Ok(StatusCode::NO_CONTENT)
 }
 
@@ -3347,6 +3351,20 @@ fn stream_headers(stream: &StreamInfo) -> ApiResult<ReqwestHeaderMap> {
         })?;
         headers.insert(name, value);
     }
+    if !headers.contains_key(reqwest::header::USER_AGENT) {
+        headers.insert(
+            reqwest::header::USER_AGENT,
+            reqwest::header::HeaderValue::from_static(
+                "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/126.0.0.0 Safari/537.36",
+            ),
+        );
+    }
+    if !headers.contains_key(reqwest::header::ACCEPT) {
+        headers.insert(
+            reqwest::header::ACCEPT,
+            reqwest::header::HeaderValue::from_static("*/*"),
+        );
+    }
     Ok(headers)
 }
 
@@ -3653,7 +3671,8 @@ async fn search_torrents(
     let category = match params.category.as_deref() {
         Some("anime") => TorrentCategory::Anime,
         Some("movie" | "movies") => TorrentCategory::Movies,
-        Some("tv") => TorrentCategory::Tv,
+        Some("tv" | "series") => TorrentCategory::Tv,
+        Some("doc" | "documentary" | "documentaries") => TorrentCategory::Documentaries,
         _ => TorrentCategory::All,
     };
     let results = state
@@ -3856,16 +3875,7 @@ async fn download_torrent_file(
     headers: HeaderMap,
     Path(id): Path<String>,
 ) -> ApiResult<Response> {
-    let user = require_user(&state, &headers).await?;
-    if user.role == "guest" {
-        return Err(ApiError::new(
-            StatusCode::FORBIDDEN,
-            "PERMISSION_DENIED",
-            "torrent_download",
-            "Guests are not permitted to download files.",
-            false,
-        ));
-    }
+    let _user = require_user(&state, &headers).await?;
     serve_torrent_file(state, headers, id, true).await
 }
 
@@ -3874,6 +3884,7 @@ async fn stream_torrent_file(
     headers: HeaderMap,
     Path(id): Path<String>,
 ) -> ApiResult<Response> {
+    let _user = require_user(&state, &headers).await?;
     serve_torrent_file(state, headers, id, false).await
 }
 
@@ -4002,7 +4013,7 @@ async fn download_torrent_subtitle(
         .await
         .map_err(|e| ApiError::internal("torrent_sub_read", e))?;
 
-    let content_disposition = format!("attachment; filename=\"{}\"", file_name);
+    let content_disposition = format!("inline; filename=\"{}\"", file_name);
 
     Ok((
         [
@@ -4013,7 +4024,11 @@ async fn download_torrent_subtitle(
             (
                 header::CONTENT_DISPOSITION,
                 HeaderValue::from_str(&content_disposition)
-                    .unwrap_or_else(|_| HeaderValue::from_static("attachment")),
+                    .unwrap_or_else(|_| HeaderValue::from_static("inline")),
+            ),
+            (
+                header::ACCESS_CONTROL_ALLOW_ORIGIN,
+                HeaderValue::from_static("*"),
             ),
         ],
         content,
@@ -4653,10 +4668,10 @@ mod tests {
     }
 
     #[tokio::test]
-    async fn guest_media_session_allows_playback() {
+    async fn user_media_session_allows_owner_playback() {
         let stream = stream("https://cdn.example/video.mp4");
         let session = MediaSession {
-            user_id: "guest".into(),
+            user_id: "user-123".into(),
             expires_at: Instant::now() + Duration::from_secs(60),
             stream,
             secret: [1_u8; 32],
@@ -4673,7 +4688,7 @@ mod tests {
             login_attempts: Arc::new(Mutex::new(HashMap::new())),
             download_tickets: Arc::new(Mutex::new(HashMap::new())),
             media_sessions: Arc::new(Mutex::new(HashMap::from([(
-                "guest-session".into(),
+                "user-session".into(),
                 session,
             )]))),
             provider_health: Arc::new(Mutex::new(ProviderHealthCache::default())),
@@ -4686,13 +4701,13 @@ mod tests {
             torrent_engine: Arc::new(TorrentTaskManager::new(PathBuf::from("/tmp"))),
         };
 
-        // Guest user can retrieve guest session
-        let retrieved = get_media_session(&app_state, "guest-session", "guest").await;
+        // User can retrieve their own session
+        let retrieved = get_media_session(&app_state, "user-session", "user-123").await;
         assert!(retrieved.is_ok());
 
-        // Logged-in user can also watch a public/guest session
-        let retrieved_user = get_media_session(&app_state, "guest-session", "user-123").await;
-        assert!(retrieved_user.is_ok());
+        // Other user cannot retrieve this session
+        let retrieved_other = get_media_session(&app_state, "user-session", "user-456").await;
+        assert!(retrieved_other.is_err());
     }
 
     #[tokio::test]
@@ -4736,11 +4751,6 @@ mod tests {
 
         // Bob cannot access Alice's session
         assert!(get_media_session(&app_state, "alice-session", "user-bob")
-            .await
-            .is_err());
-
-        // Unauthenticated guest cannot access Alice's session
-        assert!(get_media_session(&app_state, "alice-session", "guest")
             .await
             .is_err());
     }

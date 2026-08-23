@@ -329,8 +329,28 @@ pub trait AnimeProvider: Send + Sync {
         let anime = best_title_match(self.search("One Piece").await?, &variants)
             .context("Provider health check found no matching title")?;
         let episodes = self.get_episodes(&anime.id).await?;
+        let mut candidates = Vec::new();
+        if let Some(first) = episodes.first() {
+            candidates.push(first.clone());
+        }
+        if let Some(last) = episodes.last() {
+            if !candidates.iter().any(|c| c.id == last.id) {
+                candidates.push(last.clone());
+            }
+        }
+        for episode in episodes.iter().rev().take(12) {
+            if !candidates.iter().any(|c| c.id == episode.id) {
+                candidates.push(episode.clone());
+            }
+        }
+        for episode in episodes.iter().take(12) {
+            if !candidates.iter().any(|c| c.id == episode.id) {
+                candidates.push(episode.clone());
+            }
+        }
+
         let mut last_error = None;
-        for episode in episodes.into_iter().rev().take(24) {
+        for episode in candidates {
             match self.get_stream_url(&episode.id).await {
                 Ok(stream) => match probe_stream(&stream).await {
                     Ok(()) => return Ok(()),

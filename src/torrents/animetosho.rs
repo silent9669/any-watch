@@ -47,7 +47,10 @@ impl TorrentSearchProvider for AnimeToshoProvider {
         category: TorrentCategory,
         page: u32,
     ) -> Result<Vec<TorrentSearchResult>> {
-        if category == TorrentCategory::Movies || category == TorrentCategory::Tv {
+        if category == TorrentCategory::Movies
+            || category == TorrentCategory::Tv
+            || category == TorrentCategory::Documentaries
+        {
             return Ok(Vec::new());
         }
 

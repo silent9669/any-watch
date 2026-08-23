@@ -63,7 +63,10 @@ impl TorrentSearchProvider for YtsProvider {
         category: TorrentCategory,
         page: u32,
     ) -> Result<Vec<TorrentSearchResult>> {
-        if category == TorrentCategory::Anime || category == TorrentCategory::Tv {
+        if category == TorrentCategory::Anime
+            || category == TorrentCategory::Tv
+            || category == TorrentCategory::Documentaries
+        {
             return Ok(Vec::new());
         }
 
