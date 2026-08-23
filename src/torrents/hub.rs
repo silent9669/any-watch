@@ -6,8 +6,11 @@ use tokio::time::timeout;
 use tracing::{info, warn};
 
 use super::animetosho::AnimeToshoProvider;
+use super::eztv::EztvProvider;
 use super::nyaa::NyaaProvider;
 use super::piratebay::ThePirateBayProvider;
+use super::solidtorrents::SolidTorrentsProvider;
+use super::tokyotoshokan::TokyoToshokanProvider;
 use super::yts::YtsProvider;
 use super::{TorrentCategory, TorrentSearchProvider, TorrentSearchResult};
 
@@ -32,7 +35,10 @@ impl TorrentSearchHub {
             Arc::new(AnimeToshoProvider::new(client.clone())),
             Arc::new(NyaaProvider::new(client.clone())),
             Arc::new(YtsProvider::new(client.clone())),
-            Arc::new(ThePirateBayProvider::new(client)),
+            Arc::new(ThePirateBayProvider::new(client.clone())),
+            Arc::new(EztvProvider::new(client.clone())),
+            Arc::new(TokyoToshokanProvider::new(client.clone())),
+            Arc::new(SolidTorrentsProvider::new(client)),
         ];
 
         Self { providers }
@@ -161,6 +167,9 @@ fn source_matches(filter: &str, provider_name: &str) -> bool {
     let provider = normalize(provider_name);
     filter == provider
         || (provider == "thepiratebay" && matches!(filter.as_str(), "piratebay" | "tpb"))
+        || (provider == "tokyotoshokan" && matches!(filter.as_str(), "tokyotosho" | "tt"))
+        || (provider == "solidtorrents" && matches!(filter.as_str(), "solid" | "solidtorrent"))
+        || (provider == "eztv" && matches!(filter.as_str(), "eztvx" | "eztvre"))
 }
 
 fn extract_info_hash(magnet: &str) -> Option<String> {

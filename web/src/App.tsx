@@ -56,6 +56,7 @@ import type {
   EpisodeDownloadState,
   Favorite,
   ManagedUser,
+  MediaMetadata,
   PlayerContext,
   ProviderAvailability,
   Source,
@@ -1767,48 +1768,219 @@ function DonatePage({
   );
 }
 
-function parseFilmReleaseInfo(rawTitle: string): {
+interface FilmReleaseParsed {
   cleanTitle: string;
+  originalTitle: string;
   year?: string;
   quality?: string;
+  qualityBadge?: string;
   codec?: string;
+  hdr?: string;
+  audio?: string;
+  episodeInfo?: string;
+  releaseGroup?: string;
   isVietSub: boolean;
   isEngSub: boolean;
-} {
+  tags: string[];
+}
+
+function parseFilmReleaseInfo(rawTitle: string): FilmReleaseParsed {
   const lower = rawTitle.toLowerCase();
-  const yearMatch = rawTitle.match(/(?:19|20)\d{2}/);
-  const year = yearMatch ? yearMatch[0] : undefined;
+
+  let releaseGroup: string | undefined;
+  const groupMatchStart = rawTitle.match(/^\[([a-zA-Z0-9_ -]{2,24})\]/);
+  if (groupMatchStart) {
+    releaseGroup = groupMatchStart[1].trim();
+  } else {
+    const groupMatchEnd = rawTitle.match(/-([a-zA-Z0-9]{2,15})(?:\.[a-zA-Z0-9]{2,4})?$/);
+    if (groupMatchEnd) {
+      releaseGroup = groupMatchEnd[1].trim();
+    }
+  }
+
+  const yearMatch = rawTitle.match(/\b(19\d\d|20\d\d)\b/);
+  const year = yearMatch ? yearMatch[1] : undefined;
+
+  let episodeInfo: string | undefined;
+  const sxxExxMatch = rawTitle.match(/\bS(\d{1,2})E(\d{1,3})\b/i);
+  if (sxxExxMatch) {
+    episodeInfo = `S${parseInt(sxxExxMatch[1], 10)} E${parseInt(sxxExxMatch[2], 10)}`;
+  } else {
+    const epMatch = rawTitle.match(/\b(?:Episode|Ep\.?|E)\s*(\d{1,4})\b/i) || rawTitle.match(/-\s*(\d{1,3})\s*(?:\(|\[|\b)/);
+    if (epMatch) {
+      episodeInfo = `Ep ${parseInt(epMatch[1], 10)}`;
+    } else {
+      const seasonMatch = rawTitle.match(/\b(?:Season|S)\s*(\d{1,2})\b/i);
+      if (seasonMatch) {
+        episodeInfo = `Season ${parseInt(seasonMatch[1], 10)}`;
+      } else if (/\b(batch|complete|all episodes)\b/i.test(rawTitle)) {
+        episodeInfo = "Batch";
+      } else if (/\b(movie|film)\b/i.test(rawTitle)) {
+        episodeInfo = "Movie";
+      }
+    }
+  }
+
+  let quality: string | undefined;
+  let qualityBadge = "HD";
+  if (lower.includes("2160p") || lower.includes("4k") || lower.includes("uhd")) {
+    quality = "4K";
+    qualityBadge = "4K UHD";
+  } else if (lower.includes("1080p") || lower.includes("fhd") || lower.includes("1080i")) {
+    quality = "1080p";
+    qualityBadge = "1080p FHD";
+  } else if (lower.includes("720p") || lower.includes("hd")) {
+    quality = "720p";
+    qualityBadge = "720p HD";
+  } else if (lower.includes("480p") || lower.includes("sd") || lower.includes("576p")) {
+    quality = "480p";
+    qualityBadge = "480p SD";
+  }
+
+  let codec: string | undefined;
+  if (lower.includes("hevc") || lower.includes("x265") || lower.includes("h.265") || lower.includes("h265")) {
+    codec = lower.includes("10bit") || lower.includes("10-bit") || lower.includes("hi10p") ? "HEVC 10-bit" : "HEVC";
+  } else if (lower.includes("x264") || lower.includes("h.264") || lower.includes("h264") || lower.includes("avc")) {
+    codec = lower.includes("10bit") || lower.includes("10-bit") ? "x264 10-bit" : "x264";
+  } else if (lower.includes("av1")) {
+    codec = "AV1";
+  }
+
+  let hdr: string | undefined;
+  if (lower.includes("hdr10+") || lower.includes("hdr10plus")) {
+    hdr = "HDR10+";
+  } else if (lower.includes("hdr10") || lower.includes("hdr")) {
+    hdr = "HDR";
+  } else if (lower.includes("dolby vision") || lower.includes("dovi") || lower.includes(".dv.")) {
+    hdr = "Dolby Vision";
+  }
+
+  let audio: string | undefined;
+  if (lower.includes("atmos")) {
+    audio = "Dolby Atmos";
+  } else if (lower.includes("truehd")) {
+    audio = "TrueHD";
+  } else if (lower.includes("dts-hd") || lower.includes("dts-ma") || lower.includes("dts")) {
+    audio = "DTS-HD";
+  } else if (lower.includes("ddp5.1") || lower.includes("eac3") || lower.includes("dd+")) {
+    audio = "DDP 5.1";
+  } else if (lower.includes("aac5.1") || lower.includes("aac 5.1")) {
+    audio = "AAC 5.1";
+  } else if (lower.includes("flac")) {
+    audio = "FLAC";
+  } else if (lower.includes("dual audio") || lower.includes("dual-audio")) {
+    audio = "Dual Audio";
+  }
+
+  const isVietSub =
+    lower.includes("vietsub") ||
+    lower.includes("viet sub") ||
+    lower.includes("vietnamese") ||
+    lower.includes("thuyết minh") ||
+    lower.includes("thuyet minh") ||
+    lower.includes("lồng tiếng") ||
+    lower.includes("long tieng");
+
+  const isEngSub =
+    lower.includes("engsub") ||
+    lower.includes("eng sub") ||
+    lower.includes("english") ||
+    lower.includes("multi-sub") ||
+    lower.includes("multisub") ||
+    (!lower.includes("raw") && !lower.includes(".ita.") && !lower.includes(".spa.") && !lower.includes(".ger."));
 
   let clean = rawTitle
-    .replace(/[._-]/g, " ")
-    .replace(/(?:19|20)\d{2}.*$/i, "")
-    .replace(/\[.*?\]|\(.*?\)/g, "")
-    .replace(/\b(1080p|720p|2160p|4k|uhd|fhd|hd|telesync|web-dl|webrip|bluray|x264|x265|hevc|aac\d*\.?\d*|dks|splice|yts|nyaa)\b.*$/i, "")
+    .replace(/^\[.*?\]\s*/g, "")
+    .replace(/\s*\[[0-9a-fA-F]{8}\]/g, "")
+    .replace(/\s*\[.*?\]/g, " ")
+    .replace(/\(.*?\)/g, " ")
+    .replace(/[._]/g, " ")
+    .replace(/\b(19\d\d|20\d\d)\b.*$/i, "")
+    .replace(
+      /\b(2160p|1080p|720p|480p|4k|uhd|fhd|hd|web-dl|webrip|bluray|bdrip|remux|hdtv|dvdrip|telesync|x264|x265|hevc|av1|aac\d*|ac3|dts|flac|dual audio|engsub|vietsub|yts|nyaa|eztv|flux|sparks)\b.*$/i,
+      "",
+    )
+    .replace(/\s*-\s*\d{1,4}\s*$/g, "")
+    .replace(/\s{2,}/g, " ")
     .trim();
 
   if (!clean || clean.length < 2) {
     clean = rawTitle.replace(/[._]/g, " ").trim();
   }
 
-  const quality = lower.includes("2160p") || lower.includes("4k")
-    ? "4K"
-    : lower.includes("1080p")
-    ? "1080p"
-    : lower.includes("720p")
-    ? "720p"
-    : undefined;
-
-  const isVietSub = lower.includes("vietsub") || lower.includes("viet sub") || lower.includes("thuyết minh") || lower.includes("thuyet minh");
-  const isEngSub = lower.includes("engsub") || lower.includes("eng sub") || lower.includes("english") || (!lower.includes("raw") && !lower.includes(".ita.") && !lower.includes(".spa."));
+  const tags: string[] = [];
+  if (qualityBadge) tags.push(qualityBadge);
+  if (hdr) tags.push(hdr);
+  if (codec) tags.push(codec);
+  if (audio) tags.push(audio);
+  if (episodeInfo) tags.push(episodeInfo);
+  if (isVietSub) tags.push("VietSub");
+  if (isEngSub) tags.push("EngSub");
+  if (releaseGroup) tags.push(releaseGroup);
 
   return {
     cleanTitle: clean,
+    originalTitle: rawTitle,
     year,
     quality,
-    codec: lower.includes("hevc") || lower.includes("x265") ? "HEVC" : lower.includes("x264") ? "x264" : undefined,
+    qualityBadge,
+    codec,
+    hdr,
+    audio,
+    episodeInfo,
+    releaseGroup,
     isVietSub,
     isEngSub,
+    tags,
   };
+}
+
+const METADATA_CLIENT_CACHE = new Map<string, MediaMetadata | null>();
+
+function useMediaMetadata(title: string, category?: string) {
+  const info = useMemo(() => parseFilmReleaseInfo(title), [title]);
+  const searchKey = `${category || "all"}:${info.cleanTitle.toLowerCase()}`;
+  const [metadata, setMetadata] = useState<MediaMetadata | null>(() => METADATA_CLIENT_CACHE.get(searchKey) || null);
+
+  useEffect(() => {
+    let active = true;
+    if (METADATA_CLIENT_CACHE.has(searchKey)) {
+      setMetadata(METADATA_CLIENT_CACHE.get(searchKey) || null);
+      return;
+    }
+
+    try {
+      const stored = localStorage.getItem(`any-watch:meta:${searchKey}`);
+      if (stored) {
+        const parsed = JSON.parse(stored);
+        METADATA_CLIENT_CACHE.set(searchKey, parsed);
+        setMetadata(parsed);
+        return;
+      }
+    } catch {}
+
+    void api
+      .getTorrentMetadata(info.cleanTitle, category)
+      .then((res) => {
+        if (!active) return;
+        METADATA_CLIENT_CACHE.set(searchKey, res);
+        setMetadata(res);
+        if (res) {
+          try {
+            localStorage.setItem(`any-watch:meta:${searchKey}`, JSON.stringify(res));
+          } catch {}
+        }
+      })
+      .catch(() => {
+        if (active) METADATA_CLIENT_CACHE.set(searchKey, null);
+      });
+
+    return () => {
+      active = false;
+    };
+  }, [info.cleanTitle, category, searchKey]);
+
+  return { info, metadata };
 }
 
 function DownloadsPage({
@@ -1821,8 +1993,8 @@ function DownloadsPage({
   onShowSignIn?: () => void;
 }) {
   const shouldReduceMotion = useReducedMotion();
-  const isGuest = !session || session.role === "guest";
-  const [tab, setTab] = useState<"search" | "tasks" | "storage">(isGuest ? "storage" : "search");
+  const isGuest = session?.role === "guest";
+  const [tab, setTab] = useState<"search" | "tasks" | "storage">(session?.role === "guest" ? "storage" : "search");
   const [query, setQuery] = useState("");
   const [category, setCategory] = useState<"all" | "anime" | "movie" | "tv">("all");
   const [source, setSource] = useState("");
@@ -1834,10 +2006,21 @@ function DownloadsPage({
   const [loadingMore, setLoadingMore] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const [tasks, setTasks] = useState<TorrentTask[]>([]);
+  const [taskFilter, setTaskFilter] = useState<"all" | "pending" | "active" | "ready" | "rejected">("all");
+
+  useEffect(() => {
+    if (session?.role === "guest" && tab !== "storage") {
+      setTab("storage");
+    }
+  }, [session?.role]);
   const [copiedId, setCopiedId] = useState<string | null>(null);
   const [actionLoadingId, setActionLoadingId] = useState<string | null>(null);
   const [deletingTaskIds, setDeletingTaskIds] = useState<Set<string>>(new Set());
   const [approvingTaskIds, setApprovingTaskIds] = useState<Set<string>>(new Set());
+  const [rejectingTask, setRejectingTask] = useState<TorrentTask | null>(null);
+  const [rejectReason, setRejectReason] = useState("");
+  const [rejectSubmitting, setRejectSubmitting] = useState(false);
+
   const activeTasksCount = useMemo(() => {
     return tasks.filter(
       (t) => t.status.type === "queued" || t.status.type === "downloading" || t.status.type === "remuxing"
@@ -1846,6 +2029,10 @@ function DownloadsPage({
 
   const pendingRequestsCount = useMemo(() => {
     return tasks.filter((t) => t.status.type === "pending_approval").length;
+  }, [tasks]);
+
+  const rejectedRequestsCount = useMemo(() => {
+    return tasks.filter((t) => t.status.type === "rejected").length;
   }, [tasks]);
 
   const readyTasks = useMemo(() => {
@@ -1864,9 +2051,26 @@ function DownloadsPage({
   const [hideExceedingQuota, setHideExceedingQuota] = useState(true);
 
   const displayedResults = useMemo(() => {
-    if (!hideExceedingQuota) return results;
-    return results.filter((item) => !item.size_bytes || item.size_bytes <= remainingStorageBytes);
-  }, [results, hideExceedingQuota, remainingStorageBytes]);
+    let filtered = results;
+    if (subPref === "vi") {
+      filtered = filtered.filter((r) => r.has_vietsub);
+    } else if (subPref === "en") {
+      filtered = filtered.filter((r) => r.has_engsub);
+    }
+    if (!hideExceedingQuota) return filtered;
+    return filtered.filter((item) => !item.size_bytes || item.size_bytes <= remainingStorageBytes);
+  }, [results, subPref, hideExceedingQuota, remainingStorageBytes]);
+
+  const displayedTasks = useMemo(() => {
+    if (taskFilter === "pending") return tasks.filter((t) => t.status.type === "pending_approval");
+    if (taskFilter === "active")
+      return tasks.filter(
+        (t) => t.status.type === "queued" || t.status.type === "downloading" || t.status.type === "remuxing",
+      );
+    if (taskFilter === "ready") return tasks.filter((t) => t.status.type === "ready");
+    if (taskFilter === "rejected") return tasks.filter((t) => t.status.type === "rejected");
+    return tasks;
+  }, [tasks, taskFilter]);
 
   const loadTasks = async () => {
     try {
@@ -1955,85 +2159,93 @@ function DownloadsPage({
       return;
     }
     if (isGuest) {
-      setError("Guest accounts can view and stream films in Shared Storage. Download privileges require a family viewer or admin account.");
+      setError(
+        "Guest accounts can view and stream films in Shared Storage. Requesting media requires a family viewer or admin account.",
+      );
       return;
     }
     if (torrent.size_bytes && torrent.size_bytes > remainingStorageBytes) {
-      setError(`This release (${torrent.formatted_size}) exceeds the remaining storage quota (${formatTorrentBytes(remainingStorageBytes)} under 100 GB quota).`);
+      setError(
+        `This release (${torrent.formatted_size}) exceeds the remaining storage quota (${formatTorrentBytes(remainingStorageBytes)} under 100 GB quota).`,
+      );
       return;
     }
+
     setActionLoadingId(torrent.id);
     setError(null);
     try {
-      await api.createTorrentTask(
+      const newTask = await api.createTorrentTask(
         torrent.title,
         torrent.magnet_url,
         torrent.torrent_url,
-        torrent.size_bytes,
+        torrent.size_bytes || undefined,
         subPref,
       );
-      await loadTasks();
+      setTasks((current) => [newTask, ...current.filter((t) => t.id !== newTask.id)]);
       setTab("tasks");
     } catch (err: unknown) {
-      setError(err instanceof Error ? err.message : "Failed to create download task.");
+      setError(err instanceof Error ? err.message : "Failed to create media task.");
     } finally {
       setActionLoadingId(null);
     }
   };
 
   const handleApproveTask = async (id: string) => {
-    if (session?.role !== "admin") return;
-    setApprovingTaskIds((prev) => new Set(prev).add(id));
+    setApprovingTaskIds((current) => new Set([...current, id]));
     try {
       const updated = await api.approveTorrentTask(id);
       setTasks((current) => current.map((t) => (t.id === id ? updated : t)));
     } catch (err: unknown) {
-      console.error("Failed to approve task:", err);
-      setError(err instanceof Error ? err.message : "Failed to approve download task.");
+      setError(err instanceof Error ? err.message : "Failed to approve media task.");
     } finally {
-      setApprovingTaskIds((prev) => {
-        const next = new Set(prev);
+      setApprovingTaskIds((current) => {
+        const next = new Set(current);
         next.delete(id);
         return next;
       });
+    }
+  };
+
+  const handleConfirmReject = async () => {
+    if (!rejectingTask) return;
+    setRejectSubmitting(true);
+    try {
+      const reason = rejectReason.trim() || "Rejected by admin: Storage quota or release suitability";
+      const updated = await api.rejectTorrentTask(rejectingTask.id, reason);
+      setTasks((current) => current.map((t) => (t.id === rejectingTask.id ? updated : t)));
+      setRejectingTask(null);
+      setRejectReason("");
+    } catch (err: unknown) {
+      setError(err instanceof Error ? err.message : "Failed to reject media task.");
+    } finally {
+      setRejectSubmitting(false);
     }
   };
 
   const handleRejectTask = async (id: string) => {
-    if (session?.role !== "admin") return;
-    setDeletingTaskIds((prev) => new Set(prev).add(id));
-    try {
-      const updated = await api.rejectTorrentTask(id);
-      setTasks((current) => current.map((t) => (t.id === id ? updated : t)));
-    } catch (err: unknown) {
-      console.error("Failed to reject task:", err);
-      setError(err instanceof Error ? err.message : "Failed to reject download task.");
-    } finally {
-      setDeletingTaskIds((prev) => {
-        const next = new Set(prev);
-        next.delete(id);
-        return next;
-      });
+    const task = tasks.find((t) => t.id === id);
+    if (task) {
+      setRejectingTask(task);
+    } else {
+      try {
+        const updated = await api.rejectTorrentTask(id);
+        setTasks((current) => current.map((t) => (t.id === id ? updated : t)));
+      } catch (err: unknown) {
+        setError(err instanceof Error ? err.message : "Failed to reject task.");
+      }
     }
   };
 
   const handleDeleteTask = async (id: string) => {
-    if (!session) {
-      onShowSignIn?.();
-      return;
-    }
-    if (deletingTaskIds.has(id)) return;
-    setDeletingTaskIds((prev) => new Set(prev).add(id));
-    setTasks((current) => current.filter((t) => t.id !== id));
-
+    setDeletingTaskIds((current) => new Set([...current, id]));
     try {
       await api.deleteTorrentTask(id);
+      setTasks((current) => current.filter((t) => t.id !== id));
     } catch (err: unknown) {
-      console.error("Failed to delete task:", err);
-      void loadTasks();
+      setError(err instanceof Error ? err.message : "Failed to delete task.");
     } finally {
-      setDeletingTaskIds((prev) => {
-        const next = new Set(prev);
+      setDeletingTaskIds((current) => {
+        const next = new Set(current);
         next.delete(id);
         return next;
       });
@@ -2041,7 +2253,8 @@ function DownloadsPage({
   };
 
   const handleCopyMagnet = (id: string, magnet: string) => {
-    void navigator.clipboard.writeText(magnet);
+    if (!magnet) return;
+    void navigator.clipboard?.writeText(magnet);
     setCopiedId(id);
     setTimeout(() => setCopiedId(null), 2000);
   };
@@ -2057,14 +2270,18 @@ function DownloadsPage({
     void performSearch(query, category, source, page + 1, true);
   };
 
-  const tabsList: Array<"search" | "tasks" | "storage"> = ["search", "tasks", "storage"];
-  const selectDownloadTabFromKeyboard = (event: React.KeyboardEvent, currentTab: "search" | "tasks" | "storage") => {
-    if (!['ArrowLeft', 'ArrowRight'].includes(event.key)) return;
+  const tabsList: Array<"storage" | "search" | "tasks"> = ["storage", "search", "tasks"];
+  const selectDownloadTabFromKeyboard = (
+    event: React.KeyboardEvent,
+    currentTab: "storage" | "search" | "tasks",
+  ) => {
+    if (!["ArrowLeft", "ArrowRight"].includes(event.key)) return;
     event.preventDefault();
     const currentIndex = tabsList.indexOf(currentTab);
-    const nextIndex = event.key === 'ArrowRight'
-      ? (currentIndex + 1) % tabsList.length
-      : (currentIndex - 1 + tabsList.length) % tabsList.length;
+    const nextIndex =
+      event.key === "ArrowRight"
+        ? (currentIndex + 1) % tabsList.length
+        : (currentIndex - 1 + tabsList.length) % tabsList.length;
     const nextTab = tabsList[nextIndex];
     setTab(nextTab);
     window.requestAnimationFrame(() => {
@@ -2083,7 +2300,10 @@ function DownloadsPage({
       <div className="page-stage-header">
         <div className="page-stage-title-group">
           <h1>Film Requests & Shared Storage</h1>
-          <p>Search Nyaa, YTS, The Pirate Bay & AnimeTosho. Family members can request films for admin approval. Approved media is extracted to fast-start MP4 with VietSub & EngSub in shared storage.</p>
+          <p>
+            Search Nyaa, YTS, The Pirate Bay, AnimeTosho & EZTV. Family members can request films for admin approval.
+            Approved media is extracted to fast-start MP4 with VietSub & EngSub in shared storage.
+          </p>
         </div>
       </div>
 
@@ -2103,6 +2323,7 @@ function DownloadsPage({
             <span>Request a Film</span>
           </button>
         )}
+
         {!isGuest && (
           <button
             role="tab"
@@ -2121,6 +2342,7 @@ function DownloadsPage({
             )}
           </button>
         )}
+
         <button
           role="tab"
           id="torrent-storage-tab"
@@ -2158,7 +2380,7 @@ function DownloadsPage({
                 <Search size={18} />
                 <input
                   type="text"
-                  placeholder="Search cinema movies, anime, TV series (e.g. Frieren, Oppenheimer)..."
+                  placeholder="Search cinema movies, anime, TV series (e.g. Frieren, Oppenheimer, Dune)..."
                   aria-label="Search torrent indexers"
                   value={query}
                   onChange={(e) => setQuery(e.target.value)}
@@ -2180,11 +2402,7 @@ function DownloadsPage({
                   </button>
                 )}
               </div>
-              <button
-                type="submit"
-                className="torrent-search-submit"
-                disabled={loading || query.trim().length < 2}
-              >
+              <button type="submit" className="torrent-search-submit" disabled={loading || query.trim().length < 2}>
                 {loading ? <Loader2 size={16} className="spin" /> : <Search size={16} />}
                 <span>Search</span>
               </button>
@@ -2240,6 +2458,9 @@ function DownloadsPage({
                   <option value="YTS">YTS.mx (Movies)</option>
                   <option value="ThePirateBay">The Pirate Bay (Multi)</option>
                   <option value="AnimeTosho">AnimeTosho (Anime)</option>
+                  <option value="EZTV">EZTV (TV Series)</option>
+                  <option value="TokyoToshokan">TokyoToshokan (Anime)</option>
+                  <option value="SolidTorrents">SolidTorrents (Multi)</option>
                 </select>
               </div>
 
@@ -2285,12 +2506,24 @@ function DownloadsPage({
 
             <div className="torrent-quick-queries">
               <span>Quick searches:</span>
-              <button type="button" onClick={() => quickSearch("Frieren", "anime")}>Frieren</button>
-              <button type="button" onClick={() => quickSearch("Attack on Titan", "anime")}>Attack on Titan</button>
-              <button type="button" onClick={() => quickSearch("Oppenheimer", "movie")}>Oppenheimer</button>
-              <button type="button" onClick={() => quickSearch("Interstellar", "movie")}>Interstellar</button>
-              <button type="button" onClick={() => quickSearch("Dune", "movie")}>Dune</button>
-              <button type="button" onClick={() => quickSearch("Breaking Bad", "tv")}>Breaking Bad</button>
+              <button type="button" onClick={() => quickSearch("Frieren", "anime")}>
+                Frieren
+              </button>
+              <button type="button" onClick={() => quickSearch("Attack on Titan", "anime")}>
+                Attack on Titan
+              </button>
+              <button type="button" onClick={() => quickSearch("Oppenheimer", "movie")}>
+                Oppenheimer
+              </button>
+              <button type="button" onClick={() => quickSearch("Interstellar", "movie")}>
+                Interstellar
+              </button>
+              <button type="button" onClick={() => quickSearch("Dune", "movie")}>
+                Dune
+              </button>
+              <button type="button" onClick={() => quickSearch("Breaking Bad", "tv")}>
+                Breaking Bad
+              </button>
             </div>
           </form>
 
@@ -2306,57 +2539,20 @@ function DownloadsPage({
                 const isCopied = copiedId === item.id;
                 const exceedsQuota = Boolean(item.size_bytes && item.size_bytes > remainingStorageBytes);
                 return (
-                  <div key={item.id} className={`torrent-result-card ${exceedsQuota ? "quota-exceeded" : ""}`}>
-                    <div className="torrent-result-info">
-                      <h3 className="torrent-result-title" title={item.title}>
-                        {item.title}
-                      </h3>
-                      <div className="torrent-meta-badges">
-                        <span className={`badge-source ${item.source.toLowerCase().replace(/^the/, "")}`}>{item.source}</span>
-                        <span className="badge-pill">{item.category}</span>
-                        {item.quality && <span className="badge-pill badge-quality">{item.quality}</span>}
-                        <span className="badge-pill badge-size">{item.formatted_size}</span>
-                        <span className="badge-pill badge-health">
-                          <span className="seeds">▲ {item.seeds}</span>
-                          <span className="peers">▼ {item.peers}</span>
-                        </span>
-                        {item.has_vietsub && <span className="badge-pill badge-sub vi">VietSub</span>}
-                        {item.has_engsub && <span className="badge-pill badge-sub en">EngSub</span>}
-                        {exceedsQuota && <span className="badge-pill badge-danger">Exceeds Quota</span>}
-                      </div>
-                    </div>
-
-                    <div className="torrent-result-actions">
-                      <button
-                        type="button"
-                        className="torrent-btn-icon"
-                        onClick={() => handleCopyMagnet(item.id, item.magnet_url)}
-                        title={isCopied ? "Magnet link copied to clipboard" : "Copy Magnet link"}
-                        aria-label={isCopied ? "Magnet link copied to clipboard" : "Copy Magnet link"}
-                      >
-                        {isCopied ? <Check size={16} /> : <Copy size={16} />}
-                      </button>
-                      <button
-                        type="button"
-                        className="torrent-btn-download"
-                        onClick={() => void handleCreateTask(item)}
-                        disabled={isCreating || exceedsQuota}
-                        title={exceedsQuota ? `Exceeds available storage (${formatTorrentBytes(remainingStorageBytes)})` : "Download & Remux to MP4"}
-                      >
-                        {isCreating ? <Loader2 size={15} className="spin" /> : <Download size={15} />}
-                        <span>{exceedsQuota ? "Exceeds Quota" : "Download & Remux"}</span>
-                      </button>
-                    </div>
-                  </div>
+                  <TorrentResultCard
+                    key={item.id}
+                    item={item}
+                    isCreating={isCreating}
+                    isCopied={isCopied}
+                    exceedsQuota={exceedsQuota}
+                    remainingStorageBytes={remainingStorageBytes}
+                    onCopy={() => handleCopyMagnet(item.id, item.magnet_url)}
+                    onCreateTask={() => void handleCreateTask(item)}
+                  />
                 );
               })}
               {hasMore && (
-                <button
-                  type="button"
-                  className="torrent-load-more"
-                  onClick={loadMoreResults}
-                  disabled={loadingMore}
-                >
+                <button type="button" className="torrent-load-more" onClick={loadMoreResults} disabled={loadingMore}>
                   {loadingMore ? <Loader2 size={16} className="spin" /> : <Plus size={16} />}
                   {loadingMore ? "Loading more..." : `Load page ${page + 1}`}
                 </button>
@@ -2367,15 +2563,64 @@ function DownloadsPage({
               <p>No results found for "{query}". Try a different title or search all categories.</p>
             </div>
           ) : (
-            <div className="downloads-empty" style={{ margin: "3rem auto", textAlign: "center" }}>
-              <div><Film size={26} /></div>
-              <h3>Search & Download Torrents</h3>
-              <p>Find cinema movies, TV shows, and anime with English and Vietnamese subtitles. Torrent contents are extracted and remuxed into fast-start MP4 format on the server for direct download.</p>
+            /* When get in (no search query), display the any-watch film storage dashboard! */
+            <div className="torrent-storage-workspace any-watch-storage-dashboard" style={{ marginTop: "1.5rem" }}>
+              <div className="storage-overview-banner">
+                <div className="storage-stat-pill">
+                  <HardDrive size={16} />
+                  <span>
+                    <strong>{readyTasks.length}</strong> {readyTasks.length === 1 ? "film" : "films"} in any-watch storage
+                  </span>
+                </div>
+                <div className="storage-stat-pill">
+                  <span>
+                    Storage used: <strong>{formatTorrentBytes(totalStorageBytes)}</strong> / 100 GB (
+                    <strong>{formatTorrentBytes(remainingStorageBytes)}</strong> free)
+                  </span>
+                </div>
+              </div>
+
+              <div className="storage-quota-bar-wrapper">
+                <div className="storage-quota-bar">
+                  <div
+                    className="storage-quota-bar-fill"
+                    style={{ width: `${Math.min(100, Math.max(0, (totalStorageBytes / HOMELAB_QUOTA_BYTES) * 100))}%` }}
+                  />
+                </div>
+              </div>
+
+              {readyTasks.length > 0 ? (
+                <div className="storage-library-section">
+                  <div className="storage-section-heading">
+                    <h2>Available in any-watch storage</h2>
+                    <p>Fast-start MP4 films and series with embedded subtitle tracks ready for direct streaming.</p>
+                  </div>
+                  <div className="storage-dashboard-grid">
+                    {readyTasks.map((task) => (
+                      <StorageFilmCard
+                        key={task.id}
+                        task={task}
+                        userRole={session?.role}
+                        isDeleting={deletingTaskIds.has(task.id)}
+                        onDelete={(id) => void handleDeleteTask(id)}
+                      />
+                    ))}
+                  </div>
+                </div>
+              ) : (
+                <div className="shelf-empty-state storage-empty-dashboard" style={{ margin: "2rem auto" }}>
+                  <div>
+                    <strong>any-watch storage is currently empty</strong>
+                    <p>Search torrent indexers above and click 'Request Film' to prepare media for the family.</p>
+                  </div>
+                </div>
+              )}
             </div>
           )}
         </>
       )}
 
+      {/* Requests Workspace / History */}
       {tab === "tasks" && (
         <div
           id="torrent-tasks-panel"
@@ -2383,9 +2628,47 @@ function DownloadsPage({
           role="tabpanel"
           aria-labelledby="torrent-tasks-tab"
         >
-          {tasks.length > 0 ? (
+          <div className="workspace-filter-pills" style={{ display: "flex", gap: "0.5rem", marginBottom: "1.25rem", flexWrap: "wrap" }}>
+            <button
+              type="button"
+              className={`torrent-filter-chip ${taskFilter === "all" ? "active" : ""}`}
+              onClick={() => setTaskFilter("all")}
+            >
+              All Requests ({tasks.length})
+            </button>
+            <button
+              type="button"
+              className={`torrent-filter-chip ${taskFilter === "pending" ? "active" : ""}`}
+              onClick={() => setTaskFilter("pending")}
+            >
+              Pending ({pendingRequestsCount})
+            </button>
+            <button
+              type="button"
+              className={`torrent-filter-chip ${taskFilter === "active" ? "active" : ""}`}
+              onClick={() => setTaskFilter("active")}
+            >
+              Active ({activeTasksCount})
+            </button>
+            <button
+              type="button"
+              className={`torrent-filter-chip ${taskFilter === "ready" ? "active" : ""}`}
+              onClick={() => setTaskFilter("ready")}
+            >
+              Ready ({readyTasks.length})
+            </button>
+            <button
+              type="button"
+              className={`torrent-filter-chip ${taskFilter === "rejected" ? "active" : ""}`}
+              onClick={() => setTaskFilter("rejected")}
+            >
+              Rejected ({rejectedRequestsCount})
+            </button>
+          </div>
+
+          {displayedTasks.length > 0 ? (
             <div className="torrent-tasks-list">
-              {tasks.map((task) => (
+              {displayedTasks.map((task) => (
                 <TorrentTaskItem
                   key={task.id}
                   task={task}
@@ -2394,20 +2677,24 @@ function DownloadsPage({
                   isApproving={approvingTaskIds.has(task.id)}
                   onApprove={(id) => void handleApproveTask(id)}
                   onReject={(id) => void handleRejectTask(id)}
+                  onRequestReject={(t) => setRejectingTask(t)}
                   onDelete={(id) => void handleDeleteTask(id)}
                 />
               ))}
             </div>
           ) : (
             <div className="downloads-empty" style={{ margin: "3rem auto", textAlign: "center" }}>
-              <div><Download size={26} /></div>
-              <h3>No Active Download Tasks</h3>
-              <p>Your workspace is currently clean. Search torrent indexers and click "Download & Remux" or "Request Film" to queue movies or anime episodes.</p>
+              <div>
+                <Download size={26} />
+              </div>
+              <h3>No Requests in This View</h3>
+              <p>Your workspace is currently clean. Search torrent indexers to queue new movies or anime episodes.</p>
             </div>
           )}
         </div>
       )}
 
+      {/* Shared Storage Tab View */}
       {tab === "storage" && (
         <div
           id="torrent-storage-panel"
@@ -2418,10 +2705,15 @@ function DownloadsPage({
           <div className="storage-overview-banner">
             <div className="storage-stat-pill">
               <HardDrive size={16} />
-              <span><strong>{readyTasks.length}</strong> {readyTasks.length === 1 ? "film" : "films"} in any-watch storage</span>
+              <span>
+                <strong>{readyTasks.length}</strong> {readyTasks.length === 1 ? "film" : "films"} in any-watch storage
+              </span>
             </div>
             <div className="storage-stat-pill">
-              <span>Storage used: <strong>{formatTorrentBytes(totalStorageBytes)}</strong> / 100 GB (<strong>{formatTorrentBytes(remainingStorageBytes)}</strong> free)</span>
+              <span>
+                Storage used: <strong>{formatTorrentBytes(totalStorageBytes)}</strong> / 100 GB (
+                <strong>{formatTorrentBytes(remainingStorageBytes)}</strong> free)
+              </span>
             </div>
             {isGuest && (
               <div className="storage-stat-pill guest-badge">
@@ -2483,7 +2775,221 @@ function DownloadsPage({
           )}
         </div>
       )}
+
+      {/* Admin Rejection Modal */}
+      {rejectingTask && (
+        <div className="login-modal-overlay" onClick={() => setRejectingTask(null)}>
+          <div
+            className="login-modal-dialog"
+            onClick={(e) => e.stopPropagation()}
+            style={{ maxWidth: "28rem", padding: "1.5rem" }}
+          >
+            <div style={{ display: "flex", alignItems: "center", justifyContent: "space-between", marginBottom: "1rem" }}>
+              <div style={{ display: "flex", alignItems: "center", gap: "0.5rem" }}>
+                <AlertTriangle size={18} color="#f87171" />
+                <h3 style={{ margin: 0, fontSize: "var(--text-lg)" }}>Reject Film Request</h3>
+              </div>
+              <button
+                type="button"
+                className="torrent-search-clear"
+                onClick={() => setRejectingTask(null)}
+                aria-label="Close dialog"
+              >
+                <X size={16} />
+              </button>
+            </div>
+
+            <p style={{ margin: "0 0 1rem", fontSize: "var(--text-sm)", color: "var(--color-muted)" }}>
+              Specify the rejection reason for "<strong>{rejectingTask.title}</strong>". The requester will be able to see
+              this explanation in their Request History.
+            </p>
+
+            <div style={{ display: "flex", flexDirection: "column", gap: "0.5rem", marginBottom: "1rem" }}>
+              <button
+                type="button"
+                className="storage-film-btn"
+                onClick={() => setRejectReason("Insufficient storage quota (Homelab storage full)")}
+                style={{ textAlign: "left", justifyContent: "flex-start" }}
+              >
+                1. Insufficient storage quota (100GB quota reached)
+              </button>
+              <button
+                type="button"
+                className="storage-film-btn"
+                onClick={() => setRejectReason("Duplicate release already available in Shared Storage")}
+                style={{ textAlign: "left", justifyContent: "flex-start" }}
+              >
+                2. Duplicate release already available in storage
+              </button>
+              <button
+                type="button"
+                className="storage-film-btn"
+                onClick={() => setRejectReason("Low seeder health / slow torrent source")}
+                style={{ textAlign: "left", justifyContent: "flex-start" }}
+              >
+                3. Low seeder health / dead source
+              </button>
+              <button
+                type="button"
+                className="storage-film-btn"
+                onClick={() => setRejectReason("Low audio/video quality or unsupported release format")}
+                style={{ textAlign: "left", justifyContent: "flex-start" }}
+              >
+                4. Low audio/video quality release
+              </button>
+            </div>
+
+            <label style={{ display: "block", fontSize: "var(--text-xs)", marginBottom: "0.35rem", color: "var(--color-muted)" }}>
+              Custom Reason Note:
+            </label>
+            <textarea
+              rows={3}
+              value={rejectReason}
+              onChange={(e) => setRejectReason(e.target.value)}
+              placeholder="e.g. Please search for a 1080p release instead of 4K 80GB..."
+              style={{
+                width: "100%",
+                padding: "0.6rem",
+                borderRadius: "var(--radius-input)",
+                background: "var(--color-paper-2)",
+                border: "1px solid var(--color-glass-hairline)",
+                color: "var(--color-ink)",
+                resize: "vertical",
+                fontSize: "var(--text-sm)",
+                marginBottom: "1.25rem",
+              }}
+            />
+
+            <div style={{ display: "flex", gap: "0.75rem", justifyContent: "flex-end" }}>
+              <button
+                type="button"
+                className="storage-film-btn"
+                onClick={() => setRejectingTask(null)}
+                disabled={rejectSubmitting}
+              >
+                Cancel
+              </button>
+              <button
+                type="button"
+                className="storage-film-btn"
+                onClick={handleConfirmReject}
+                disabled={rejectSubmitting}
+                style={{ background: "rgba(239, 68, 68, 0.2)", borderColor: "#ef4444", color: "#f87171", fontWeight: 700 }}
+              >
+                {rejectSubmitting ? <Loader2 size={14} className="spin" /> : <X size={14} />}
+                <span>{rejectSubmitting ? "Rejecting..." : "Confirm Rejection"}</span>
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
     </motion.section>
+  );
+}
+
+function TorrentResultCard({
+  item,
+  isCreating,
+  isCopied,
+  exceedsQuota,
+  remainingStorageBytes,
+  onCopy,
+  onCreateTask,
+}: {
+  item: TorrentSearchResult;
+  isCreating: boolean;
+  isCopied: boolean;
+  exceedsQuota: boolean;
+  remainingStorageBytes: number;
+  onCopy: () => void;
+  onCreateTask: () => void;
+}) {
+  const { info, metadata } = useMediaMetadata(item.title, item.category);
+
+  return (
+    <div className={`torrent-result-card ${exceedsQuota ? "quota-exceeded" : ""}`}>
+      {metadata?.coverUrl && (
+        <div
+          className="torrent-result-thumb-wrap"
+          style={{
+            width: "4rem",
+            height: "5.5rem",
+            flexShrink: 0,
+            borderRadius: "var(--radius-input)",
+            overflow: "hidden",
+          }}
+        >
+          <img
+            src={metadata.coverUrl}
+            alt={info.cleanTitle}
+            style={{ width: "100%", height: "100%", objectFit: "cover" }}
+            onError={(e) => {
+              (e.target as HTMLImageElement).style.display = "none";
+            }}
+          />
+        </div>
+      )}
+      <div className="torrent-result-info">
+        <h3 className="torrent-result-title" title={item.title}>
+          {info.cleanTitle} {info.year ? `(${info.year})` : ""}
+        </h3>
+        <p
+          className="torrent-result-raw-name"
+          style={{
+            margin: "0.15rem 0 0.35rem",
+            fontSize: "0.72rem",
+            color: "var(--color-muted)",
+            opacity: 0.8,
+          }}
+          title={item.title}
+        >
+          {item.title}
+        </p>
+        <div className="torrent-meta-badges">
+          <span className={`badge-source ${item.source.toLowerCase().replace(/^the/, "")}`}>{item.source}</span>
+          <span className="badge-pill">{item.category}</span>
+          {info.qualityBadge && <span className="badge-pill badge-quality">{info.qualityBadge}</span>}
+          {info.codec && <span className="badge-pill badge-codec">{info.codec}</span>}
+          {info.hdr && <span className="badge-pill badge-hdr">{info.hdr}</span>}
+          {info.episodeInfo && <span className="badge-pill badge-episode">{info.episodeInfo}</span>}
+          <span className="badge-pill badge-size">{item.formatted_size}</span>
+          <span className="badge-pill badge-health">
+            <span className="seeds">▲ {item.seeds}</span>
+            <span className="peers">▼ {item.peers}</span>
+          </span>
+          {item.has_vietsub && <span className="badge-pill badge-sub vi">VietSub</span>}
+          {item.has_engsub && <span className="badge-pill badge-sub en">EngSub</span>}
+          {metadata?.rating && <span className="badge-pill badge-rating">★ {metadata.rating.toFixed(1)}</span>}
+          {exceedsQuota && <span className="badge-pill badge-danger">Exceeds Quota</span>}
+        </div>
+      </div>
+
+      <div className="torrent-result-actions">
+        <button
+          type="button"
+          className="torrent-btn-icon"
+          onClick={onCopy}
+          title={isCopied ? "Magnet link copied to clipboard" : "Copy Magnet link"}
+          aria-label={isCopied ? "Magnet link copied to clipboard" : "Copy Magnet link"}
+        >
+          {isCopied ? <Check size={16} /> : <Copy size={16} />}
+        </button>
+        <button
+          type="button"
+          className="torrent-btn-download"
+          onClick={onCreateTask}
+          disabled={isCreating || exceedsQuota}
+          title={
+            exceedsQuota
+              ? `Exceeds available storage (${formatTorrentBytes(remainingStorageBytes)})`
+              : "Download & Remux to MP4"
+          }
+        >
+          {isCreating ? <Loader2 size={15} className="spin" /> : <Download size={15} />}
+          <span>{exceedsQuota ? "Exceeds Quota" : "Download & Remux"}</span>
+        </button>
+      </div>
+    </div>
   );
 }
 
@@ -2499,7 +3005,7 @@ function StorageFilmCard({
   onDelete: (id: string) => void;
 }) {
   const [playing, setPlaying] = useState(false);
-  const info = useMemo(() => parseFilmReleaseInfo(task.title), [task.title]);
+  const { info, metadata } = useMediaMetadata(task.title);
   const status = task.status;
   if (status.type !== "ready") return null;
 
@@ -2508,21 +3014,30 @@ function StorageFilmCard({
   const canDownload = !isGuest;
   const canDelete = isAdmin;
 
+  const posterImg = metadata?.coverUrl || LOGO_SRC;
+
   return (
     <article className="torrent-task-card storage-film-card ready">
       <div className="storage-film-poster-wrap">
         <img
-          src={LOGO_SRC}
+          src={posterImg}
           alt={info.cleanTitle}
           onError={(e) => {
             (e.target as HTMLImageElement).src = LOGO_SRC;
           }}
         />
         <div className="storage-film-badges">
-          <span className="torrent-task-status-badge ready"><Check size={12} /> Ready</span>
-          {info.quality && <span className="storage-badge quality">{info.quality}</span>}
+          <span className="torrent-task-status-badge ready">
+            <Check size={12} /> Ready
+          </span>
+          {info.qualityBadge && <span className="storage-badge quality">{info.qualityBadge}</span>}
           {info.isVietSub && <span className="storage-badge vietsub">VietSub</span>}
           {info.isEngSub && <span className="storage-badge engsub">EngSub</span>}
+          {metadata?.rating && (
+            <span className="storage-badge rating" style={{ background: "rgba(0,0,0,0.78)", color: "#facc15" }}>
+              ★ {metadata.rating.toFixed(1)}
+            </span>
+          )}
         </div>
         <div
           className="storage-film-play-overlay"
@@ -2542,9 +3057,35 @@ function StorageFilmCard({
           {info.cleanTitle}
         </h3>
         <div className="storage-film-meta">
-          <span>{info.year ? `${info.year} • ` : ""}{formatTorrentBytes(status.data.file_size)}</span>
+          <span>
+            {info.year || metadata?.year ? `${info.year || metadata?.year} • ` : ""}
+            {formatTorrentBytes(status.data.file_size)}
+          </span>
           {info.codec && <span>{info.codec}</span>}
         </div>
+
+        {metadata?.genres && metadata.genres.length > 0 && (
+          <div
+            className="storage-film-genres"
+            style={{ display: "flex", gap: "0.25rem", flexWrap: "wrap", marginTop: "0.25rem" }}
+          >
+            {metadata.genres.slice(0, 3).map((g) => (
+              <span
+                key={g}
+                className="genre-pill"
+                style={{
+                  fontSize: "0.68rem",
+                  opacity: 0.8,
+                  padding: "0.1rem 0.35rem",
+                  borderRadius: "4px",
+                  background: "var(--color-paper-3)",
+                }}
+              >
+                {g}
+              </span>
+            ))}
+          </div>
+        )}
 
         <div className="storage-film-actions torrent-task-actions-row">
           <button
@@ -2589,7 +3130,7 @@ function StorageFilmCard({
             playsInline
             preload="metadata"
             src={api.getTorrentStreamUrl(task.id)}
-            style={{ width: "100%", borderRadius: "var(--radius-input)", maxHeight: "240px" }}
+            style={{ width: "100%", borderRadius: "var(--radius-input)", maxHeight: "280px" }}
           >
             {status.data.subtitles.map((sub: TorrentSubtitleMeta) => (
               <track
@@ -2615,6 +3156,7 @@ function TorrentTaskItem({
   isApproving,
   onApprove,
   onReject,
+  onRequestReject,
   onDelete,
 }: {
   task: TorrentTask;
@@ -2623,21 +3165,27 @@ function TorrentTaskItem({
   isApproving?: boolean;
   onApprove?: (id: string) => void;
   onReject?: (id: string) => void;
+  onRequestReject?: (task: TorrentTask) => void;
   onDelete: (id: string) => void;
 }) {
   const status = task.status;
   const isPending = status.type === "pending_approval";
   const isReady = status.type === "ready";
   const isFailed = status.type === "failed";
+  const isRejected = status.type === "rejected";
   const [previewOpen, setPreviewOpen] = useState(false);
   const isGuest = userRole === "guest";
   const isAdmin = userRole === "admin";
   const canDownload = !isGuest;
-  const canDelete = isAdmin;
-  const info = useMemo(() => parseFilmReleaseInfo(task.title), [task.title]);
+  const canDelete = isAdmin || isRejected || isFailed;
+  const { info, metadata } = useMediaMetadata(task.title);
 
   return (
-    <div className={`torrent-task-card ${isReady ? "ready" : isFailed ? "failed" : isPending ? "pending" : ""}`}>
+    <div
+      className={`torrent-task-card ${
+        isReady ? "ready" : isFailed ? "failed" : isRejected ? "rejected" : isPending ? "pending" : ""
+      }`}
+    >
       <div className="torrent-task-header">
         <div className="torrent-task-title-group">
           <h3 className="torrent-task-title" title={task.title}>
@@ -2646,6 +3194,7 @@ function TorrentTaskItem({
           <span className="torrent-task-date">
             Task ID: {task.id.slice(0, 8)} • Added {new Date(task.created_at * 1000).toLocaleTimeString()}
             {isPending && ` • Requested by ${status.data.requester_name || status.data.requester_id}`}
+            {isRejected && status.data.requester_name && ` • Requested by ${status.data.requester_name}`}
           </span>
         </div>
 
@@ -2666,8 +3215,21 @@ function TorrentTaskItem({
               <Loader2 size={13} className="spin" /> Remuxing to MP4...
             </span>
           )}
-          {status.type === "ready" && <span><Check size={13} /> Ready</span>}
-          {status.type === "failed" && <span><AlertTriangle size={13} /> Failed</span>}
+          {status.type === "ready" && (
+            <span>
+              <Check size={13} /> Ready
+            </span>
+          )}
+          {status.type === "rejected" && (
+            <span>
+              <X size={13} /> Rejected
+            </span>
+          )}
+          {status.type === "failed" && (
+            <span>
+              <AlertTriangle size={13} /> Failed
+            </span>
+          )}
         </div>
       </div>
 
@@ -2681,13 +3243,28 @@ function TorrentTaskItem({
         </div>
       )}
 
+      {isRejected && (
+        <div
+          className="stage-error-banner rejection-banner"
+          style={{
+            margin: "0.4rem 0",
+            background: "rgba(239, 68, 68, 0.12)",
+            borderColor: "rgba(239, 68, 68, 0.35)",
+            color: "#f87171",
+          }}
+        >
+          <AlertTriangle size={16} />
+          <div>
+            <strong>Request Rejected by Admin:</strong>
+            <p style={{ margin: "0.15rem 0 0", fontSize: "var(--text-xs)", opacity: 0.95 }}>{status.data.reason}</p>
+          </div>
+        </div>
+      )}
+
       {status.type === "downloading" && (
         <div className="torrent-task-progress-shell">
           <div className="torrent-task-bar">
-            <div
-              className="torrent-task-bar-fill"
-              style={{ width: `${Math.round(status.data.progress * 100)}%` }}
-            />
+            <div className="torrent-task-bar-fill" style={{ width: `${Math.round(status.data.progress * 100)}%` }} />
           </div>
           <div className="torrent-task-stats-row">
             <span>
@@ -2706,10 +3283,7 @@ function TorrentTaskItem({
       {status.type === "remuxing" && (
         <div className="torrent-task-progress-shell">
           <div className="torrent-task-bar">
-            <div
-              className="torrent-task-bar-fill"
-              style={{ width: `${Math.round(status.data.progress * 100)}%` }}
-            />
+            <div className="torrent-task-bar-fill" style={{ width: `${Math.round(status.data.progress * 100)}%` }} />
           </div>
           <div className="torrent-task-stats-row">
             <span>{status.data.message}</span>
@@ -2736,13 +3310,17 @@ function TorrentTaskItem({
             <span>{isApproving ? "Approving..." : "Approve Download"}</span>
           </button>
         )}
-        {isPending && isAdmin && onReject && (
+        {isPending && isAdmin && (onRequestReject || onReject) && (
           <button
             type="button"
             className="torrent-btn-delete"
             disabled={isApproving || isDeleting}
-            onClick={() => onReject(task.id)}
-            style={{ background: "rgba(239, 68, 68, 0.15)", borderColor: "rgba(239, 68, 68, 0.4)", color: "#f87171" }}
+            onClick={() => (onRequestReject ? onRequestReject(task) : onReject?.(task.id))}
+            style={{
+              background: "rgba(239, 68, 68, 0.15)",
+              borderColor: "rgba(239, 68, 68, 0.4)",
+              color: "#f87171",
+            }}
           >
             <X size={14} />
             <span>Reject</span>
@@ -2769,17 +3347,18 @@ function TorrentTaskItem({
                 <span>Download MP4 ({formatTorrentBytes(status.data.file_size)})</span>
               </a>
             )}
-            {canDownload && status.data.subtitles.map((sub: TorrentSubtitleMeta) => (
-              <a
-                key={sub.language_code}
-                href={api.getTorrentSubtitleUrl(task.id, sub.language_code)}
-                download={sub.file_name}
-                className="torrent-btn-sub-download"
-              >
-                <Download size={14} />
-                <span>{sub.language} Sub (.vtt)</span>
-              </a>
-            ))}
+            {canDownload &&
+              status.data.subtitles.map((sub: TorrentSubtitleMeta) => (
+                <a
+                  key={sub.language_code}
+                  href={api.getTorrentSubtitleUrl(task.id, sub.language_code)}
+                  download={sub.file_name}
+                  className="torrent-btn-sub-download"
+                >
+                  <Download size={14} />
+                  <span>{sub.language} Sub (.vtt)</span>
+                </a>
+              ))}
           </>
         )}
         {canDelete && !isPending && (
@@ -2788,6 +3367,7 @@ function TorrentTaskItem({
             className="torrent-btn-delete"
             disabled={isDeleting}
             onClick={() => onDelete(task.id)}
+            style={{ marginLeft: "auto" }}
           >
             {isDeleting ? <Loader2 size={14} className="spin" /> : <Trash2 size={14} />}
             <span>{isDeleting ? "Deleting..." : "Delete Task"}</span>
@@ -2796,12 +3376,7 @@ function TorrentTaskItem({
       </div>
       {status.type === "ready" && previewOpen && (
         <div className="torrent-task-player">
-          <video
-            controls
-            playsInline
-            preload="metadata"
-            src={api.getTorrentStreamUrl(task.id)}
-          >
+          <video controls playsInline preload="metadata" src={api.getTorrentStreamUrl(task.id)}>
             {status.data.subtitles.map((sub: TorrentSubtitleMeta) => (
               <track
                 key={sub.language_code}

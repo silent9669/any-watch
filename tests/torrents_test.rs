@@ -6,7 +6,18 @@ use any_watch_core::torrents::{detect_quality, detect_subtitles, format_bytes};
 fn test_torrent_search_hub_initialization() {
     let hub = TorrentSearchHub::new();
     let providers = hub.available_providers();
-    assert_eq!(providers, ["AnimeTosho", "Nyaa", "YTS", "ThePirateBay"]);
+    assert_eq!(
+        providers,
+        [
+            "AnimeTosho",
+            "Nyaa",
+            "YTS",
+            "ThePirateBay",
+            "EZTV",
+            "TokyoToshokan",
+            "SolidTorrents"
+        ]
+    );
 }
 
 #[tokio::test]
