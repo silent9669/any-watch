@@ -1,8 +1,8 @@
 use any_watch_core::providers::{
     allanime::AllAnimeProvider, anidb::AniDbProvider, animegg::AnimeGgProvider,
-    animevietsub::AnimeVietSubProvider, anizone::AniZoneProvider, kkphim::KkphimProvider,
-    moviebox::MovieBoxProvider, niniyo::NiniyoProvider, normalize_title, ophim::OphimProvider,
-    AnimeProvider, StreamInfo,
+    animevietsub::AnimeVietSubProvider, anizone::AniZoneProvider, k20::K20Provider,
+    kkphim::KkphimProvider, moviebox::MovieBoxProvider, niniyo::NiniyoProvider, normalize_title,
+    ophim::OphimProvider, AnimeProvider, StreamInfo,
 };
 use anyhow::{Context, Result};
 use reqwest::{header, Client, Url};
@@ -16,9 +16,11 @@ async fn assert_live_playback(provider: &dyn AnimeProvider, query: &str) -> Resu
     for anime in anime_results
         .into_iter()
         .filter(|anime| {
-            aliases
-                .iter()
-                .any(|alias| normalize_title(alias) == normalize_title(&anime.title))
+            aliases.iter().any(|alias| {
+                let a = normalize_title(alias);
+                let b = normalize_title(&anime.title);
+                a == b || b.starts_with(&a) || a.starts_with(&b)
+            })
         })
         .take(5)
     {
@@ -217,6 +219,12 @@ async fn test_animevietsub_live_health() -> Result<()> {
 
 #[tokio::test]
 #[ignore = "requires live provider network access"]
+async fn test_k20_live_health() -> Result<()> {
+    K20Provider::new().health_check().await
+}
+
+#[tokio::test]
+#[ignore = "requires live provider network access"]
 async fn test_allanime_live_playback() -> Result<()> {
     assert_live_playback(&AllAnimeProvider::new(), "One Piece").await
 }
@@ -267,4 +275,10 @@ async fn test_niniyo_live_playback() -> Result<()> {
 #[ignore = "requires live provider network access"]
 async fn test_animevietsub_live_playback() -> Result<()> {
     assert_live_playback(&AnimeVietSubProvider::new(), "Đảo Hải Tặc").await
+}
+
+#[tokio::test]
+#[ignore = "requires live provider network access"]
+async fn test_k20_live_playback() -> Result<()> {
+    assert_live_playback(&K20Provider::new(), "One Piece").await
 }

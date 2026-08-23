@@ -76,6 +76,9 @@ const PROVIDER_HEALTH_TIMEOUT: Duration = Duration::from_secs(60);
 const PROVIDER_HEALTH_CONCURRENCY: usize = 16;
 
 type ProviderCatalogCache = HashMap<String, (Instant, Vec<AnimeDto>)>;
+type ProviderEpisodesCache =
+    HashMap<(String, String), (Instant, Vec<any_watch_core::providers::Episode>)>;
+type ProviderDetailsCache = HashMap<(String, String), (Instant, AnimeDetailsDto)>;
 
 #[derive(Clone)]
 struct AppState {
@@ -90,6 +93,8 @@ struct AppState {
     provider_health: Arc<Mutex<ProviderHealthCache>>,
     provider_health_refresh: Arc<Mutex<()>>,
     provider_catalog_cache: Arc<Mutex<ProviderCatalogCache>>,
+    provider_episodes_cache: Arc<Mutex<ProviderEpisodesCache>>,
+    provider_details_cache: Arc<Mutex<ProviderDetailsCache>>,
     media_client: Client,
     torrent_hub: Arc<TorrentSearchHub>,
     torrent_engine: Arc<TorrentTaskManager>,
@@ -425,7 +430,7 @@ struct AnimeDto {
     is_favorite: bool,
 }
 
-#[derive(Debug, Serialize, Default)]
+#[derive(Debug, Clone, Serialize, Default)]
 #[serde(rename_all = "camelCase")]
 struct AnimeDetailsDto {
     cover_url: Option<String>,
@@ -583,6 +588,8 @@ async fn main() -> Result<()> {
         provider_health: Arc::new(Mutex::new(ProviderHealthCache::default())),
         provider_health_refresh: Arc::new(Mutex::new(())),
         provider_catalog_cache: Arc::new(Mutex::new(HashMap::new())),
+        provider_episodes_cache: Arc::new(Mutex::new(HashMap::new())),
+        provider_details_cache: Arc::new(Mutex::new(HashMap::new())),
         media_client: media_client.clone(),
         torrent_hub: Arc::new(TorrentSearchHub::new()),
         torrent_engine: Arc::new(TorrentTaskManager::new(torrent_downloads_dir)),
@@ -1337,6 +1344,8 @@ async fn search_source(
 }
 
 const PROVIDER_CATALOG_CACHE_TTL: Duration = Duration::from_secs(24 * 60 * 60);
+const PROVIDER_EPISODES_CACHE_TTL: Duration = Duration::from_secs(60 * 60);
+const PROVIDER_DETAILS_CACHE_TTL: Duration = Duration::from_secs(24 * 60 * 60);
 
 async fn provider_catalog(
     State(state): State<AppState>,
@@ -1493,6 +1502,16 @@ async fn anime_details(
     Json(input): Json<AnimeDetailsInput>,
 ) -> ApiResult<Json<AnimeDetailsDto>> {
     require_app_request(&headers)?;
+    let cache_key = (input.provider.clone(), input.anime_id.clone());
+    {
+        let cache = state.provider_details_cache.lock().await;
+        if let Some((cached_at, details)) = cache.get(&cache_key) {
+            if cached_at.elapsed() < PROVIDER_DETAILS_CACHE_TTL {
+                return Ok(Json(details.clone()));
+            }
+        }
+    }
+
     let mut details = AnimeDetailsDto::default();
     let mut metadata_allowed = true;
     if let Some(provider) = state.providers.get_provider(&input.provider) {
@@ -1505,6 +1524,8 @@ async fn anime_details(
         }
     }
     if !metadata_allowed {
+        let mut cache = state.provider_details_cache.lock().await;
+        cache.insert(cache_key, (Instant::now(), details.clone()));
         return Ok(Json(details));
     }
     if let Ok(Some(metadata)) = state
@@ -1524,6 +1545,10 @@ async fn anime_details(
             .synopsis
             .or(metadata.description.and_then(non_empty));
     }
+    {
+        let mut cache = state.provider_details_cache.lock().await;
+        cache.insert(cache_key, (Instant::now(), details.clone()));
+    }
     Ok(Json(details))
 }
 
@@ -1533,6 +1558,16 @@ async fn episodes(
     Json(input): Json<EpisodesInput>,
 ) -> ApiResult<Json<Value>> {
     require_app_request(&headers)?;
+    let cache_key = (input.provider.clone(), input.anime_id.clone());
+    {
+        let cache = state.provider_episodes_cache.lock().await;
+        if let Some((cached_at, episodes)) = cache.get(&cache_key) {
+            if cached_at.elapsed() < PROVIDER_EPISODES_CACHE_TTL && !episodes.is_empty() {
+                return Ok(Json(json!(episodes)));
+            }
+        }
+    }
+
     let provider = state
         .providers
         .get_provider(&input.provider)
@@ -1545,16 +1580,23 @@ async fn episodes(
                 false,
             )
         })?;
-    Ok(Json(json!(provider
+    let episodes = provider
         .get_episodes(&input.anime_id)
         .await
-        .map_err(|error| ApiError::new(
-            StatusCode::BAD_GATEWAY,
-            classify_provider_error(&error.to_string()),
-            "episodes",
-            "Episodes are currently unavailable from this provider.",
-            true
-        ))?)))
+        .map_err(|error| {
+            ApiError::new(
+                StatusCode::BAD_GATEWAY,
+                classify_provider_error(&error.to_string()),
+                "episodes",
+                "Episodes are currently unavailable from this provider.",
+                true,
+            )
+        })?;
+    {
+        let mut cache = state.provider_episodes_cache.lock().await;
+        cache.insert(cache_key, (Instant::now(), episodes.clone()));
+    }
+    Ok(Json(json!(episodes)))
 }
 
 async fn playback(
@@ -4598,6 +4640,8 @@ mod tests {
             provider_health: Arc::new(Mutex::new(ProviderHealthCache::default())),
             provider_health_refresh: Arc::new(Mutex::new(())),
             provider_catalog_cache: Arc::new(Mutex::new(HashMap::new())),
+            provider_episodes_cache: Arc::new(Mutex::new(HashMap::new())),
+            provider_details_cache: Arc::new(Mutex::new(HashMap::new())),
             media_client: Client::new(),
             torrent_hub: Arc::new(TorrentSearchHub::new()),
             torrent_engine: Arc::new(TorrentTaskManager::new(PathBuf::from("/tmp"))),
@@ -4639,6 +4683,8 @@ mod tests {
             provider_health: Arc::new(Mutex::new(ProviderHealthCache::default())),
             provider_health_refresh: Arc::new(Mutex::new(())),
             provider_catalog_cache: Arc::new(Mutex::new(HashMap::new())),
+            provider_episodes_cache: Arc::new(Mutex::new(HashMap::new())),
+            provider_details_cache: Arc::new(Mutex::new(HashMap::new())),
             media_client: Client::new(),
             torrent_hub: Arc::new(TorrentSearchHub::new()),
             torrent_engine: Arc::new(TorrentTaskManager::new(PathBuf::from("/tmp"))),

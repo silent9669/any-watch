@@ -151,6 +151,75 @@ type HomeFeatureSlide = {
   catalog?: CatalogAnime;
 };
 
+function preloadImages(urls: (string | null | undefined)[]) {
+  if (typeof window === "undefined") return;
+  for (const url of urls) {
+    if (url && typeof url === "string" && (url.startsWith("http://") || url.startsWith("https://") || url.startsWith("/"))) {
+      const img = new Image();
+      img.src = url;
+    }
+  }
+}
+
+function getCachedEpisodes(provider: string, animeId: string): Episode[] | null {
+  try {
+    const key = `any-watch:episodes-cache-v2:${provider}:${animeId}`;
+    const raw = localStorage.getItem(key);
+    if (!raw) return null;
+    const parsed = JSON.parse(raw);
+    if (parsed && Array.isArray(parsed.episodes) && typeof parsed.timestamp === "number") {
+      if (Date.now() - parsed.timestamp < 2 * 60 * 60 * 1000 && parsed.episodes.length > 0) {
+        return parsed.episodes;
+      }
+    }
+  } catch {
+    // Ignore cache error
+  }
+  return null;
+}
+
+function saveCachedEpisodes(provider: string, animeId: string, episodes: Episode[]) {
+  try {
+    if (episodes.length > 0) {
+      const key = `any-watch:episodes-cache-v2:${provider}:${animeId}`;
+      localStorage.setItem(key, JSON.stringify({ timestamp: Date.now(), episodes }));
+      const thumbs = episodes.map((ep) => ep.thumbnail).filter(Boolean);
+      preloadImages(thumbs);
+    }
+  } catch {
+    // Ignore localStorage error
+  }
+}
+
+function getCachedAnimeDetails(provider: string, animeId: string): Partial<Anime> | null {
+  try {
+    const key = `any-watch:details-cache-v2:${provider}:${animeId}`;
+    const raw = localStorage.getItem(key);
+    if (!raw) return null;
+    const parsed = JSON.parse(raw);
+    if (parsed && parsed.details && typeof parsed.timestamp === "number") {
+      if (Date.now() - parsed.timestamp < 24 * 60 * 60 * 1000) {
+        return parsed.details;
+      }
+    }
+  } catch {
+    // Ignore cache error
+  }
+  return null;
+}
+
+function saveCachedAnimeDetails(provider: string, animeId: string, details: Partial<Anime>) {
+  try {
+    const key = `any-watch:details-cache-v2:${provider}:${animeId}`;
+    localStorage.setItem(key, JSON.stringify({ timestamp: Date.now(), details }));
+    if (details.coverUrl || details.bannerUrl) {
+      preloadImages([details.coverUrl, details.bannerUrl]);
+    }
+  } catch {
+    // Ignore localStorage error
+  }
+}
+
 function App() {
   const [session, setSession] = useState<SessionUser | null | undefined>(undefined);
   const [authError, setAuthError] = useState<string | null>(null);
@@ -459,6 +528,13 @@ function App() {
       });
       void api.getDiscovery().then((catalog) => {
         setDiscovery(catalog);
+        if (catalog) {
+          const images = [
+            ...catalog.trending.flatMap((c) => [c.coverUrl, c.bannerUrl]),
+            ...catalog.popularThisSeason.flatMap((c) => [c.coverUrl, c.bannerUrl]),
+          ].filter(Boolean);
+          preloadImages(images);
+        }
       }).catch((err) => {
         console.warn("Discovery catalog error (fallback in use):", err);
       });
@@ -958,13 +1034,22 @@ function App() {
 
   async function enrichAnime(anime: Anime): Promise<Anime> {
     const key = animeKey(anime.provider, anime.id);
-    const cached = detailCacheRef.current[key];
-    if (cached) return mergeAnimeDetails(anime, cached);
+    const inMemory = detailCacheRef.current[key];
+    if (inMemory && Object.keys(inMemory).length > 0) {
+      return mergeAnimeDetails(anime, inMemory);
+    }
+    const cachedDetails = getCachedAnimeDetails(anime.provider, anime.id);
+    if (cachedDetails && Object.keys(cachedDetails).length > 0) {
+      detailCacheRef.current[key] = cachedDetails;
+      if (Object.keys(cachedDetails).length) mergeAnimeEverywhere(key, cachedDetails);
+      return mergeAnimeDetails(anime, cachedDetails);
+    }
 
     try {
       const details = await api.getAnimeDetails(anime.provider, anime.id, anime.title);
       const patch = detailPatch(details);
       detailCacheRef.current[key] = patch;
+      saveCachedAnimeDetails(anime.provider, anime.id, patch);
       if (Object.keys(patch).length) mergeAnimeEverywhere(key, patch);
       return mergeAnimeDetails(anime, patch);
     } catch {
@@ -1006,8 +1091,16 @@ function App() {
       return;
     }
     setSelectedAnime(anime);
-    setEpisodes([]);
-    setLoadingEpisodes(true);
+
+    // Fast instant display from episode cache
+    const cachedEps = getCachedEpisodes(anime.provider, anime.id);
+    if (cachedEps && cachedEps.length > 0) {
+      setEpisodes(cachedEps);
+      setLoadingEpisodes(false);
+    } else {
+      setEpisodes([]);
+      setLoadingEpisodes(true);
+    }
     setError(null);
     if (route !== "detail") navigate("detail");
     const linkedAnime = await linkCatalogAnime(anime);
@@ -1018,11 +1111,14 @@ function App() {
       const nextEpisodes = await api.getEpisodes(linkedAnime.provider, linkedAnime.id);
       if (generation !== animeOpenGenerationRef.current) return;
       setEpisodes(nextEpisodes);
+      saveCachedEpisodes(linkedAnime.provider, linkedAnime.id, nextEpisodes);
     } catch (err) {
       if (generation !== animeOpenGenerationRef.current) return;
-      const appError = toAppError(err, "episodes");
-      if (providerFailureMakesOffline(appError)) markProviderOffline(anime.provider, appError.code);
-      setError(appError);
+      if (!cachedEps || cachedEps.length === 0) {
+        const appError = toAppError(err, "episodes");
+        if (providerFailureMakesOffline(appError)) markProviderOffline(anime.provider, appError.code);
+        setError(appError);
+      }
     } finally {
       if (generation === animeOpenGenerationRef.current) setLoadingEpisodes(false);
     }
@@ -3854,11 +3950,13 @@ function SearchStage({
 
   function getCachedProviderCatalog(name: string): Anime[] | null {
     try {
-      const raw = localStorage.getItem(`any-watch:provider-catalog-v2:${name}`);
+      const raw = localStorage.getItem(`any-watch:provider-catalog-v3:${name}`);
       if (!raw) return null;
       const parsed = JSON.parse(raw);
       if (parsed && Array.isArray(parsed.items) && typeof parsed.timestamp === "number") {
         if (Date.now() - parsed.timestamp < 24 * 60 * 60 * 1000 && parsed.items.length > 0) {
+          const images = parsed.items.flatMap((it: Anime) => [it.coverUrl, it.bannerUrl]).filter(Boolean);
+          preloadImages(images);
           return parsed.items;
         }
       }
@@ -3872,9 +3970,11 @@ function SearchStage({
     try {
       if (items.length > 0) {
         localStorage.setItem(
-          `any-watch:provider-catalog-v2:${name}`,
+          `any-watch:provider-catalog-v3:${name}`,
           JSON.stringify({ timestamp: Date.now(), items })
         );
+        const images = items.flatMap((it) => [it.coverUrl, it.bannerUrl]).filter(Boolean);
+        preloadImages(images);
       }
     } catch {
       // Ignore localStorage error
@@ -4081,7 +4181,7 @@ function SearchStage({
                       title={item.title}
                       onClick={() => onOpenAnime(item)}
                     >
-                      <img src={item.coverUrl || LOGO_SRC} alt="" onError={useLogoFallback} />
+                      <img src={item.coverUrl || LOGO_SRC} alt="" loading="lazy" decoding="async" onError={useLogoFallback} />
                       <span className="provider-catalog-play"><Play size={22} fill="currentColor" /></span>
                       {item.totalEpisodes && (
                         <span className="provider-episodes-pill">{item.totalEpisodes} eps</span>
@@ -4105,7 +4205,7 @@ function SearchStage({
                       title={item.title}
                       onClick={() => onOpenCatalog(item)}
                     >
-                      <img src={item.coverUrl || LOGO_SRC} alt="" onError={useLogoFallback} />
+                      <img src={item.coverUrl || LOGO_SRC} alt="" loading="lazy" decoding="async" onError={useLogoFallback} />
                       <span className="provider-catalog-play"><Search size={22} /></span>
                       <span className="provider-fallback-pill">General pick</span>
                     </button>
