@@ -196,7 +196,7 @@ export type YouTubeVideoItem = {
   description?: string;
 };
 
-export type YouTubeTopic = "All" | "Trending" | "Music" | "Gaming" | "News" | "Animations";
+export type YouTubeTopic = "All" | "Trending" | "Music" | "Films" | "Anime" | "Gaming" | "News";
 
 export type PlayerContext = {
   anime: Anime;

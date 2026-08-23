@@ -1659,8 +1659,11 @@ async fn media_main(
     headers: HeaderMap,
     Path(id): Path<String>,
 ) -> ApiResult<Response> {
-    let user = require_user(&state, &headers).await?;
-    let session = get_media_session(&state, &id, &user.id).await?;
+    let user_id = optional_user(&state, &headers)
+        .await
+        .map(|u| u.id)
+        .unwrap_or_else(|| "guest".into());
+    let session = get_media_session(&state, &id, &user_id).await?;
     let url = Url::parse(&session.stream.video_url).map_err(|error| {
         ApiError::new(
             StatusCode::BAD_GATEWAY,
@@ -1678,8 +1681,11 @@ async fn media_resource(
     headers: HeaderMap,
     Path((id, resource_id)): Path<(String, String)>,
 ) -> ApiResult<Response> {
-    let user = require_user(&state, &headers).await?;
-    let session = get_media_session(&state, &id, &user.id).await?;
+    let user_id = optional_user(&state, &headers)
+        .await
+        .map(|u| u.id)
+        .unwrap_or_else(|| "guest".into());
+    let session = get_media_session(&state, &id, &user_id).await?;
     let resource = resolve_media_resource(&session, &resource_id)?;
     if matches!(
         resource.transform,
@@ -1695,8 +1701,11 @@ async fn media_resource_path(
     headers: HeaderMap,
     Path((id, resource_id, path)): Path<(String, String, String)>,
 ) -> ApiResult<Response> {
-    let user = require_user(&state, &headers).await?;
-    let session = get_media_session(&state, &id, &user.id).await?;
+    let user_id = optional_user(&state, &headers)
+        .await
+        .map(|u| u.id)
+        .unwrap_or_else(|| "guest".into());
+    let session = get_media_session(&state, &id, &user_id).await?;
     let upstream = resolve_opaque_resource(&session, &resource_id, Some(&path))?;
     proxy_media_url(&state, &id, &session, upstream, &headers).await
 }
