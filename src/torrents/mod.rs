@@ -4,10 +4,13 @@ use serde::{Deserialize, Serialize};
 
 pub mod animetosho;
 pub mod engine;
+pub mod eztv;
 pub mod hub;
 pub mod nyaa;
 pub mod piratebay;
+pub mod solidtorrents;
 pub mod subtitles;
+pub mod tokyotoshokan;
 pub mod yts;
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Default, Serialize, Deserialize)]

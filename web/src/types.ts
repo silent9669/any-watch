@@ -266,11 +266,30 @@ export type TorrentTaskStatus =
       };
     }
   | {
+      type: "rejected";
+      data: {
+        reason: string;
+        requester_name?: string | null;
+      };
+    }
+  | {
       type: "failed";
       data: {
         reason: string;
       };
     };
+
+export type MediaMetadata = {
+  title: string;
+  originalTitle?: string | null;
+  year?: number | null;
+  description?: string | null;
+  rating?: number | null;
+  coverUrl?: string | null;
+  bannerUrl?: string | null;
+  genres: string[];
+  mediaType: string;
+};
 
 export type TorrentTask = {
   id: string;

@@ -45,6 +45,10 @@ pub enum TaskStatus {
         has_mp4: bool,
         subtitles: Vec<SubtitleFileMeta>,
     },
+    Rejected {
+        reason: String,
+        requester_name: Option<String>,
+    },
     Failed {
         reason: String,
     },
@@ -314,8 +318,14 @@ impl TorrentTaskManager {
         let task = {
             let mut tasks = self.tasks.write().await;
             let task = tasks.get_mut(task_id).context("Task not found")?;
-            task.status = TaskStatus::Failed {
+            let requester_name = match &task.status {
+                TaskStatus::PendingApproval { requester_name, .. } => Some(requester_name.clone()),
+                TaskStatus::Rejected { requester_name, .. } => requester_name.clone(),
+                _ => None,
+            };
+            task.status = TaskStatus::Rejected {
                 reason: reason.to_string(),
+                requester_name,
             };
             task.completed_at = Some(
                 SystemTime::now()

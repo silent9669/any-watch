@@ -568,6 +568,31 @@ def mocked_page(page, vite_server):
                 return state.torrent_tasks;
             } else if (cmd === "get_torrent_task") {
                 return state.torrent_tasks.find((task) => task.id === args.id) || null;
+            } else if (cmd === "reject_torrent_task") {
+                const task = state.torrent_tasks.find((t) => t.id === args.id);
+                if (task) {
+                    task.status = {
+                        type: "rejected",
+                        data: {
+                            reason: args.reason || "Rejected by admin",
+                            requester_name: task.status.data?.requester_name || "Viewer",
+                        },
+                    };
+                    saveMockState(state);
+                    return task;
+                }
+                return null;
+            } else if (cmd === "get_torrent_metadata") {
+                return {
+                    title: args.query,
+                    year: 2024,
+                    description: "High quality media release available for streaming.",
+                    rating: 8.8,
+                    coverUrl: "https://example.com/cover.jpg",
+                    bannerUrl: "https://example.com/banner.jpg",
+                    genres: ["Action", "Drama"],
+                    mediaType: args.category || "movie",
+                };
             } else if (cmd === "delete_torrent_task") {
                 state.torrent_tasks = state.torrent_tasks.filter((task) => task.id !== args.id);
                 saveMockState(state);

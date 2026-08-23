@@ -10,6 +10,7 @@ import type {
   Episode,
   Favorite,
   ManagedUser,
+  MediaMetadata,
   Playback,
   ProviderAvailability,
   SessionUser,
@@ -167,6 +168,11 @@ export const api = {
     if (source) params.set("source", source);
     return webRequest<TorrentSearchResult[]>(`/torrents/search?${params.toString()}`);
   },
+  getTorrentMetadata: (query: string, category?: string) => {
+    const params = new URLSearchParams({ query });
+    if (category) params.set("category", category);
+    return webRequest<MediaMetadata | null>(`/torrents/metadata?${params.toString()}`);
+  },
   searchTorrentSubtitles: (query: string, lang?: string) => {
     const params = new URLSearchParams({ query });
     if (lang) params.set("lang", lang);
@@ -188,7 +194,8 @@ export const api = {
   listTorrentTasks: () => webRequest<TorrentTask[]>("/torrents/tasks"),
   getTorrentTask: (id: string) => webRequest<TorrentTask>(`/torrents/tasks/${encodeURIComponent(id)}`),
   approveTorrentTask: (id: string) => webPost<TorrentTask>(`/torrents/tasks/${encodeURIComponent(id)}/approve`),
-  rejectTorrentTask: (id: string) => webPost<TorrentTask>(`/torrents/tasks/${encodeURIComponent(id)}/reject`),
+  rejectTorrentTask: (id: string, reason?: string) =>
+    webPost<TorrentTask>(`/torrents/tasks/${encodeURIComponent(id)}/reject`, reason ? { reason } : undefined),
   deleteTorrentTask: (id: string) => webRequest<void>(`/torrents/tasks/${encodeURIComponent(id)}`, { method: "DELETE" }),
   getTorrentDownloadUrl: (id: string) => `/api/torrents/tasks/${encodeURIComponent(id)}/file`,
   getTorrentStreamUrl: (id: string) => `/api/torrents/tasks/${encodeURIComponent(id)}/stream`,

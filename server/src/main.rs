@@ -634,6 +634,7 @@ async fn main() -> Result<()> {
         .route("/downloads/ticket", post(create_download_ticket))
         .route("/downloads/:id", get(browser_download))
         .route("/torrents/search", get(search_torrents))
+        .route("/torrents/metadata", get(get_torrent_metadata))
         .route("/torrents/subtitles", get(search_torrent_subtitles))
         .route("/torrents/download", post(start_torrent_download))
         .route("/torrents/tasks", get(list_torrent_tasks))
@@ -3739,16 +3740,45 @@ async fn approve_torrent_task(
     Ok(Json(json!(task)))
 }
 
+#[derive(Debug, Deserialize)]
+struct TorrentMetadataQuery {
+    query: String,
+    category: Option<String>,
+}
+
+#[derive(Debug, Deserialize, Default)]
+struct RejectTorrentTaskInput {
+    reason: Option<String>,
+}
+
+async fn get_torrent_metadata(
+    State(state): State<AppState>,
+    _headers: HeaderMap,
+    Query(params): Query<TorrentMetadataQuery>,
+) -> ApiResult<Json<Value>> {
+    let meta = state
+        .metadata
+        .resolve_media_metadata(&params.query, params.category.as_deref())
+        .await
+        .map_err(|e| ApiError::internal("torrent_metadata", e))?;
+    Ok(Json(json!(meta)))
+}
+
 async fn reject_torrent_task(
     State(state): State<AppState>,
     headers: HeaderMap,
     Path(id): Path<String>,
+    body: Option<Json<RejectTorrentTaskInput>>,
 ) -> ApiResult<Json<Value>> {
     require_app_request(&headers)?;
     require_admin(&state, &headers).await?;
+    let reason = body
+        .and_then(|b| b.0.reason)
+        .filter(|r| !r.trim().is_empty())
+        .unwrap_or_else(|| "Rejected by admin".to_string());
     let task = state
         .torrent_engine
-        .reject_task(&id, "Rejected by admin")
+        .reject_task(&id, &reason)
         .await
         .map_err(|e| {
             ApiError::new(
