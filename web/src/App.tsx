@@ -716,10 +716,17 @@ function App() {
     void fetchSection("trending", async () => {
       try {
         const items = await api.getYouTubeTrending();
-        if (items && items.length) return items;
-        return api.getYouTubePopular();
+        if (items && items.length) {
+          if (youtubeTopic === "All") setYoutubeFeed(withFavoriteState(items));
+          return items;
+        }
+        const pop = await api.getYouTubePopular();
+        if (youtubeTopic === "All") setYoutubeFeed(withFavoriteState(pop));
+        return pop;
       } catch {
-        return api.getYouTubePopular();
+        const pop = await api.getYouTubePopular();
+        if (youtubeTopic === "All") setYoutubeFeed(withFavoriteState(pop));
+        return pop;
       }
     });
 
@@ -4563,14 +4570,14 @@ function YouTubeVideoCard({
   return (
     <motion.article
       key={animeKey(video.provider, video.id)}
-      className={`youtube-shelf-card${active ? " active" : ""}`}
+      className={`youtube-shelf-card youtube-feed-card${active ? " active" : ""}`}
       initial={{ opacity: 0, y: 8 }}
       animate={{ opacity: 1, y: 0 }}
       transition={{ duration: 0.16, delay: Math.min(index * 0.015, 0.1) }}
     >
       <button
         type="button"
-        className="youtube-shelf-card-thumb"
+        className="youtube-shelf-card-thumb youtube-feed-thumbnail"
         onClick={() => onPlay(video)}
         aria-label={`Play ${video.title}`}
       >
@@ -4584,14 +4591,14 @@ function YouTubeVideoCard({
           <Play size={22} fill="currentColor" />
         </span>
       </button>
-      <div className="youtube-shelf-card-meta">
+      <div className="youtube-shelf-card-meta youtube-feed-meta">
         <span className="youtube-channel-avatar small" aria-hidden="true">
           {initial}
         </span>
-        <div className="youtube-shelf-card-copy">
+        <div className="youtube-shelf-card-copy youtube-feed-copy">
           <button
             type="button"
-            className="youtube-shelf-card-title"
+            className="youtube-shelf-card-title youtube-feed-title"
             onClick={() => onSelect(video)}
             title={video.title}
           >
