@@ -296,6 +296,7 @@ function App() {
   const [youtubeRelatedLoading, setYoutubeRelatedLoading] = useState(false);
   const [youtubeRelatedError, setYoutubeRelatedError] = useState<string | null>(null);
   const [youtubeWatchMode, setYoutubeWatchMode] = useState(false);
+  const [youtubeEmbedPlaying, setYoutubeEmbedPlaying] = useState(false);
   const [selectedAnime, setSelectedAnime] = useState<Anime | null>(null);
   const [episodes, setEpisodes] = useState<Episode[]>([]);
   const [continueWatching, setContinueWatching] = useState<WatchHistory[]>([]);
@@ -1395,7 +1396,7 @@ function App() {
       const episodeId = anime.id;
       const history = findHistoryForAnime(anime, continueWatching);
       const [playback, details] = await Promise.all([
-        api.preparePlayback(anime.provider, episodeId),
+        api.preparePlayback(anime.provider, episodeId).catch(() => null),
         api.getAnimeDetails(anime.provider, anime.id, anime.title).catch(() => null),
       ]);
       if (generation !== youtubePlaybackGenerationRef.current) return;
@@ -1410,20 +1411,24 @@ function App() {
         thumbnail: enriched.coverUrl,
       };
 
-      setPlayer({
-        anime: enriched,
-        episode: videoEpisode,
-        episodes: [videoEpisode],
-        playback,
-        startTime: history?.positionSeconds ?? 0,
-      });
+      if (playback) {
+        setYoutubeEmbedPlaying(false);
+        setPlayer({
+          anime: enriched,
+          episode: videoEpisode,
+          episodes: [videoEpisode],
+          playback,
+          startTime: history?.positionSeconds ?? 0,
+        });
+      } else {
+        setPlayer(null);
+        setYoutubeEmbedPlaying(true);
+      }
     } catch (err) {
       if (generation !== youtubePlaybackGenerationRef.current) return;
-      const appError = toAppError(err, "youtube-playback");
-      setError({
-        ...appError,
-        message: appError.message || "Unable to play this video. It may be restricted or unavailable.",
-      });
+      setPlayer(null);
+      setYoutubeEmbedPlaying(true);
+      setError(null);
     } finally {
       if (generation === youtubePlaybackGenerationRef.current) setYoutubeLoading(false);
     }
@@ -1782,6 +1787,7 @@ function App() {
               onRemoveContinueWatching={handleRemoveContinueWatching}
               onClearContinueWatching={handleClearContinueWatching}
               watchMode={youtubeWatchMode}
+              embedPlaying={youtubeEmbedPlaying}
               resume={youtubeResume}
               isFavorite={youtubeSelectionIsFavorite}
               playerContext={youtubePlayerContext}
@@ -5349,6 +5355,7 @@ function YouTubePage({
   onRemoveContinueWatching,
   onClearContinueWatching,
   watchMode,
+  embedPlaying,
   resume,
   isFavorite,
   playerContext,
@@ -5387,6 +5394,7 @@ function YouTubePage({
   onRemoveContinueWatching?: (animeId: string) => void;
   onClearContinueWatching?: () => void;
   watchMode: boolean;
+  embedPlaying?: boolean;
   resume?: WatchHistory;
   isFavorite: boolean;
   playerContext: PlayerContext | null;
@@ -5561,6 +5569,16 @@ function YouTubePage({
                   onPlayEpisode={onPlayPlayerEpisode}
                   onClose={onClosePlayer}
                 />
+              ) : embedPlaying ? (
+                <div className="youtube-embed-container">
+                  <iframe
+                    src={`https://www.youtube-nocookie.com/embed/${encodeURIComponent(selectedVideo.id)}?autoplay=1&rel=0&modestbranding=1&playsinline=1`}
+                    title={selectedVideo.title}
+                    allow="accelerometer; autoplay; clipboard-write; encrypted-media; gyroscope; picture-in-picture; web-share"
+                    allowFullScreen
+                    className="youtube-embed-iframe"
+                  />
+                </div>
               ) : (() => {
                 const progress = resume?.totalSeconds
                   ? Math.min(100, Math.max(0, (resume.positionSeconds / resume.totalSeconds) * 100))

@@ -9882,6 +9882,22 @@ select:focus-visible {
   overflow: hidden;
 }
 
+.youtube-embed-container {
+  position: relative;
+  width: 100%;
+  aspect-ratio: 16 / 9;
+  background: #000;
+  border-radius: inherit;
+  overflow: hidden;
+}
+
+.youtube-embed-iframe {
+  width: 100%;
+  height: 100%;
+  border: 0;
+  display: block;
+}
+
 .youtube-theater-art img {
   width: 100%;
   height: 100%;
