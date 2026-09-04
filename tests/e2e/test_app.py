@@ -453,6 +453,7 @@ def test_t1_episode_search_filter(mocked_page):
 
     filter_input = mocked_page.locator(".episode-toolbar input[placeholder*='Episode number']")
     filter_input.fill("Episode 12")
+    filter_input.dispatch_event("input")
 
     eps = mocked_page.locator(".episode-list-row")
     expect(eps).to_have_count(1)
