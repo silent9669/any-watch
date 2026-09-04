@@ -448,7 +448,9 @@ def test_t1_episode_search_filter(mocked_page):
     mocked_page.locator(".search-input-shell input").fill("Naruto")
     mocked_page.wait_for_selector(".search-result")
     mocked_page.locator(".search-result").first.click()
-    mocked_page.locator(".detail-actions button.primary").click()
+    open_btn = mocked_page.locator(".detail-actions button.primary")
+    expect(open_btn).to_be_enabled()
+    open_btn.click()
     mocked_page.wait_for_selector(".episode-list-row")
 
     filter_input = mocked_page.locator(".episode-toolbar input[placeholder*='Episode number']")
