@@ -59,6 +59,9 @@ pub struct SourcesConfig {
     #[serde(default = "default_true")]
     pub anikoto: bool,
 
+    #[serde(default = "default_true")]
+    pub animeheaven: bool,
+
     #[serde(default)]
     pub hianime: bool,
 }
@@ -80,6 +83,7 @@ mod tests {
         assert!(!config.sources.allanime);
         assert!(config.sources.anidb);
         assert!(config.sources.anikoto);
+        assert!(config.sources.animeheaven);
         assert!(config.sources.animegg);
         assert!(!config.sources.animevietsub);
         assert!(!config.sources.animetvn);
@@ -97,6 +101,7 @@ mod tests {
         assert!(sources.niniyo);
         assert!(sources.k20);
         assert!(sources.anikoto);
+        assert!(sources.animeheaven);
         assert!(!sources.anizone);
         assert!(sources.anidb);
         assert!(!sources.moviebox);
@@ -170,6 +175,7 @@ impl Default for SourcesConfig {
             niniyo: true,
             k20: true,
             anikoto: true,
+            animeheaven: true,
             hianime: false,
         }
     }

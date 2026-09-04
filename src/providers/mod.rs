@@ -2,6 +2,7 @@ pub mod allanime;
 pub mod anidb;
 pub mod anikoto;
 pub mod animegg;
+pub mod animeheaven;
 pub mod animevietsub;
 pub mod anizone;
 pub mod hianime;
@@ -396,6 +397,10 @@ impl ProviderRegistry {
 
         if config.sources.anikoto {
             providers.push(Arc::new(anikoto::AnikotoProvider::new()));
+        }
+
+        if config.sources.animeheaven {
+            providers.push(Arc::new(animeheaven::AnimeHeavenProvider::new()));
         }
 
         // 1. AllAnime (Anime & Films)
