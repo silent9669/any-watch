@@ -439,7 +439,7 @@ def mocked_page(page, vite_server):
                 const eps = [];
                 const total = state.episode_count || 1200;
                 const provider = state.episode_provider || args.provider || state.sources?.find((source) => source.status === "healthy")?.name || "AniZone";
-                const certified = ["AniZone", "AniDB", "KKPhim", "OPhim", "Niniyo"].includes(provider);
+                const certified = ["AniZone", "AniDB", "Anikoto", "KKPhim", "OPhim", "Niniyo"].includes(provider);
                 for (let i = 1; i <= total; i++) {
                     eps.push({
                         id: `ep-${i}`,
