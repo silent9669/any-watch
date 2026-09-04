@@ -24,6 +24,11 @@ services:
     dns:
       - 1.1.1.1
       - 8.8.8.8
+    extra_hosts:
+      - "animeheaven.me:192.99.9.229"
+      - "ct.animeheaven.me:192.99.9.229"
+      - "cm.animeheaven.me:192.99.9.229"
+      - "ck.animeheaven.me:192.99.9.229"
     healthcheck:
       test: ["CMD", "curl", "--fail", "--silent", "--show-error", "http://127.0.0.1:3000/api/health"]
       interval: 10s
