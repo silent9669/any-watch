@@ -1376,15 +1376,24 @@ async fn provider_catalog(
                 false,
             )
         })?;
-    let values = provider.catalog().await.map_err(|error| {
-        ApiError::new(
-            StatusCode::BAD_GATEWAY,
-            classify_provider_error(&error.to_string()),
-            "provider-catalog",
-            "The provider could not load catalog.",
-            true,
-        )
-    })?;
+    let values = match provider.catalog().await {
+        Ok(v) => v,
+        Err(error) => {
+            let cache = state.provider_catalog_cache.lock().await;
+            if let Some((_, items)) = cache.get(&input.provider) {
+                if !items.is_empty() {
+                    return Ok(Json(items.clone()));
+                }
+            }
+            return Err(ApiError::new(
+                StatusCode::BAD_GATEWAY,
+                classify_provider_error(&error.to_string()),
+                "provider-catalog",
+                "The provider could not load catalog.",
+                true,
+            ));
+        }
+    };
     let items: Vec<AnimeDto> = values
         .into_iter()
         .map(|anime| map_anime(anime, None))
@@ -1408,6 +1417,19 @@ async fn youtube_trending(
     _headers: HeaderMap,
     Query(query): Query<YouTubeTrendingQuery>,
 ) -> ApiResult<Json<Vec<AnimeDto>>> {
+    let cache_key = format!(
+        "youtube:trending:{}",
+        query.topic.as_deref().unwrap_or("all")
+    );
+    {
+        let cache = state.provider_catalog_cache.lock().await;
+        if let Some((cached_at, items)) = cache.get(&cache_key) {
+            if cached_at.elapsed() < PROVIDER_CATALOG_CACHE_TTL && !items.is_empty() {
+                return Ok(Json(items.clone()));
+            }
+        }
+    }
+
     let provider = state.providers.invidious().ok_or_else(|| {
         ApiError::new(
             StatusCode::NOT_FOUND,
@@ -1429,18 +1451,33 @@ async fn youtube_trending(
                 true,
             )
         })?;
-    Ok(Json(
-        items
-            .into_iter()
-            .map(|anime| map_anime(anime, None))
-            .collect(),
-    ))
+    let dto_array: Vec<AnimeDto> = items
+        .into_iter()
+        .map(|anime| map_anime(anime, None))
+        .collect();
+
+    {
+        let mut cache = state.provider_catalog_cache.lock().await;
+        cache.insert(cache_key, (Instant::now(), dto_array.clone()));
+    }
+
+    Ok(Json(dto_array))
 }
 
 async fn youtube_popular(
     State(state): State<AppState>,
     _headers: HeaderMap,
 ) -> ApiResult<Json<Vec<AnimeDto>>> {
+    let cache_key = "youtube:popular".to_string();
+    {
+        let cache = state.provider_catalog_cache.lock().await;
+        if let Some((cached_at, items)) = cache.get(&cache_key) {
+            if cached_at.elapsed() < PROVIDER_CATALOG_CACHE_TTL && !items.is_empty() {
+                return Ok(Json(items.clone()));
+            }
+        }
+    }
+
     let provider = state.providers.invidious().ok_or_else(|| {
         ApiError::new(
             StatusCode::NOT_FOUND,
@@ -1459,12 +1496,17 @@ async fn youtube_popular(
             true,
         )
     })?;
-    Ok(Json(
-        items
-            .into_iter()
-            .map(|anime| map_anime(anime, None))
-            .collect(),
-    ))
+    let dto_array: Vec<AnimeDto> = items
+        .into_iter()
+        .map(|anime| map_anime(anime, None))
+        .collect();
+
+    {
+        let mut cache = state.provider_catalog_cache.lock().await;
+        cache.insert(cache_key, (Instant::now(), dto_array.clone()));
+    }
+
+    Ok(Json(dto_array))
 }
 
 async fn youtube_related(
@@ -1472,6 +1514,16 @@ async fn youtube_related(
     _headers: HeaderMap,
     Path(video_id): Path<String>,
 ) -> ApiResult<Json<Vec<AnimeDto>>> {
+    let cache_key = format!("youtube:related:{video_id}");
+    {
+        let cache = state.provider_catalog_cache.lock().await;
+        if let Some((cached_at, items)) = cache.get(&cache_key) {
+            if cached_at.elapsed() < Duration::from_secs(2 * 60 * 60) && !items.is_empty() {
+                return Ok(Json(items.clone()));
+            }
+        }
+    }
+
     let provider = state.providers.invidious().ok_or_else(|| {
         ApiError::new(
             StatusCode::NOT_FOUND,
@@ -1481,21 +1533,26 @@ async fn youtube_related(
             false,
         )
     })?;
-    let items = provider.related(&video_id).await.map_err(|error| {
-        ApiError::new(
-            StatusCode::BAD_GATEWAY,
-            classify_provider_error(&error.to_string()),
-            "youtube-related",
-            "Failed to fetch related videos from Invidious.",
-            true,
-        )
-    })?;
-    Ok(Json(
-        items
-            .into_iter()
-            .map(|anime| map_anime(anime, None))
-            .collect(),
-    ))
+
+    let mut items = provider.related(&video_id).await.unwrap_or_default();
+
+    if items.is_empty() {
+        if let Ok(trending) = provider.trending(None).await {
+            items = trending.into_iter().filter(|v| v.id != video_id).collect();
+        }
+    }
+
+    let dto_array: Vec<AnimeDto> = items
+        .into_iter()
+        .map(|anime| map_anime(anime, None))
+        .collect();
+
+    if !dto_array.is_empty() {
+        let mut cache = state.provider_catalog_cache.lock().await;
+        cache.insert(cache_key, (Instant::now(), dto_array.clone()));
+    }
+
+    Ok(Json(dto_array))
 }
 
 async fn anime_details(

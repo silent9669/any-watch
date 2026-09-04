@@ -1,4 +1,4 @@
-use super::{Anime, AnimeProvider, Episode, Language, StreamInfo, Subtitle};
+use super::{probe_stream, Anime, AnimeProvider, Episode, Language, StreamInfo, Subtitle};
 use anyhow::{Context, Result};
 use async_trait::async_trait;
 use base64::engine::general_purpose::STANDARD;
@@ -395,10 +395,38 @@ impl AnimeProvider for MovieBoxProvider {
         let streams = value["data"]["streams"]
             .as_array()
             .context("STREAM_NOT_FOUND: MovieBox returned no streams")?;
-        let stream = streams
-            .iter()
-            .filter(|stream| stream["url"].as_str().is_some())
-            .max_by_key(|stream| stream_priority(stream["url"].as_str().unwrap_or_default()))
+        let mut sorted_streams = streams.clone();
+        sorted_streams.sort_by_key(|s| std::cmp::Reverse(stream_priority(s)));
+
+        let mut chosen_stream = None;
+        for s in &sorted_streams {
+            if let Some(url) = s["url"].as_str() {
+                if !url.is_empty() {
+                    let mut headers = HashMap::new();
+                    headers.insert("Referer".into(), "https://h5.aoneroom.com/".into());
+                    headers.insert("User-Agent".into(), PLAYBACK_USER_AGENT.into());
+                    if let Some(cookie) = s["signCookie"].as_str() {
+                        if !cookie.is_empty() {
+                            headers.insert("Cookie".into(), cookie.to_string());
+                        }
+                    }
+                    let test_info = StreamInfo {
+                        video_url: url.to_string(),
+                        subtitles: Vec::new(),
+                        qualities: Vec::new(),
+                        headers,
+                        use_curl: false,
+                    };
+                    if probe_stream(&test_info).await.is_ok() {
+                        chosen_stream = Some(s);
+                        break;
+                    }
+                }
+            }
+        }
+
+        let stream = chosen_stream
+            .or_else(|| sorted_streams.first())
             .context("STREAM_NOT_FOUND: MovieBox returned no playable stream")?;
         let video_url = stream["url"]
             .as_str()
@@ -616,17 +644,39 @@ fn json_u32(value: &Value) -> Option<u32> {
         .or_else(|| value.as_str()?.parse().ok())
 }
 
-fn stream_priority(url: &str) -> u8 {
-    let lowercase = url.to_lowercase();
-    if lowercase.contains(".m3u8") {
-        3
-    } else if lowercase.contains(".mp4") {
-        2
-    } else if lowercase.contains(".mpd") {
-        1
-    } else {
-        0
+fn stream_priority(stream: &Value) -> i32 {
+    let url = stream["url"].as_str().unwrap_or_default().to_lowercase();
+    let format = stream["format"].as_str().unwrap_or_default().to_lowercase();
+    let codec = stream["codec"].as_str().unwrap_or_default().to_lowercase();
+    let resolutions = stream["resolutions"]
+        .as_str()
+        .unwrap_or_default()
+        .to_lowercase();
+
+    if codec.contains("hevc")
+        || codec.contains("h265")
+        || url.contains("hevc")
+        || url.contains("h265")
+    {
+        return -100;
     }
+
+    let mut score = 10;
+    if format.contains("hls") || url.contains(".m3u8") {
+        score += 300;
+    } else if format.contains("mp4") || url.contains(".mp4") {
+        score += 200;
+    } else if format.contains("dash") || url.contains(".mpd") {
+        score += 100;
+    }
+
+    if resolutions.contains("1080") {
+        score += 30;
+    } else if resolutions.contains("720") {
+        score += 20;
+    }
+
+    score
 }
 
 fn title_key(value: &str) -> String {

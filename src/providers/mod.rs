@@ -1,5 +1,6 @@
 pub mod allanime;
 pub mod anidb;
+pub mod anikoto;
 pub mod animegg;
 pub mod animevietsub;
 pub mod anizone;
@@ -118,14 +119,6 @@ pub async fn probe_stream(stream: &StreamInfo) -> Result<()> {
                 anyhow::ensure!(
                     manifest.contains("<MPD"),
                     "STREAM_UNAVAILABLE: DASH response was not a manifest"
-                );
-                let lowercase = manifest.to_ascii_lowercase();
-                anyhow::ensure!(
-                    !lowercase.contains("codecs=\"hev1")
-                        && !lowercase.contains("codecs=\"hvc1")
-                        && !lowercase.contains("codecs='hev1")
-                        && !lowercase.contains("codecs='hvc1"),
-                    "STREAM_UNAVAILABLE: DASH manifest is HEVC-only"
                 );
             }
             return Ok(());
@@ -399,6 +392,10 @@ impl ProviderRegistry {
 
         if config.sources.anidb {
             providers.push(Arc::new(anidb::AniDbProvider::new()));
+        }
+
+        if config.sources.anikoto {
+            providers.push(Arc::new(anikoto::AnikotoProvider::new()));
         }
 
         // 1. AllAnime (Anime & Films)

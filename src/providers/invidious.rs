@@ -164,6 +164,7 @@ struct InnerTubeStreamingData {
     #[serde(default)]
     formats: Vec<InnerTubeFormat>,
     #[serde(default)]
+    #[allow(dead_code)]
     adaptive_formats: Vec<InnerTubeFormat>,
 }
 
@@ -298,69 +299,75 @@ impl InvidiousProvider {
 
         let mut last_error = None;
         let mut video_opt = None;
-        for base in instances {
-            let url = match base.join(&format!("api/v1/videos/{video_id}")) {
-                Ok(u) => u,
-                Err(e) => {
-                    last_error = Some(e.into());
-                    continue;
-                }
-            };
-            let response = match self
-                .client
-                .get(url)
-                .query(&[("local", self.local_proxy.to_string())])
-                .send()
-                .await
-            {
-                Ok(res) if res.status().is_success() => res,
-                Ok(res) => {
-                    last_error = Some(anyhow::anyhow!("Invidious video HTTP {}", res.status()));
-                    continue;
-                }
-                Err(e) => {
-                    last_error = Some(e.into());
-                    continue;
-                }
-            };
-            if let Ok(mut parsed) = response.json::<VideoResponse>().await {
-                let has_streams = !parsed.format_streams.is_empty()
-                    || parsed.dash_url.is_some()
-                    || parsed.hls_url.is_some();
-                if !has_streams {
-                    last_error = Some(anyhow::anyhow!(
-                        "Invidious instance returned video with no playable format streams"
-                    ));
-                    continue;
-                }
-                for s in &mut parsed.format_streams {
-                    if let Ok(abs) = base.join(&s.url) {
-                        s.url = abs.to_string();
-                    }
-                }
-                if let Some(ref mut d) = parsed.dash_url {
-                    if let Ok(abs) = base.join(d) {
-                        *d = abs.to_string();
-                    }
-                }
-                if let Some(ref mut h) = parsed.hls_url {
-                    if let Ok(abs) = base.join(h) {
-                        *h = abs.to_string();
-                    }
-                }
-                for c in &mut parsed.captions {
-                    if let Ok(abs) = base.join(&c.url) {
-                        c.url = abs.to_string();
-                    }
-                }
-                video_opt = Some(parsed);
-                break;
+
+        // Fast path: Try YouTube InnerTube directly first for instant sub-second response
+        if !is_local_test {
+            if let Ok(innertube_video) = self.innertube_video(video_id).await {
+                video_opt = Some(innertube_video);
             }
         }
 
-        if video_opt.is_none() && !is_local_test {
-            if let Ok(innertube_video) = self.innertube_video(video_id).await {
-                video_opt = Some(innertube_video);
+        if video_opt.is_none() {
+            let max_instances = if is_local_test { instances.len() } else { 3 };
+            for base in instances.into_iter().take(max_instances) {
+                let url = match base.join(&format!("api/v1/videos/{video_id}")) {
+                    Ok(u) => u,
+                    Err(e) => {
+                        last_error = Some(e.into());
+                        continue;
+                    }
+                };
+                let response = match self
+                    .client
+                    .get(url)
+                    .timeout(Duration::from_millis(3500))
+                    .query(&[("local", self.local_proxy.to_string())])
+                    .send()
+                    .await
+                {
+                    Ok(res) if res.status().is_success() => res,
+                    Ok(res) => {
+                        last_error = Some(anyhow::anyhow!("Invidious video HTTP {}", res.status()));
+                        continue;
+                    }
+                    Err(e) => {
+                        last_error = Some(e.into());
+                        continue;
+                    }
+                };
+                if let Ok(mut parsed) = response.json::<VideoResponse>().await {
+                    let has_streams = !parsed.format_streams.is_empty()
+                        || parsed.dash_url.is_some()
+                        || parsed.hls_url.is_some();
+                    if !has_streams {
+                        last_error = Some(anyhow::anyhow!(
+                            "Invidious instance returned video with no playable format streams"
+                        ));
+                        continue;
+                    }
+                    for s in &mut parsed.format_streams {
+                        if let Ok(abs) = base.join(&s.url) {
+                            s.url = abs.to_string();
+                        }
+                    }
+                    if let Some(ref mut d) = parsed.dash_url {
+                        if let Ok(abs) = base.join(d) {
+                            *d = abs.to_string();
+                        }
+                    }
+                    if let Some(ref mut h) = parsed.hls_url {
+                        if let Ok(abs) = base.join(h) {
+                            *h = abs.to_string();
+                        }
+                    }
+                    for c in &mut parsed.captions {
+                        if let Ok(abs) = base.join(&c.url) {
+                            c.url = abs.to_string();
+                        }
+                    }
+                    video_opt = Some(parsed);
+                    break;
+                }
             }
         }
 
@@ -501,37 +508,13 @@ impl InvidiousProvider {
                         {
                             Some("webm".to_string())
                         } else {
-                            None
+                            Some("mp4".to_string())
                         };
                         format_streams.push(FormatStream {
                             url,
                             quality_label: format.quality_label.or(format.quality),
                             container,
                         });
-                    }
-                }
-                for format in streaming.adaptive_formats {
-                    if let Some(url) = format.url {
-                        let is_video = format
-                            .mime_type
-                            .as_deref()
-                            .is_some_and(|m| m.starts_with("video/"));
-                        if is_video {
-                            let container = if format
-                                .mime_type
-                                .as_deref()
-                                .is_some_and(|m| m.contains("mp4"))
-                            {
-                                Some("mp4".to_string())
-                            } else {
-                                Some("webm".to_string())
-                            };
-                            format_streams.push(FormatStream {
-                                url,
-                                quality_label: format.quality_label.or(format.quality),
-                                container,
-                            });
-                        }
                     }
                 }
             }
@@ -644,6 +627,26 @@ impl InvidiousProvider {
             .base_url
             .host_str()
             .is_some_and(|h| h == "127.0.0.1" || h == "localhost");
+
+        if !is_local_test {
+            let topic_query = match topic
+                .map(str::trim)
+                .filter(|s| !s.is_empty() && *s != "all")
+            {
+                Some("Music") => "trending music official",
+                Some("Gaming") => "trending gaming videos",
+                Some("News") => "breaking news global live",
+                Some("Films") | Some("Movies") => "new movie trailers 2026",
+                Some("Anime") | Some("Animations") => "popular anime official trailer",
+                _ => "trending videos today",
+            };
+            if let Ok(items) = self.innertube_search(topic_query).await {
+                if !items.is_empty() {
+                    return Ok(items);
+                }
+            }
+        }
+
         let mut instances = vec![self.base_url.clone()];
         if !is_local_test {
             for &inst in PUBLIC_INVIDIOUS_INSTANCES {
@@ -696,25 +699,6 @@ impl InvidiousProvider {
             if let Ok(items) = response.json::<Vec<SearchItem>>().await {
                 if !items.is_empty() {
                     return Ok(self.parse_feed_items(items));
-                }
-            }
-        }
-
-        if !is_local_test {
-            let fallback_query = match topic
-                .map(str::trim)
-                .filter(|s| !s.is_empty() && *s != "all")
-            {
-                Some("Music") => "trending music official audio",
-                Some("Gaming") => "trending gaming gameplay walkthrough",
-                Some("News") => "breaking news global",
-                Some("Films") | Some("Movies") => "official movie trailer short film",
-                Some("Anime") | Some("Animations") => "anime animation short official preview",
-                _ => "popular trending videos",
-            };
-            if let Ok(items) = self.search(fallback_query).await {
-                if !items.is_empty() {
-                    return Ok(items);
                 }
             }
         }
@@ -779,43 +763,62 @@ impl InvidiousProvider {
     }
 
     pub async fn related(&self, video_id: &str) -> Result<Vec<Anime>> {
-        let video = self.video(video_id).await?;
-        if !video.recommended_videos.is_empty() {
-            return Ok(video
-                .recommended_videos
-                .into_iter()
-                .filter_map(|item| {
-                    let id = item.video_id?;
-                    let title = item.title?;
-                    let author = item.author.unwrap_or_else(|| "YouTube".to_string());
-                    let views = item.view_count_text.filter(|v| !v.is_empty());
-                    let synopsis = match views {
-                        Some(v) => Some(format!("{author} · {v}")),
-                        None => Some(author),
-                    };
-                    Some(Anime {
-                        id,
-                        provider: PROVIDER_NAME.to_string(),
-                        title,
-                        cover_url: preferred_thumbnail(&item.video_thumbnails),
-                        banner_url: None,
-                        language: Language::Youtube,
-                        total_episodes: None,
-                        synopsis,
-                    })
-                })
-                .collect());
-        }
-
-        // Fallback: search for related content using video title
         let is_local_test = self
             .base_url
             .host_str()
             .is_some_and(|h| h == "127.0.0.1" || h == "localhost");
-        if !is_local_test && !video.title.is_empty() {
-            let author = video.author.as_deref().unwrap_or_default();
-            let query = format!("{} {}", video.title, author);
-            if let Ok(items) = self.search(&query).await {
+
+        if let Ok(video) = self.video(video_id).await {
+            if !video.recommended_videos.is_empty() {
+                let items: Vec<Anime> = video
+                    .recommended_videos
+                    .into_iter()
+                    .filter_map(|item| {
+                        let id = item.video_id?;
+                        let title = item.title?;
+                        let author = item.author.unwrap_or_else(|| "YouTube".to_string());
+                        let views = item.view_count_text.filter(|v| !v.is_empty());
+                        let synopsis = match views {
+                            Some(v) => Some(format!("{author} · {v}")),
+                            None => Some(author),
+                        };
+                        Some(Anime {
+                            id,
+                            provider: PROVIDER_NAME.to_string(),
+                            title,
+                            cover_url: preferred_thumbnail(&item.video_thumbnails),
+                            banner_url: None,
+                            language: Language::Youtube,
+                            total_episodes: None,
+                            synopsis,
+                        })
+                    })
+                    .filter(|item| item.id != video_id)
+                    .collect();
+                if !items.is_empty() {
+                    return Ok(items);
+                }
+            }
+
+            // Fallback: search for related content using video title
+            if !is_local_test && !video.title.is_empty() {
+                let author = video.author.as_deref().unwrap_or_default();
+                let query = format!("{} {}", video.title, author);
+                if let Ok(items) = self.innertube_search(&query).await {
+                    let filtered: Vec<Anime> = items
+                        .into_iter()
+                        .filter(|item| item.id != video_id)
+                        .collect();
+                    if !filtered.is_empty() {
+                        return Ok(filtered);
+                    }
+                }
+            }
+        }
+
+        // Resilient fallback: search trending/popular content via innertube
+        if !is_local_test {
+            if let Ok(items) = self.innertube_search("trending popular music videos").await {
                 let filtered: Vec<Anime> = items
                     .into_iter()
                     .filter(|item| item.id != video_id)
@@ -1085,6 +1088,15 @@ impl AnimeProvider for InvidiousProvider {
             .base_url
             .host_str()
             .is_some_and(|h| h == "127.0.0.1" || h == "localhost");
+
+        if !is_local_test {
+            if let Ok(items) = self.innertube_search(query).await {
+                if !items.is_empty() {
+                    return Ok(items);
+                }
+            }
+        }
+
         let mut instances = vec![self.base_url.clone()];
         if !is_local_test {
             for &inst in PUBLIC_INVIDIOUS_INSTANCES {
@@ -1125,14 +1137,6 @@ impl AnimeProvider for InvidiousProvider {
             if let Ok(items) = response.json::<Vec<SearchItem>>().await {
                 if !items.is_empty() {
                     return Ok(self.parse_feed_items(items));
-                }
-            }
-        }
-
-        if !is_local_test {
-            if let Ok(items) = self.innertube_search(query).await {
-                if !items.is_empty() {
-                    return Ok(items);
                 }
             }
         }
@@ -1233,7 +1237,6 @@ impl AnimeProvider for InvidiousProvider {
             "Referer".to_string(),
             "https://www.youtube.com/".to_string(),
         );
-        headers.insert("Origin".to_string(), "https://www.youtube.com".to_string());
 
         let subtitles = video
             .captions

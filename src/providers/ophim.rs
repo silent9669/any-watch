@@ -5,8 +5,14 @@ use reqwest::header::{self, HeaderMap};
 use std::collections::HashMap;
 use std::time::Duration;
 
-const OPHIM_API: &str = "https://ophim1.com/v1/api";
-const REQUEST_TIMEOUT: Duration = Duration::from_secs(45);
+const OPHIM_APIS: &[&str] = &[
+    "https://phimapi.com/v1/api",
+    "https://phimapi.com",
+    "https://ophim17.cc/v1/api",
+    "https://ophim19.cc/v1/api",
+    "https://ophim1.com/v1/api",
+];
+const REQUEST_TIMEOUT: Duration = Duration::from_secs(12);
 
 pub struct OphimProvider {
     client: reqwest::Client,
@@ -32,6 +38,35 @@ impl OphimProvider {
             .expect("Failed to create HTTP client");
 
         Self { client }
+    }
+
+    async fn fetch_json(&self, path: &str, query: &[(&str, &str)]) -> Result<serde_json::Value> {
+        let mut last_error = None;
+        for api_base in OPHIM_APIS {
+            let url = format!(
+                "{}/{}",
+                api_base.trim_end_matches('/'),
+                path.trim_start_matches('/')
+            );
+            match self.client.get(&url).query(query).send().await {
+                Ok(response) if response.status().is_success() => {
+                    if let Ok(json) = response.json::<serde_json::Value>().await {
+                        return Ok(json);
+                    }
+                }
+                Ok(response) => {
+                    last_error = Some(anyhow::anyhow!(
+                        "OPhim mirror {} returned HTTP {}",
+                        api_base,
+                        response.status()
+                    ));
+                }
+                Err(error) => {
+                    last_error = Some(error.into());
+                }
+            }
+        }
+        Err(last_error.unwrap_or_else(|| anyhow::anyhow!("All OPhim API mirrors failed")))
     }
 
     fn absolute_image_url(cdn: &str, value: &str) -> Option<String> {
@@ -78,20 +113,10 @@ impl AnimeProvider for OphimProvider {
     }
 
     async fn search(&self, query: &str) -> Result<Vec<Anime>> {
-        let search_url = format!("{}/tim-kiem", OPHIM_API);
-
-        let response: serde_json::Value = self
-            .client
-            .get(&search_url)
-            .query(&[("keyword", query), ("limit", "40")])
-            .send()
+        let response = self
+            .fetch_json("tim-kiem", &[("keyword", query), ("limit", "40")])
             .await
-            .context("Failed to search OPhim")?
-            .error_for_status()
-            .context("OPhim search returned an error response")?
-            .json()
-            .await
-            .context("Failed to parse OPhim search response")?;
+            .context("Failed to search OPhim")?;
 
         let mut results = Vec::new();
 
@@ -119,12 +144,16 @@ impl AnimeProvider for OphimProvider {
                         .unwrap_or("https://img.ophim.live");
 
                     let image_url = if poster.starts_with("http") {
-                        poster
+                        poster.clone()
                     } else if thumb.starts_with("http") {
-                        thumb
+                        thumb.clone()
                     } else {
                         format!("{}/uploads/movies/{}", cdn.trim_end_matches('/'), poster)
                     };
+
+                    let episode_count = item["episode_total"]
+                        .as_str()
+                        .and_then(|e| e.parse::<u32>().ok());
 
                     if !slug.is_empty() && !name.is_empty() {
                         results.push(Anime {
@@ -132,10 +161,14 @@ impl AnimeProvider for OphimProvider {
                             provider: "OPhim".to_string(),
                             title: name,
                             cover_url: image_url,
-                            banner_url: None,
+                            banner_url: Some(if poster.starts_with("http") {
+                                poster
+                            } else {
+                                thumb
+                            }),
                             language: Language::Vietnamese,
-                            total_episodes: None,
-                            synopsis: None,
+                            total_episodes: episode_count,
+                            synopsis: item["content"].as_str().map(|s| s.to_string()),
                         });
                     }
                 }
@@ -146,18 +179,16 @@ impl AnimeProvider for OphimProvider {
     }
 
     async fn catalog(&self) -> Result<Vec<Anime>> {
-        let catalog_url = format!("{}/danh-sach/hoat-hinh", OPHIM_API);
-
-        let response: serde_json::Value = self
-            .client
-            .get(&catalog_url)
-            .query(&[("page", "1")])
-            .send()
+        let response = match self
+            .fetch_json("danh-sach/hoat-hinh", &[("page", "1")])
             .await
-            .context("Failed to get OPhim catalog")?
-            .json()
-            .await
-            .context("Failed to parse OPhim catalog response")?;
+        {
+            Ok(res) => res,
+            Err(_) => self
+                .fetch_json("danh-sach/phim-moi-cap-nhat", &[("page", "1")])
+                .await
+                .context("Failed to get OPhim catalog")?,
+        };
 
         let mut results = Vec::new();
 
@@ -182,16 +213,24 @@ impl AnimeProvider for OphimProvider {
                         format!("{}/uploads/movies/{}", cdn.trim_end_matches('/'), poster)
                     };
 
+                    let episode_count = item["episode_total"]
+                        .as_str()
+                        .and_then(|e| e.parse::<u32>().ok());
+
                     if !slug.is_empty() && !name.is_empty() {
                         results.push(Anime {
                             id: slug,
                             provider: "OPhim".to_string(),
                             title: name,
                             cover_url: image_url,
-                            banner_url: None,
+                            banner_url: Some(if poster.starts_with("http") {
+                                poster.to_string()
+                            } else {
+                                thumb.to_string()
+                            }),
                             language: Language::Vietnamese,
-                            total_episodes: None,
-                            synopsis: None,
+                            total_episodes: episode_count,
+                            synopsis: item["content"].as_str().map(|s| s.to_string()),
                         });
                     }
                 }
@@ -202,23 +241,24 @@ impl AnimeProvider for OphimProvider {
     }
 
     async fn get_anime_details(&self, anime_id: &str) -> Result<Option<Anime>> {
-        let detail_url = format!("{}/phim/{}", OPHIM_API, anime_id);
-        let response: serde_json::Value = self
-            .client
-            .get(&detail_url)
-            .send()
+        let response = self
+            .fetch_json(&format!("phim/{anime_id}"), &[])
             .await
-            .context("Failed to get OPhim details")?
-            .error_for_status()
-            .context("OPhim details returned an error response")?
-            .json()
-            .await
-            .context("Failed to parse OPhim details response")?;
+            .context("Failed to get OPhim details")?;
 
-        let Some(data) = response.get("data") else {
-            return Ok(None);
-        };
-        let Some(item) = data.get("item") else {
+        let (item, cdn) = if let Some(data) = response.get("data") {
+            let item = if data.get("item").is_some() {
+                &data["item"]
+            } else {
+                data
+            };
+            let cdn = data["APP_DOMAIN_CDN_IMAGE"]
+                .as_str()
+                .unwrap_or("https://img.ophim.live");
+            (item, cdn)
+        } else if let Some(movie) = response.get("movie") {
+            (movie, "https://phimimg.com")
+        } else {
             return Ok(None);
         };
 
@@ -227,9 +267,6 @@ impl AnimeProvider for OphimProvider {
             return Ok(None);
         }
 
-        let cdn = data["APP_DOMAIN_CDN_IMAGE"]
-            .as_str()
-            .unwrap_or("https://img.ophim.live");
         let poster_url = item["poster_url"].as_str().unwrap_or_default();
         let thumb_url = item["thumb_url"].as_str().unwrap_or_default();
         let cover_url = Self::absolute_image_url(cdn, poster_url)
@@ -254,43 +291,36 @@ impl AnimeProvider for OphimProvider {
     }
 
     async fn get_episodes(&self, anime_id: &str) -> Result<Vec<Episode>> {
-        let detail_url = format!("{}/phim/{}", OPHIM_API, anime_id);
-
-        let response: serde_json::Value = self
-            .client
-            .get(&detail_url)
-            .send()
+        let response = self
+            .fetch_json(&format!("phim/{anime_id}"), &[])
             .await
-            .context("Failed to get OPhim episodes")?
-            .json()
-            .await
-            .context("Failed to parse OPhim episodes response")?;
+            .context("Failed to get OPhim episodes")?;
 
         let mut episodes = Vec::new();
 
-        if let Some(data) = response.get("data") {
-            if let Some(item) = data.get("item") {
-                if let Some(episode_list) = item.get("episodes").and_then(|e| e.as_array()) {
-                    for server in episode_list {
-                        if let Some(server_data) =
-                            server.get("server_data").and_then(|s| s.as_array())
-                        {
-                            for ep in server_data {
-                                let name = ep["name"].as_str().unwrap_or("");
-                                let ep_num = super::parse_episode_number(name);
+        let episode_list = response
+            .get("data")
+            .and_then(|d| d.get("item"))
+            .and_then(|i| i.get("episodes"))
+            .or_else(|| response.get("data").and_then(|d| d.get("episodes")))
+            .or_else(|| response.get("episodes"))
+            .and_then(|e| e.as_array());
 
-                                if ep_num > 0 {
-                                    episodes.push(Episode {
-                                        id: format!("{}:{}", anime_id, name),
-                                        number: ep_num,
-                                        aniskip_episode_number: super::aniskip_episode_number(name),
-                                        title: Some(
-                                            ep["filename"].as_str().unwrap_or("").to_string(),
-                                        ),
-                                        thumbnail: None,
-                                    });
-                                }
-                            }
+        if let Some(episode_list) = episode_list {
+            for server in episode_list {
+                if let Some(server_data) = server.get("server_data").and_then(|s| s.as_array()) {
+                    for ep in server_data {
+                        let name = ep["name"].as_str().unwrap_or("");
+                        let ep_num = super::parse_episode_number(name);
+
+                        if ep_num > 0 {
+                            episodes.push(Episode {
+                                id: format!("{}:{}", anime_id, name),
+                                number: ep_num,
+                                aniskip_episode_number: super::aniskip_episode_number(name),
+                                title: Some(ep["filename"].as_str().unwrap_or("").to_string()),
+                                thumbnail: None,
+                            });
                         }
                     }
                 }
@@ -308,71 +338,64 @@ impl AnimeProvider for OphimProvider {
             .split_once(':')
             .context("Invalid episode_id format. Expected 'anime_slug:episode_name'")?;
 
-        let detail_url = format!("{}/phim/{}", OPHIM_API, anime_slug);
-
-        let response: serde_json::Value = self
-            .client
-            .get(&detail_url)
-            .send()
+        let response = self
+            .fetch_json(&format!("phim/{anime_slug}"), &[])
             .await
-            .context("Failed to get OPhim stream")?
-            .json()
-            .await
-            .context("Failed to parse OPhim stream response")?;
+            .context("Failed to get OPhim stream")?;
 
         let mut stream_url = String::new();
         let subtitles = Vec::new();
 
-        if let Some(data) = response.get("data") {
-            if let Some(item) = data.get("item") {
-                if let Some(episode_list) = item.get("episodes").and_then(|e| e.as_array()) {
-                    // Sort servers to prioritize Vietsub (usually "#Hà Nội")
-                    let mut sorted_servers = episode_list.clone();
-                    sorted_servers.sort_by(|a, b| {
-                        let a_name = a["server_name"].as_str().unwrap_or("").to_lowercase();
-                        let b_name = b["server_name"].as_str().unwrap_or("").to_lowercase();
-                        let a_priority = if a_name.contains("hà nội") || a_name.contains("vietsub")
-                        {
-                            0
-                        } else {
-                            1
-                        };
-                        let b_priority = if b_name.contains("hà nội") || b_name.contains("vietsub")
-                        {
-                            0
-                        } else {
-                            1
-                        };
-                        a_priority.cmp(&b_priority)
-                    });
+        let episode_list = response
+            .get("data")
+            .and_then(|d| d.get("item"))
+            .and_then(|i| i.get("episodes"))
+            .or_else(|| response.get("data").and_then(|d| d.get("episodes")))
+            .or_else(|| response.get("episodes"))
+            .and_then(|e| e.as_array());
 
-                    'outer: for server in sorted_servers {
-                        if let Some(server_data) =
-                            server.get("server_data").and_then(|s| s.as_array())
-                        {
-                            for ep in server_data {
-                                let name = ep["name"].as_str().unwrap_or("");
-                                if name == episode_name {
-                                    if let Some(link) = ep["link_m3u8"].as_str() {
-                                        if !link.is_empty() {
-                                            stream_url = link.to_string();
-                                        }
-                                    }
+        if let Some(episode_list) = episode_list {
+            // Sort servers to prioritize Vietsub (usually "#Hà Nội")
+            let mut sorted_servers = episode_list.clone();
+            sorted_servers.sort_by(|a, b| {
+                let a_name = a["server_name"].as_str().unwrap_or("").to_lowercase();
+                let b_name = b["server_name"].as_str().unwrap_or("").to_lowercase();
+                let a_priority = if a_name.contains("hà nội") || a_name.contains("vietsub") {
+                    0
+                } else {
+                    1
+                };
+                let b_priority = if b_name.contains("hà nội") || b_name.contains("vietsub") {
+                    0
+                } else {
+                    1
+                };
+                a_priority.cmp(&b_priority)
+            });
 
-                                    if stream_url.is_empty() {
-                                        if let Some(link) = ep["link_embed"].as_str() {
-                                            if link.contains("url=") {
-                                                if let Some(url_part) = link.split("url=").last() {
-                                                    stream_url = url_part.to_string();
-                                                }
-                                            } else {
-                                                stream_url = link.to_string();
-                                            }
-                                        }
-                                    }
-
-                                    break 'outer;
+            'outer: for server in sorted_servers {
+                if let Some(server_data) = server.get("server_data").and_then(|s| s.as_array()) {
+                    for ep in server_data {
+                        let name = ep["name"].as_str().unwrap_or("");
+                        if name == episode_name {
+                            if let Some(link) = ep["link_m3u8"].as_str() {
+                                if !link.is_empty() {
+                                    stream_url = link.to_string();
                                 }
+                            }
+
+                            if stream_url.is_empty() {
+                                if let Some(link) = ep["link_embed"].as_str() {
+                                    if link.contains("url=") {
+                                        if let Some(extracted) = link.split("url=").nth(1) {
+                                            stream_url = extracted.to_string();
+                                        }
+                                    }
+                                }
+                            }
+
+                            if !stream_url.is_empty() {
+                                break 'outer;
                             }
                         }
                     }
