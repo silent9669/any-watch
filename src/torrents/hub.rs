@@ -61,6 +61,9 @@ impl TorrentSearchHub {
             return Ok(Vec::new());
         }
 
+        let normalized = super::strip_vietnamese_diacritics(trimmed);
+        let has_diacritics = normalized != trimmed;
+
         let mut tasks = Vec::new();
 
         for provider in &self.providers {
@@ -86,26 +89,45 @@ impl TorrentSearchHub {
 
             let provider_clone = Arc::clone(provider);
             let query_owned = trimmed.to_string();
+            let normalized_query = if has_diacritics {
+                Some(normalized.clone())
+            } else {
+                None
+            };
 
             tasks.push(tokio::spawn(async move {
                 let search_fut = provider_clone.search(&query_owned, category, page.max(1));
+                let mut combined_results = Vec::new();
+                let mut provider_error = false;
                 match timeout(Duration::from_secs(15), search_fut).await {
                     Ok(Ok(results)) => {
-                        info!(
-                            "Provider {} returned {} results",
-                            provider_clone.name(),
-                            results.len()
-                        );
-                        Ok(results)
+                        combined_results.extend(results);
                     }
                     Ok(Err(error)) => {
                         warn!("Provider {} error: {:#}", provider_clone.name(), error);
-                        Err(provider_clone.name())
+                        provider_error = true;
                     }
                     Err(_) => {
                         warn!("Provider {} timed out", provider_clone.name());
-                        Err(provider_clone.name())
+                        provider_error = true;
                     }
+                }
+                if let Some(norm) = normalized_query {
+                    let norm_fut = provider_clone.search(&norm, category, page.max(1));
+                    if let Ok(Ok(results)) = timeout(Duration::from_secs(10), norm_fut).await {
+                        combined_results.extend(results);
+                        provider_error = false;
+                    }
+                }
+                if provider_error && combined_results.is_empty() {
+                    Err(provider_clone.name())
+                } else {
+                    info!(
+                        "Provider {} returned {} results",
+                        provider_clone.name(),
+                        combined_results.len()
+                    );
+                    Ok(combined_results)
                 }
             }));
         }
@@ -115,7 +137,7 @@ impl TorrentSearchHub {
         }
         let mut all_results = Vec::new();
         let mut successful_providers = 0_usize;
-        let mut failed_providers = Vec::new();
+        let mut failed_providers: Vec<&'static str> = Vec::new();
         for task in tasks {
             match task.await {
                 Ok(Ok(results)) => {

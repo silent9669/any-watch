@@ -91,6 +91,35 @@ pub fn detect_quality(title: &str) -> Option<String> {
     }
 }
 
+pub fn strip_vietnamese_diacritics(text: &str) -> String {
+    let mut result = String::with_capacity(text.len());
+    for c in text.chars() {
+        let mapped = match c {
+            'à' | 'á' | 'ả' | 'ã' | 'ạ' | 'ă' | 'ằ' | 'ắ' | 'ẳ' | 'ẵ' | 'ặ' | 'â' | 'ầ' | 'ấ'
+            | 'ẩ' | 'ẫ' | 'ậ' => 'a',
+            'À' | 'Á' | 'Ả' | 'Ã' | 'Ạ' | 'Ă' | 'Ằ' | 'Ắ' | 'Ẳ' | 'Ẵ' | 'Ặ' | 'Â' | 'Ầ' | 'Ấ'
+            | 'Ẩ' | 'Ẫ' | 'Ậ' => 'A',
+            'è' | 'é' | 'ẻ' | 'ẽ' | 'ẹ' | 'ê' | 'ề' | 'ế' | 'ể' | 'ễ' | 'ệ' => 'e',
+            'È' | 'É' | 'Ẻ' | 'Ẽ' | 'Ẹ' | 'Ê' | 'Ề' | 'Ế' | 'Ể' | 'Ễ' | 'Ệ' => 'E',
+            'ì' | 'í' | 'ỉ' | 'ĩ' | 'ị' => 'i',
+            'Ì' | 'Í' | 'Ỉ' | 'Ĩ' | 'Ị' => 'I',
+            'ò' | 'ó' | 'ỏ' | 'õ' | 'ọ' | 'ô' | 'ồ' | 'ố' | 'ổ' | 'ỗ' | 'ộ' | 'ơ' | 'ờ' | 'ớ'
+            | 'ở' | 'ỡ' | 'ợ' => 'o',
+            'Ò' | 'Ó' | 'Ỏ' | 'Õ' | 'Ọ' | 'Ô' | 'Ồ' | 'Ố' | 'Ổ' | 'Ỗ' | 'Ộ' | 'Ơ' | 'Ờ' | 'Ớ'
+            | 'Ở' | 'Ỡ' | 'Ợ' => 'O',
+            'ù' | 'ú' | 'ủ' | 'ũ' | 'ụ' | 'ư' | 'ừ' | 'ứ' | 'ử' | 'ữ' | 'ự' => 'u',
+            'Ù' | 'Ú' | 'Ủ' | 'Ũ' | 'Ụ' | 'Ư' | 'Ừ' | 'Ứ' | 'Ử' | 'Ữ' | 'Ự' => 'U',
+            'ỳ' | 'ý' | 'ỷ' | 'ỹ' | 'ỵ' => 'y',
+            'Ỳ' | 'Ý' | 'Ỷ' | 'Ỹ' | 'Ỵ' => 'Y',
+            'đ' => 'd',
+            'Đ' => 'D',
+            other => other,
+        };
+        result.push(mapped);
+    }
+    result
+}
+
 pub fn detect_subtitles(title: &str) -> (bool, bool) {
     let lower = title.to_lowercase();
     let has_vietsub = lower.contains("vietsub")
@@ -99,7 +128,12 @@ pub fn detect_subtitles(title: &str) -> (bool, bool) {
         || lower.contains("thuyết minh")
         || lower.contains("thuyet minh")
         || lower.contains("long tieng")
-        || lower.contains("lồng tiếng");
+        || lower.contains("lồng tiếng")
+        || lower.contains(".vie.")
+        || lower.contains("[vie]")
+        || lower.contains("(vie)")
+        || lower.contains(" vie ")
+        || lower.contains("viet");
 
     let has_foreign_only = lower.contains("italian")
         || lower.contains("german")

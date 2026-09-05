@@ -953,32 +953,63 @@ async fn remux_video(
     probe: &ProbeInfo,
     cancel: &CancellationToken,
 ) -> Result<()> {
-    let transcode_video = probe.video_codec.as_deref() != Some("h264");
-    let transcode_audio = probe.audio_codecs.iter().any(|codec| codec != "aac");
-    let _ = fs::remove_file(output).await;
+    // 1. Direct pass-through if input is already a browser-compatible MP4
+    let input_ext = input.extension().and_then(|s| s.to_str()).unwrap_or("");
+    let is_mp4_container =
+        input_ext.eq_ignore_ascii_case("mp4") || input_ext.eq_ignore_ascii_case("m4v");
+    let is_browser_video = matches!(
+        probe.video_codec.as_deref(),
+        Some("h264") | Some("hevc") | Some("h265") | Some("av1") | Some("vp9")
+    );
+    let is_browser_audio = probe
+        .audio_codecs
+        .iter()
+        .all(|c| c == "aac" || c == "mp3" || c == "opus");
 
-    let first = run_ffmpeg(
+    if is_mp4_container && is_browser_video && is_browser_audio {
+        let _ = fs::remove_file(output).await;
+        if fs::copy(input, output).await.is_ok() {
+            info!("Torrent video is already compatible MP4, direct copy used without transcoding");
+            return Ok(());
+        }
+    }
+
+    // 2. Fast remux (copy video stream, only transcode audio if needed)
+    let _ = fs::remove_file(output).await;
+    let transcode_audio = probe.audio_codecs.iter().any(|codec| codec != "aac");
+    let fast_remux = run_ffmpeg(
         ffmpeg,
         input,
         output,
-        transcode_video,
+        false, // transcode_video: false (-c:v copy)
         transcode_audio,
         cancel,
     )
-    .await?;
-    if !first.success() {
-        let _ = fs::remove_file(output).await;
-        let retry = run_ffmpeg(ffmpeg, input, output, true, true, cancel).await?;
-        if !retry.success() {
-            bail!("FFmpeg could not convert the selected video to MP4");
+    .await;
+
+    if let Ok(status) = fast_remux {
+        if status.success() {
+            if let Ok(output_probe) = probe_media(ffprobe, output).await {
+                if output_probe.video_codec.is_some() {
+                    info!("Fast remux (-c:v copy) succeeded in seconds");
+                    return Ok(());
+                }
+            }
         }
+    }
+
+    // 3. Fallback to full transcode only if copy failed
+    let _ = fs::remove_file(output).await;
+    let retry = run_ffmpeg(ffmpeg, input, output, true, true, cancel).await?;
+    if !retry.success() {
+        bail!("FFmpeg could not prepare the selected video for browser playback");
     }
 
     let output_probe = probe_media(ffprobe, output)
         .await
-        .context("FFprobe could not validate the remuxed MP4")?;
-    if output_probe.video_codec.as_deref() != Some("h264") {
-        bail!("Remuxed output is not browser-compatible H.264 video");
+        .context("FFprobe could not validate the prepared MP4")?;
+    if output_probe.video_codec.is_none() {
+        bail!("Prepared output does not contain a valid video stream");
     }
     Ok(())
 }

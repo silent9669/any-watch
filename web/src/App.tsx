@@ -2603,8 +2603,6 @@ function DownloadsPage({
     return Math.max(0, HOMELAB_QUOTA_BYTES - totalStorageBytes);
   }, [totalStorageBytes]);
 
-  const [hideExceedingQuota, setHideExceedingQuota] = useState(true);
-
   const displayedResults = useMemo(() => {
     let filtered = results;
     if (subPref === "vi") {
@@ -2631,9 +2629,8 @@ function DownloadsPage({
         return q.includes("720") || t.includes("720p") || t.includes("hd");
       });
     }
-    if (!hideExceedingQuota) return filtered;
-    return filtered.filter((item) => !item.size_bytes || item.size_bytes <= remainingStorageBytes);
-  }, [results, subPref, qualityFilter, hideExceedingQuota, remainingStorageBytes]);
+    return filtered;
+  }, [results, subPref, qualityFilter]);
 
   const displayedTasks = useMemo(() => {
     if (taskFilter === "ready") return readyTasks;
@@ -2872,12 +2869,8 @@ function DownloadsPage({
           <div className="film-request-title-area">
             <div className="film-request-title-row">
               <Film size={20} className="film-header-icon" />
-              <h1>Film Requests & Shared Storage</h1>
+              <h1>Film Requests</h1>
             </div>
-            <span className="film-quota-pill">
-              <HardDrive size={13} />
-              <span>{readyTasks.length} in storage • {formatTorrentBytes(remainingStorageBytes)} free</span>
-            </span>
           </div>
         </div>
 
@@ -2965,78 +2958,93 @@ function DownloadsPage({
                 </button>
               </div>
 
-            <div className="torrent-filters-compact-bar">
-              <div className="torrent-segmented-categories">
-                {(["all", "movie", "tv", "anime", "doc"] as const).map((cat) => (
+              {/* Site Provider Chips (Like provider filters) */}
+              <div className="torrent-source-chips-bar" role="tablist" aria-label="Torrent indexer source">
+                {[
+                  { id: "", label: "All Indexers" },
+                  { id: "YTS", label: "YTS (4K Movies)" },
+                  { id: "ThePirateBay", label: "The Pirate Bay" },
+                  { id: "SolidTorrents", label: "SolidTorrents" },
+                  { id: "EZTV", label: "EZTV (Series)" },
+                  { id: "Nyaa", label: "Nyaa (Anime)" },
+                  { id: "AnimeTosho", label: "AnimeTosho" },
+                ].map((s) => (
                   <button
-                    key={cat}
+                    key={s.id}
                     type="button"
-                    className={`torrent-cat-pill ${category === cat ? "active" : ""}`}
-                    onClick={() => handleCategoryChange(cat)}
+                    role="tab"
+                    aria-selected={source === s.id}
+                    className={`torrent-source-chip ${source === s.id ? "active" : ""}`}
+                    onClick={() => handleSourceChange(s.id)}
                   >
-                    {cat === "all"
-                      ? "All"
-                      : cat === "movie"
-                      ? "Movies"
-                      : cat === "tv"
-                      ? "Series"
-                      : cat === "anime"
-                      ? "Anime"
-                      : "Docs"}
+                    {s.label}
                   </button>
                 ))}
               </div>
 
-              <div className="torrent-quick-selects">
-                <select
-                  className="torrent-mini-select"
-                  aria-label="Quality filter"
-                  value={qualityFilter}
-                  onChange={(e) => setQualityFilter(e.target.value as any)}
-                >
-                  <option value="all">Any Quality</option>
-                  <option value="4k">4K UHD</option>
-                  <option value="1080p">1080p FHD</option>
-                  <option value="720p">720p HD</option>
-                </select>
+              <div className="torrent-filters-compact-bar">
+                <div className="torrent-segmented-categories">
+                  {(["all", "movie", "tv", "anime", "doc"] as const).map((cat) => (
+                    <button
+                      key={cat}
+                      type="button"
+                      className={`torrent-cat-pill ${category === cat ? "active" : ""}`}
+                      onClick={() => handleCategoryChange(cat)}
+                    >
+                      {cat === "all"
+                        ? "All"
+                        : cat === "movie"
+                        ? "Movies"
+                        : cat === "tv"
+                        ? "Series"
+                        : cat === "anime"
+                        ? "Anime"
+                        : "Docs"}
+                    </button>
+                  ))}
+                </div>
 
-                <select
-                  className="torrent-mini-select"
-                  aria-label="Subtitle filter"
-                  value={subPref}
-                  onChange={(e) => setSubPref(e.target.value as any)}
-                >
-                  <option value="all">All Subtitles</option>
-                  <option value="vi">VietSub Only</option>
-                  <option value="en">EngSub Only</option>
-                </select>
+                <div className="torrent-quick-selects">
+                  <select
+                    className="torrent-mini-select"
+                    aria-label="Quality filter"
+                    value={qualityFilter}
+                    onChange={(e) => setQualityFilter(e.target.value as any)}
+                  >
+                    <option value="all">All Qualities</option>
+                    <option value="4k">4K UHD</option>
+                    <option value="1080p">1080p FHD</option>
+                    <option value="720p">720p HD</option>
+                  </select>
 
-                <select
-                  className="torrent-mini-select torrent-source-select"
-                  aria-label="Torrent source"
-                  value={source}
-                  onChange={(e) => handleSourceChange(e.target.value)}
-                >
-                  <option value="">All Indexers</option>
-                  <option value="YTS">YTS.mx (Movies)</option>
-                  <option value="SolidTorrents">SolidTorrents</option>
-                  <option value="EZTV">EZTV (Series)</option>
-                  <option value="Nyaa">Nyaa.si (Anime)</option>
-                  <option value="AnimeTosho">AnimeTosho</option>
-                  <option value="ThePirateBay">The Pirate Bay</option>
-                  <option value="TokyoToshokan">TokyoToshokan</option>
-                </select>
+                  <select
+                    className="torrent-mini-select"
+                    aria-label="Subtitle filter"
+                    value={subPref}
+                    onChange={(e) => setSubPref(e.target.value as any)}
+                  >
+                    <option value="all">All Subtitles</option>
+                    <option value="vi">VietSub Only</option>
+                    <option value="en">EngSub Only</option>
+                  </select>
 
-                <label className="torrent-quota-pill-toggle" title="Filter out torrents that exceed remaining storage quota">
-                  <input
-                    type="checkbox"
-                    checked={hideExceedingQuota}
-                    onChange={(e) => setHideExceedingQuota(e.target.checked)}
-                  />
-                  <span>Fit 100GB ({formatTorrentBytes(remainingStorageBytes)} free)</span>
-                </label>
+                  <select
+                    className="torrent-mini-select torrent-source-select"
+                    aria-label="Torrent source"
+                    value={source}
+                    onChange={(e) => handleSourceChange(e.target.value)}
+                  >
+                    <option value="">All Indexers</option>
+                    <option value="YTS">YTS.mx (Movies)</option>
+                    <option value="SolidTorrents">SolidTorrents</option>
+                    <option value="EZTV">EZTV (Series)</option>
+                    <option value="Nyaa">Nyaa.si (Anime)</option>
+                    <option value="AnimeTosho">AnimeTosho</option>
+                    <option value="ThePirateBay">The Pirate Bay</option>
+                    <option value="TokyoToshokan">TokyoToshokan</option>
+                  </select>
+                </div>
               </div>
-            </div>
             </form>
           </div>
 
@@ -3109,16 +3117,6 @@ function DownloadsPage({
           ) : (
             /* Dashboard View (Like YouTube and Anime watching) */
             <div className="film-dashboard-view">
-              {/* Quick Trending Searches */}
-              <div className="torrent-quick-queries">
-                <span className="quick-label">Trending:</span>
-                {["Dune 2", "Frieren", "Oppenheimer", "Attack on Titan", "Interstellar", "Arcane", "Solo Leveling", "Breaking Bad"].map((q) => (
-                  <button key={q} type="button" onClick={() => quickSearch(q)}>
-                    {q}
-                  </button>
-                ))}
-              </div>
-
               {/* 1. Storage Shelf */}
               {readyTasks.length > 0 && (
                 <section className="curated-shelf-section">
@@ -5708,7 +5706,7 @@ function YouTubePage({
 
   return (
     <motion.section
-      className="youtube-page"
+      className={`youtube-page${watchMode ? " in-watch-mode" : ""}`}
       initial={{ opacity: 0 }}
       animate={{ opacity: 1 }}
       exit={{ opacity: 0 }}
@@ -5796,7 +5794,65 @@ function YouTubePage({
 
       {sourceReady && watchMode && selectedVideo && (
         <div className={`youtube-watch-room${theaterMode ? " theater-mode" : ""}`}>
-          <div className="youtube-theater-frame">
+          <div className="youtube-theater-pane">
+            <div className="youtube-watch-toolbar">
+              <div className="youtube-toolbar-left">
+                <button
+                  type="button"
+                  className="youtube-toolbar-btn"
+                  onClick={onCloseWatch}
+                  title="Back to feed"
+                >
+                  <ArrowLeft size={16} />
+                  <span>Back</span>
+                </button>
+
+                <div className="youtube-mode-segmented-control">
+                  <button
+                    type="button"
+                    className={`youtube-mode-btn ${embedPlaying ? "active" : ""}`}
+                    onClick={() => onPlay(selectedVideo, false)}
+                    title="Play via YouTube 4K Official Player"
+                  >
+                    <Tv size={14} />
+                    <span>YouTube 4K</span>
+                  </button>
+                  <button
+                    type="button"
+                    className={`youtube-mode-btn ${!embedPlaying && playerContext ? "active" : ""}`}
+                    onClick={() => onPlay(selectedVideo, true)}
+                    title="Play via Direct Native Stream"
+                  >
+                    <Play size={14} />
+                    <span>Direct Stream</span>
+                  </button>
+                </div>
+              </div>
+
+              <div className="youtube-toolbar-actions">
+                <button
+                  type="button"
+                  className={`youtube-toolbar-theater-btn ${theaterMode ? "active" : ""}`}
+                  onClick={() => setTheaterMode(!theaterMode)}
+                  title={theaterMode ? "Default View (T)" : "Theater View (T)"}
+                  aria-label="Toggle theater mode"
+                >
+                  <Tv size={16} />
+                  <span>{theaterMode ? "Default View" : "Theater View"}</span>
+                </button>
+                <button
+                  type="button"
+                  className="youtube-toolbar-icon-btn"
+                  onClick={onCloseWatch}
+                  title="Close watch room"
+                  aria-label="Close watch room"
+                >
+                  <X size={16} />
+                </button>
+              </div>
+            </div>
+
+            <div className="youtube-theater-frame">
             {playerContext ? (
               <VideoPlayer
                 key={playerContext.playback.sessionId}
@@ -5862,6 +5918,7 @@ function YouTubePage({
                 </button>
               </div>
             )}
+          </div>
           </div>
 
           <div className="youtube-watch-main">

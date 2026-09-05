@@ -1808,7 +1808,7 @@ def test_t3_torrent_task_can_preview_and_delete_prepared_video(mocked_page):
 def test_t3_downloads_page_has_no_back_button(mocked_page):
     mocked_page.locator('.app-navigation-items button[data-route="download"]').click()
     expect(mocked_page.locator(".stage-downloads .back-button")).to_have_count(0)
-    expect(mocked_page.locator(".stage-downloads h1")).to_contain_text("Film Requests & Shared Storage")
+    expect(mocked_page.locator(".stage-downloads h1")).to_contain_text("Film Requests")
 
 
 def test_t3_shared_storage_tab_and_rbac_permissions(mocked_page):

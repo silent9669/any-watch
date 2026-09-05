@@ -5625,12 +5625,14 @@ button:active:not(:disabled) {
 .torrent-search-panel {
   display: flex;
   flex-direction: column;
-  gap: 1rem;
-  padding: 1.25rem;
-  border: 1px solid rgba(255, 255, 255, 0.1);
-  border-radius: 1.2rem;
-  background: linear-gradient(145deg, rgba(28, 28, 33, 0.8), rgba(14, 14, 17, 0.85));
-  backdrop-filter: blur(24px);
+  gap: var(--space-xs);
+  padding: var(--space-md);
+  border: var(--rule-hair) solid var(--color-rule-2);
+  border-radius: var(--radius-card);
+  background: var(--color-glass);
+  backdrop-filter: var(--glass-blur);
+  -webkit-backdrop-filter: var(--glass-blur);
+  box-shadow: 0 var(--space-xs) var(--space-xl) var(--color-shadow);
   margin-bottom: 1.5rem;
 }
 
@@ -5650,7 +5652,7 @@ button:active:not(:disabled) {
 .torrent-search-input-wrap svg {
   position: absolute;
   left: 1rem;
-  color: var(--muted);
+  color: var(--color-muted);
   pointer-events: none;
 }
 
@@ -5658,18 +5660,18 @@ button:active:not(:disabled) {
   width: 100%;
   height: 3.1rem;
   padding: 0 2.8rem 0 2.85rem;
-  border: 1px solid rgba(255, 255, 255, 0.12);
-  border-radius: 14px;
-  background: rgba(8, 8, 10, 0.7);
-  color: white;
-  font-size: 0.95rem;
+  border: var(--rule-hair) solid var(--color-rule);
+  border-radius: var(--radius-pill);
+  background: var(--color-paper-2);
+  color: var(--color-ink);
+  font-size: var(--text-sm);
   outline: none;
   transition: border-color 160ms ease, box-shadow 160ms ease;
 }
 
 .torrent-search-input-wrap input:focus {
-  border-color: var(--red);
-  box-shadow: 0 0 0 3px rgba(255, 41, 52, 0.2);
+  border-color: var(--color-accent);
+  box-shadow: 0 0 0 3px var(--color-accent-faint);
 }
 
 .torrent-search-clear {
@@ -5691,18 +5693,63 @@ button:active:not(:disabled) {
   gap: 0.45rem;
   height: 3.1rem;
   padding: 0 1.4rem;
-  border: 1px solid rgba(255, 41, 52, 0.5);
-  border-radius: 14px;
-  background: var(--red);
+  border: none;
+  border-radius: var(--radius-pill);
+  background: var(--color-accent);
   color: white;
-  font-weight: 600;
-  font-size: 0.95rem;
+  font-weight: 650;
+  font-size: var(--text-sm);
+  cursor: pointer;
   transition: all 180ms ease;
 }
 
 .torrent-search-submit:hover:not(:disabled) {
-  background: #ff3a4b;
-  box-shadow: 0 4px 20px rgba(255, 41, 52, 0.35);
+  filter: brightness(1.1);
+  box-shadow: 0 4px 16px var(--color-accent-soft);
+  transform: translateY(-1px);
+}
+
+.torrent-source-chips-bar {
+  display: flex;
+  align-items: center;
+  gap: var(--space-2xs);
+  overflow-x: auto;
+  scrollbar-width: none;
+  padding: 0.25rem 0;
+  margin-top: var(--space-3xs);
+}
+
+.torrent-source-chips-bar::-webkit-scrollbar {
+  display: none;
+}
+
+.torrent-source-chip {
+  flex: 0 0 auto;
+  min-height: 2.1rem;
+  padding: 0 var(--space-sm);
+  border: var(--rule-hair) solid var(--color-rule-2);
+  border-radius: var(--radius-pill);
+  color: var(--color-muted);
+  background: var(--color-paper-2);
+  font-size: var(--text-xs);
+  font-weight: 600;
+  white-space: nowrap;
+  cursor: pointer;
+  transition: all var(--dur-short) var(--ease-out);
+}
+
+.torrent-source-chip:hover {
+  color: var(--color-ink);
+  border-color: var(--color-rule);
+  background: var(--color-paper-3);
+  transform: translateY(-1px);
+}
+
+.torrent-source-chip.active {
+  color: #fff;
+  border-color: var(--color-accent);
+  background: var(--color-accent);
+  box-shadow: 0 2px 8px var(--color-accent-soft);
 }
 
 .torrent-filters-row {
@@ -10230,6 +10277,7 @@ select:focus-visible {
 .youtube-watch-room {
   display: grid;
   grid-template-columns: minmax(0, 1fr) 25rem;
+  grid-template-rows: auto 1fr;
   grid-template-areas:
     "player sidebar"
     "main   sidebar";
@@ -10238,9 +10286,162 @@ select:focus-visible {
   margin-top: var(--space-xs);
 }
 
-.youtube-watch-room .youtube-theater-frame {
+.youtube-watch-room .youtube-theater-pane {
   grid-area: player;
   width: 100%;
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-xs);
+}
+
+.youtube-watch-room .youtube-theater-frame {
+  position: relative;
+  width: 100%;
+  height: auto;
+  aspect-ratio: 16 / 9;
+  border-radius: var(--radius-sheet);
+  background: #000;
+  overflow: hidden;
+  box-shadow: 0 1.25rem 3rem rgba(0, 0, 0, 0.45);
+}
+
+.youtube-watch-toolbar {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 0.75rem;
+  padding: 0.35rem 0.65rem;
+  border-radius: var(--radius-pill);
+  background: var(--color-paper-2);
+  border: var(--rule-hair) solid var(--color-rule-2);
+}
+
+.youtube-toolbar-left {
+  display: flex;
+  align-items: center;
+  gap: 0.5rem;
+}
+
+.youtube-toolbar-btn {
+  display: inline-flex;
+  align-items: center;
+  gap: 0.35rem;
+  padding: 0.3rem 0.75rem;
+  border-radius: var(--radius-pill);
+  border: var(--rule-hair) solid var(--color-rule);
+  background: var(--color-paper-3);
+  color: var(--color-ink);
+  font-size: 0.8rem;
+  font-weight: 600;
+  cursor: pointer;
+  transition: all var(--dur-short) var(--ease-out);
+}
+
+.youtube-toolbar-btn:hover {
+  background: var(--color-paper);
+  border-color: var(--color-accent);
+}
+
+.youtube-mode-segmented-control {
+  display: inline-flex;
+  align-items: center;
+  gap: 0.2rem;
+  background: var(--color-paper-3);
+  padding: 0.2rem;
+  border-radius: var(--radius-pill);
+}
+
+.youtube-mode-btn {
+  display: inline-flex;
+  align-items: center;
+  gap: 0.35rem;
+  padding: 0.3rem 0.85rem;
+  border: none;
+  border-radius: var(--radius-pill);
+  background: transparent;
+  color: var(--color-muted);
+  font-size: 0.8rem;
+  font-weight: 600;
+  cursor: pointer;
+  transition: all var(--dur-short) var(--ease-out);
+}
+
+.youtube-mode-btn:hover {
+  color: var(--color-ink);
+}
+
+.youtube-mode-btn.active {
+  background: var(--color-accent);
+  color: var(--color-accent-ink, #fff);
+  box-shadow: 0 2px 8px var(--color-accent-soft);
+}
+
+.youtube-toolbar-actions {
+  display: inline-flex;
+  align-items: center;
+  gap: 0.4rem;
+}
+
+.youtube-toolbar-theater-btn {
+  display: inline-flex;
+  align-items: center;
+  gap: 0.4rem;
+  padding: 0.3rem 0.85rem;
+  border-radius: var(--radius-pill);
+  border: var(--rule-hair) solid var(--color-rule);
+  background: var(--color-paper-3);
+  color: var(--color-ink);
+  font-size: 0.8rem;
+  font-weight: 600;
+  cursor: pointer;
+  transition: all var(--dur-short) var(--ease-out);
+}
+
+.youtube-toolbar-theater-btn:hover,
+.youtube-toolbar-theater-btn.active {
+  background: var(--color-accent);
+  border-color: var(--color-accent);
+  color: var(--color-accent-ink, #fff);
+  box-shadow: 0 2px 8px var(--color-accent-soft);
+}
+
+.youtube-toolbar-close-btn,
+.youtube-toolbar-icon-btn {
+  display: grid;
+  place-items: center;
+  width: 2rem;
+  height: 2rem;
+  border-radius: var(--radius-pill);
+  border: var(--rule-hair) solid var(--color-rule-2);
+  background: var(--color-paper-3);
+  color: var(--color-muted);
+  cursor: pointer;
+  transition: all var(--dur-short) var(--ease-out);
+}
+
+.youtube-toolbar-close-btn:hover,
+.youtube-toolbar-icon-btn:hover {
+  color: var(--color-ink);
+  border-color: var(--color-rule);
+  background: var(--color-paper);
+}
+
+.youtube-page.in-watch-mode .youtube-search {
+  margin: var(--space-2xs) auto var(--space-xs);
+  min-height: 2.75rem;
+  max-width: 40rem;
+  padding: 0.2rem 0.4rem 0.2rem var(--space-sm);
+  box-shadow: none;
+}
+
+.youtube-page.in-watch-mode .youtube-search input {
+  font-size: var(--text-sm);
+}
+
+.youtube-page.in-watch-mode .youtube-search button {
+  min-height: 2.2rem;
+  padding-inline: var(--space-xs);
+  font-size: 0.75rem;
 }
 
 .youtube-watch-room .youtube-watch-main {
@@ -10258,15 +10459,21 @@ select:focus-visible {
 
 .youtube-watch-room.theater-mode {
   grid-template-columns: minmax(0, 1fr) 25rem;
+  grid-template-rows: auto auto;
   grid-template-areas:
     "player player"
     "main   sidebar";
 }
 
+.youtube-watch-room.theater-mode .youtube-theater-pane {
+  width: 100%;
+}
+
 .youtube-watch-room.theater-mode .youtube-theater-frame {
-  max-height: 82vh;
+  max-height: 80vh;
   margin-bottom: var(--space-xs);
   background: #000;
+  width: 100%;
 }
 
 @media (max-width: 64rem) {
