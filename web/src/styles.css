@@ -5651,15 +5651,15 @@ button:active:not(:disabled) {
 
 .torrent-search-input-wrap svg {
   position: absolute;
-  left: 1rem;
+  left: 1.15rem;
   color: var(--color-muted);
   pointer-events: none;
 }
 
 .torrent-search-input-wrap input {
   width: 100%;
-  height: 3.1rem;
-  padding: 0 2.8rem 0 2.85rem;
+  height: 3.2rem;
+  padding: 0 3.2rem 0 2.9rem;
   border: var(--rule-hair) solid var(--color-rule);
   border-radius: var(--radius-pill);
   background: var(--color-paper-2);
@@ -5667,6 +5667,14 @@ button:active:not(:disabled) {
   font-size: var(--text-sm);
   outline: none;
   transition: border-color 160ms ease, box-shadow 160ms ease;
+  -webkit-appearance: none;
+  appearance: none;
+}
+
+.torrent-search-input-wrap input::-webkit-search-cancel-button,
+.torrent-search-input-wrap input::-webkit-search-decoration {
+  -webkit-appearance: none;
+  appearance: none;
 }
 
 .torrent-search-input-wrap input:focus {
@@ -5676,15 +5684,28 @@ button:active:not(:disabled) {
 
 .torrent-search-clear {
   position: absolute;
-  right: 0.75rem;
+  right: 0.85rem;
   display: grid;
   place-items: center;
-  width: 1.8rem;
-  height: 1.8rem;
+  width: 1.85rem;
+  height: 1.85rem;
   border: 0;
   border-radius: 50%;
-  background: rgba(255, 255, 255, 0.1);
-  color: var(--muted);
+  background: var(--color-paper-3);
+  color: var(--color-muted);
+  cursor: pointer;
+  transition: background 150ms ease, color 150ms ease, transform 120ms ease;
+  z-index: 2;
+}
+
+.torrent-search-clear:hover {
+  background: var(--color-paper-4, var(--color-paper));
+  color: var(--color-ink);
+  transform: scale(1.1);
+}
+
+.torrent-search-clear:active {
+  transform: scale(0.92);
 }
 
 .torrent-search-submit {
@@ -10305,45 +10326,59 @@ select:focus-visible {
   box-shadow: 0 1.25rem 3rem rgba(0, 0, 0, 0.45);
 }
 
-.youtube-theater-overlay-btn {
-  position: absolute;
-  top: var(--space-xs);
-  right: var(--space-xs);
-  z-index: 10;
+.youtube-player-bottom-bar {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: var(--space-xs);
+  padding: 0.4rem 0.85rem;
+  background: rgba(18, 18, 22, 0.95);
+  border-top: var(--rule-hair) solid rgba(255, 255, 255, 0.1);
+  border-bottom-left-radius: inherit;
+  border-bottom-right-radius: inherit;
+}
+
+.youtube-bottom-nav-btn {
   display: inline-flex;
   align-items: center;
   gap: 0.35rem;
-  height: 2.15rem;
-  padding: 0 0.85rem;
+  padding: 0.3rem 0.75rem;
   border-radius: var(--radius-pill);
-  border: 1px solid rgba(255, 255, 255, 0.22);
-  background: rgba(0, 0, 0, 0.72);
-  color: #fff;
-  font-size: 0.75rem;
+  border: var(--rule-hair) solid var(--color-rule);
+  background: var(--color-paper-3);
+  color: var(--color-ink);
+  font-size: 0.8rem;
   font-weight: 600;
-  backdrop-filter: blur(14px);
-  -webkit-backdrop-filter: blur(14px);
   cursor: pointer;
-  opacity: 0;
-  transform: translateY(-4px);
-  transition: opacity 180ms ease, transform 180ms ease, background 160ms ease;
-  pointer-events: none;
+  transition: all var(--dur-short) var(--ease-out);
 }
 
-.youtube-theater-frame:hover .youtube-theater-overlay-btn,
-.youtube-theater-overlay-btn:focus-visible,
-.youtube-theater-overlay-btn.active {
-  opacity: 1;
-  transform: translateY(0);
-  pointer-events: auto;
+.youtube-bottom-nav-btn:hover {
+  background: var(--color-paper);
+  border-color: var(--color-accent);
 }
 
-.youtube-theater-overlay-btn:hover,
-.youtube-theater-overlay-btn.active {
+.youtube-bottom-theater-btn {
+  display: inline-flex;
+  align-items: center;
+  gap: 0.4rem;
+  padding: 0.35rem 0.95rem;
+  border-radius: var(--radius-pill);
+  border: 1px solid rgba(255, 255, 255, 0.2);
+  background: rgba(255, 255, 255, 0.08);
+  color: var(--color-ink);
+  font-size: 0.8rem;
+  font-weight: 600;
+  cursor: pointer;
+  transition: all var(--dur-short) var(--ease-out);
+}
+
+.youtube-bottom-theater-btn:hover,
+.youtube-bottom-theater-btn.active {
   background: var(--color-accent);
   border-color: var(--color-accent);
   color: #fff;
-  box-shadow: 0 4px 14px var(--color-accent-soft);
+  box-shadow: 0 2px 8px var(--color-accent-soft);
 }
 
 .youtube-page.in-watch-mode .youtube-search {

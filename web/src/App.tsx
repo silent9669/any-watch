@@ -2962,9 +2962,9 @@ function DownloadsPage({
               <div className="torrent-source-chips-bar" role="tablist" aria-label="Torrent indexer source">
                 {[
                   { id: "", label: "All Indexers" },
-                  { id: "YTS", label: "YTS (4K Movies)" },
+                  { id: "YTS", label: "YTS.mx (4K Movies)" },
                   { id: "ThePirateBay", label: "The Pirate Bay" },
-                  { id: "SolidTorrents", label: "SolidTorrents" },
+                  { id: "Bitsearch", label: "Bitsearch (DHT & VietSub)" },
                   { id: "EZTV", label: "EZTV (Series)" },
                   { id: "Nyaa", label: "Nyaa (Anime)" },
                   { id: "AnimeTosho", label: "AnimeTosho" },
@@ -3036,12 +3036,11 @@ function DownloadsPage({
                   >
                     <option value="">All Indexers</option>
                     <option value="YTS">YTS.mx (Movies)</option>
-                    <option value="SolidTorrents">SolidTorrents</option>
+                    <option value="ThePirateBay">The Pirate Bay</option>
+                    <option value="Bitsearch">Bitsearch (DHT & VietSub)</option>
                     <option value="EZTV">EZTV (Series)</option>
                     <option value="Nyaa">Nyaa.si (Anime)</option>
                     <option value="AnimeTosho">AnimeTosho</option>
-                    <option value="ThePirateBay">The Pirate Bay</option>
-                    <option value="TokyoToshokan">TokyoToshokan</option>
                   </select>
                 </div>
               </div>
@@ -5796,16 +5795,6 @@ function YouTubePage({
         <div className={`youtube-watch-room${theaterMode ? " theater-mode" : ""}`}>
           <div className="youtube-theater-pane">
             <div className="youtube-theater-frame">
-              <button
-                type="button"
-                className={`youtube-theater-overlay-btn ${theaterMode ? "active" : ""}`}
-                onClick={() => setTheaterMode(!theaterMode)}
-                title={theaterMode ? "Default view (T)" : "Theater mode (T)"}
-                aria-label="Toggle theater mode"
-              >
-                <Tv size={15} />
-                <span>{theaterMode ? "Default view" : "Theater mode"}</span>
-              </button>
             {playerContext ? (
               <VideoPlayer
                 key={playerContext.playback.sessionId}
@@ -5821,15 +5810,42 @@ function YouTubePage({
                 onErrorFallback={() => onPlay(selectedVideo, false)}
               />
             ) : embedPlaying ? (
-              <div className="youtube-embed-container">
-                <iframe
-                  src={`https://www.youtube-nocookie.com/embed/${encodeURIComponent(selectedVideo.id)}?autoplay=1&rel=0&modestbranding=1&playsinline=1`}
-                  title={selectedVideo.title}
-                  allow="accelerometer; autoplay; clipboard-write; encrypted-media; gyroscope; picture-in-picture; web-share"
-                  allowFullScreen
-                  className="youtube-embed-iframe"
-                />
-              </div>
+              <>
+                <div className="youtube-embed-container">
+                  <iframe
+                    src={`https://www.youtube-nocookie.com/embed/${encodeURIComponent(selectedVideo.id)}?autoplay=1&rel=0&modestbranding=1&playsinline=1`}
+                    title={selectedVideo.title}
+                    allow="accelerometer; autoplay; clipboard-write; encrypted-media; gyroscope; picture-in-picture; web-share"
+                    allowFullScreen
+                    className="youtube-embed-iframe"
+                  />
+                </div>
+                <div className="youtube-player-bottom-bar">
+                  <button
+                    type="button"
+                    className="youtube-bottom-nav-btn"
+                    onClick={onCloseWatch}
+                    title="Back to feed"
+                  >
+                    <ArrowLeft size={16} />
+                    <span>Back to feed</span>
+                  </button>
+
+                  <button
+                    type="button"
+                    className={`youtube-bottom-theater-btn ${theaterMode ? "active" : ""}`}
+                    onClick={() => setTheaterMode(!theaterMode)}
+                    title={theaterMode ? "Default view (T)" : "Theater mode (T)"}
+                    aria-label="Toggle theater mode"
+                  >
+                    <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2">
+                      <rect x="2" y="4" width="20" height="16" rx="2" />
+                      <rect x="5" y="7" width="14" height="10" rx="1" fill={theaterMode ? "currentColor" : "none"} fillOpacity={0.25} />
+                    </svg>
+                    <span>{theaterMode ? "Default view" : "Theater mode"}</span>
+                  </button>
+                </div>
+              </>
             ) : (() => {
               const progress = resume?.totalSeconds
                 ? Math.min(100, Math.max(0, (resume.positionSeconds / resume.totalSeconds) * 100))
@@ -8270,7 +8286,10 @@ function VideoPlayer({
                 title={theaterMode ? "Default view (t)" : "Theater mode (t)"}
                 className={`player-theater-btn ${theaterMode ? "active" : ""}`}
               >
-                <Tv size={18} />
+                <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2">
+                  <rect x="2" y="4" width="20" height="16" rx="2" />
+                  <rect x="5" y="7" width="14" height="10" rx="1" fill={theaterMode ? "currentColor" : "none"} fillOpacity={0.25} />
+                </svg>
               </button>
             )}
             <button onClick={() => void toggleFullscreen()} aria-label="Toggle fullscreen" title="Toggle fullscreen (F)">
