@@ -3,6 +3,7 @@ import type { MediaPlayerClass, Representation } from "dashjs";
 import {
   ArrowLeft,
   AlertTriangle,
+  Bookmark,
   Check,
   ChevronLeft,
   ChevronRight,
@@ -36,12 +37,15 @@ import {
   RotateCw,
   Search,
   Settings2,
+  Share2,
   ShieldCheck,
   SkipBack,
   SkipForward,
   SlidersHorizontal,
   Sparkles,
   Star,
+  ThumbsDown,
+  ThumbsUp,
   Trash2,
   Tv,
   UserPlus,
@@ -2069,7 +2073,7 @@ function DonatePage({
         <div className="page-stage-title-group">
           <h1>Support any-watch</h1>
           <p>
-            any-watch is a non-profit family theatre project. Your support helps maintain the homelab server, storage drives, and bandwidth for the family.
+            any-watch is a non-profit personal theatre project. Your support helps maintain the homelab server, storage drives, and streaming bandwidth.
           </p>
         </div>
       </div>
@@ -3116,7 +3120,7 @@ function DownloadsPage({
               </div>
 
               {/* 1. Storage Shelf */}
-              {readyTasks.length > 0 ? (
+              {readyTasks.length > 0 && (
                 <section className="curated-shelf-section">
                   <div className="curated-shelf-header">
                     <div className="curated-shelf-title-group">
@@ -3143,19 +3147,6 @@ function DownloadsPage({
                     ))}
                   </div>
                 </section>
-              ) : (
-                <div className="storage-welcome-banner">
-                  <div className="storage-welcome-icon">
-                    <HardDrive size={28} />
-                  </div>
-                  <div className="storage-welcome-copy">
-                    <strong>Family Shared Storage Ready</strong>
-                    <p>100 GB dedicated fast-start storage ready for your cinema and anime requests. Pick a title below or search to request.</p>
-                  </div>
-                  <div className="storage-welcome-stat">
-                    <span>{formatTorrentBytes(remainingStorageBytes)} Free</span>
-                  </div>
-                </div>
               )}
 
               {/* 2. Active Downloads & Remuxing Shelf */}
@@ -3854,7 +3845,7 @@ function TorrentTaskItem({
           <span>
             {isAdmin
               ? `Film request submitted by viewer "${status.data.requester_name}". Approve to start downloading and preparing media immediately.`
-              : "Your request has been submitted to the family administrator. Once approved, it will be prepared for in-app playback."}
+              : "Your request has been submitted to the administrator. Once approved, it will be prepared for in-app playback."}
           </span>
         </div>
       )}
@@ -4119,19 +4110,19 @@ function LoginScreen({
   return (
     <main className="login-screen">
       <div className="login-ambient" />
-      <section className="login-showcase" aria-label="any-watch family theatre">
+      <section className="login-showcase" aria-label="any-watch theatre">
         <div className="login-showcase-brand">
           <img src={LOGO_SRC} alt="" />
           <span>any-watch</span>
         </div>
         <div className="login-showcase-copy">
-          <p>Private family theatre</p>
+          <p>Private streaming theatre</p>
           <h1>Pick a source.<br />Keep your place.</h1>
-          <span>One watchlist for your family, with provider-specific search and episode progress on every signed-in device.</span>
+          <span>One synchronized watchlist with provider-specific search and episode progress across all your devices.</span>
         </div>
         <dl className="login-showcase-facts">
           <div><dt>Catalogs</dt><dd>Provider-first</dd></div>
-          <div><dt>Access</dt><dd>Family accounts</dd></div>
+          <div><dt>Access</dt><dd>Member accounts</dd></div>
           <div><dt>Playback</dt><dd>Any browser</dd></div>
         </dl>
       </section>
@@ -4153,12 +4144,12 @@ function LoginScreen({
         )}
         <div className="login-brand">
           <img src={LOGO_SRC} alt="any-watch" />
-          <div><span>any-watch</span><small>Signed-in family access</small></div>
+          <div><span>any-watch</span><small>Signed-in access</small></div>
         </div>
         <div className="login-copy">
           <p className="eyebrow">Private watch space</p>
           <h2>Sign in</h2>
-          <p>Use the account created by your family administrator.</p>
+          <p>Use the account created by your administrator.</p>
         </div>
         <form
           onSubmit={(event) => {
@@ -4334,7 +4325,7 @@ function HomeDashboard({
       kind: "personalMatch" as const,
       title: item.title,
       image: item.bannerUrl || item.coverUrl || LOGO_SRC,
-      description: plainDescription(item.description) || "Open the title, choose a provider, and see the episodes available to your family.",
+      description: plainDescription(item.description) || "Open the title, choose a provider, and see available episodes.",
       context: item.personalMatch != null ? `${item.personalMatch}% personal match` : "Recommended for you",
       progress: 0,
       catalog: item,
@@ -4346,7 +4337,7 @@ function HomeDashboard({
     title: "any-watch",
     image: LOGO_SRC,
     description: "Choose one provider catalog, find an episode, and settle in.",
-    context: "Private family theatre",
+    context: "Private theatre",
     progress: 0,
   };
   const featuredTitleClass = featured.title.length > 72
@@ -5805,128 +5796,75 @@ function YouTubePage({
 
       {sourceReady && watchMode && selectedVideo && (
         <div className={`youtube-watch-room${theaterMode ? " theater-mode" : ""}`}>
-          <div className="youtube-watch-main">
-            {/* Apple-style Watch Room Toolbar */}
-            <div className="youtube-watch-toolbar">
-              <button
-                type="button"
-                className="youtube-toolbar-back-btn"
-                onClick={onCloseWatch}
-                title="Back to feed"
-              >
-                <ArrowLeft size={16} />
-                <span>Back</span>
-              </button>
-
-              <div className="youtube-mode-segmented-control">
-                <button
-                  type="button"
-                  className={`youtube-mode-btn ${embedPlaying ? "active" : ""}`}
-                  onClick={() => onPlay(selectedVideo, false)}
-                >
-                  <Tv size={14} />
-                  <span>YouTube 4K</span>
-                </button>
-                <button
-                  type="button"
-                  className={`youtube-mode-btn ${!embedPlaying && playerContext ? "active" : ""}`}
-                  onClick={() => onPlay(selectedVideo, true)}
-                >
-                  <Play size={14} />
-                  <span>Direct Stream</span>
-                </button>
-              </div>
-
-              <div className="youtube-toolbar-actions">
-                <button
-                  type="button"
-                  className={`youtube-toolbar-icon-btn ${theaterMode ? "active" : ""}`}
-                  onClick={() => setTheaterMode(!theaterMode)}
-                  title={theaterMode ? "Exit Theater Mode" : "Theater Mode"}
-                  aria-label="Toggle theater mode"
-                >
-                  <Tv size={16} />
-                </button>
-                <button
-                  type="button"
-                  className="youtube-toolbar-icon-btn"
-                  onClick={onCloseWatch}
-                  title="Close Watch Room"
-                  aria-label="Close watch room"
-                >
-                  <X size={16} />
-                </button>
-              </div>
-            </div>
-
-            <div className="youtube-theater-frame">
-              {playerContext ? (
-                <VideoPlayer
-                  key={playerContext.playback.sessionId}
-                  context={playerContext}
-                  autoSkip={autoSkip}
-                  displayMode="inline"
-                  theaterMode={theaterMode}
-                  onToggleTheater={() => setTheaterMode(!theaterMode)}
-                  onPlayNext={relatedVideos.length > 0 && onPlayNextVideo ? () => (autoplayNext ? handleVideoEnded() : onPlayNextVideo(relatedVideos[0])) : undefined}
-                  onAutoSkipChange={onAutoSkipChange}
-                  onPlayEpisode={onPlayPlayerEpisode}
-                  onClose={onClosePlayer}
-                  onErrorFallback={() => onPlay(selectedVideo, false)}
+          <div className="youtube-theater-frame">
+            {playerContext ? (
+              <VideoPlayer
+                key={playerContext.playback.sessionId}
+                context={playerContext}
+                autoSkip={autoSkip}
+                displayMode="inline"
+                theaterMode={theaterMode}
+                onToggleTheater={() => setTheaterMode(!theaterMode)}
+                onPlayNext={relatedVideos.length > 0 && onPlayNextVideo ? () => (autoplayNext ? handleVideoEnded() : onPlayNextVideo(relatedVideos[0])) : undefined}
+                onAutoSkipChange={onAutoSkipChange}
+                onPlayEpisode={onPlayPlayerEpisode}
+                onClose={onClosePlayer}
+                onErrorFallback={() => onPlay(selectedVideo, false)}
+              />
+            ) : embedPlaying ? (
+              <div className="youtube-embed-container">
+                <iframe
+                  src={`https://www.youtube-nocookie.com/embed/${encodeURIComponent(selectedVideo.id)}?autoplay=1&rel=0&modestbranding=1&playsinline=1`}
+                  title={selectedVideo.title}
+                  allow="accelerometer; autoplay; clipboard-write; encrypted-media; gyroscope; picture-in-picture; web-share"
+                  allowFullScreen
+                  className="youtube-embed-iframe"
                 />
-              ) : embedPlaying ? (
-                <div className="youtube-embed-container">
-                  <iframe
-                    src={`https://www.youtube-nocookie.com/embed/${encodeURIComponent(selectedVideo.id)}?autoplay=1&rel=0&modestbranding=1&playsinline=1`}
-                    title={selectedVideo.title}
-                    allow="accelerometer; autoplay; clipboard-write; encrypted-media; gyroscope; picture-in-picture; web-share"
-                    allowFullScreen
-                    className="youtube-embed-iframe"
-                  />
-                </div>
-              ) : (() => {
-                const progress = resume?.totalSeconds
-                  ? Math.min(100, Math.max(0, (resume.positionSeconds / resume.totalSeconds) * 100))
-                  : 0;
-                return (
-                  <button
-                    type="button"
-                    className="youtube-theater-art"
-                    onClick={() => onPlay(selectedVideo)}
-                    aria-label={`${resume ? "Resume" : "Play"} ${selectedVideo.title}`}
-                  >
-                    <img src={selectedVideo.bannerUrl || selectedVideo.coverUrl || LOGO_SRC} alt="" onError={useLogoFallback} />
-                    <span className="youtube-theater-play"><Play size={36} fill="currentColor" /></span>
-                    {progress > 0 && <i className="youtube-progress" style={{ "--youtube-progress": `${progress}%` } as React.CSSProperties} />}
-                  </button>
-                );
-              })()}
+              </div>
+            ) : (() => {
+              const progress = resume?.totalSeconds
+                ? Math.min(100, Math.max(0, (resume.positionSeconds / resume.totalSeconds) * 100))
+                : 0;
+              return (
+                <button
+                  type="button"
+                  className="youtube-theater-art"
+                  onClick={() => onPlay(selectedVideo)}
+                  aria-label={`${resume ? "Resume" : "Play"} ${selectedVideo.title}`}
+                >
+                  <img src={selectedVideo.bannerUrl || selectedVideo.coverUrl || LOGO_SRC} alt="" onError={useLogoFallback} />
+                  <span className="youtube-theater-play"><Play size={36} fill="currentColor" /></span>
+                  {progress > 0 && <i className="youtube-progress" style={{ "--youtube-progress": `${progress}%` } as React.CSSProperties} />}
+                </button>
+              );
+            })()}
 
-              {/* Autoplay Countdown Overlay */}
-              {countdownSeconds !== null && relatedVideos.length > 0 && (
-                <div className="player-autoplay-countdown">
-                  <span>Up next in {countdownSeconds}s: <strong>{relatedVideos[0].title}</strong></span>
-                  <button
-                    type="button"
-                    className="primary"
-                    onClick={() => {
-                      setCountdownSeconds(null);
-                      if (onPlayNextVideo) onPlayNextVideo(relatedVideos[0]);
-                    }}
-                  >
-                    Play Now
-                  </button>
-                  <button
-                    type="button"
-                    className="secondary"
-                    onClick={() => setCountdownSeconds(null)}
-                  >
-                    Cancel
-                  </button>
-                </div>
-              )}
-            </div>
+            {/* Autoplay Countdown Overlay */}
+            {countdownSeconds !== null && relatedVideos.length > 0 && (
+              <div className="player-autoplay-countdown">
+                <span>Up next in {countdownSeconds}s: <strong>{relatedVideos[0].title}</strong></span>
+                <button
+                  type="button"
+                  className="primary"
+                  onClick={() => {
+                    setCountdownSeconds(null);
+                    if (onPlayNextVideo) onPlayNextVideo(relatedVideos[0]);
+                  }}
+                >
+                  Play Now
+                </button>
+                <button
+                  type="button"
+                  className="secondary"
+                  onClick={() => setCountdownSeconds(null)}
+                >
+                  Cancel
+                </button>
+              </div>
+            )}
+          </div>
 
+          <div className="youtube-watch-main">
             <h1 className="youtube-watch-title">{selectedVideo.title}</h1>
 
             {(() => {
@@ -5937,23 +5875,63 @@ function YouTubePage({
                   <div className="youtube-channel-bar">
                     <div className="youtube-channel-profile">
                       <span className="youtube-channel-avatar" aria-hidden="true">{initial}</span>
-                      <div>
+                      <div className="youtube-channel-text">
                         <strong className="youtube-channel-name">{author}</strong>
-                        <small className="youtube-channel-sub">Invidious Source · Verified</small>
+                        <small className="youtube-channel-sub">Verified Channel · Official</small>
                       </div>
+                      <button
+                        type="button"
+                        className={`youtube-subscribe-btn ${isFavorite ? "subscribed" : ""}`}
+                        onClick={() => onToggleMyList(selectedVideo)}
+                      >
+                        {isFavorite ? (
+                          <>
+                            <Check size={14} />
+                            <span>Subscribed</span>
+                          </>
+                        ) : (
+                          <span>Subscribe</span>
+                        )}
+                      </button>
                     </div>
+
                     <div className="youtube-channel-actions">
-                      <button className="primary" onClick={() => onPlay(selectedVideo)}>
+                      <button className="primary play-now-pill" onClick={() => onPlay(selectedVideo)}>
                         <Play size={16} fill="currentColor" />
                         {resume ? `Resume (${formatTime(resume.positionSeconds)})` : "Play Now"}
                       </button>
-                      <button onClick={() => onToggleMyList(selectedVideo)}>
-                        <Star size={16} fill={isFavorite ? "currentColor" : "none"} />
-                        {isFavorite ? "In My List" : "Save"}
+                      <div className="youtube-like-dislike-pill">
+                        <button
+                          type="button"
+                          className={`youtube-like-btn ${isFavorite ? "active" : ""}`}
+                          onClick={() => onToggleMyList(selectedVideo)}
+                          title="Like"
+                        >
+                          <ThumbsUp size={15} fill={isFavorite ? "currentColor" : "none"} />
+                          <span>{isFavorite ? "Liked" : "Like"}</span>
+                        </button>
+                        <span className="youtube-pill-divider" />
+                        <button type="button" className="youtube-dislike-btn" title="Dislike">
+                          <ThumbsDown size={15} />
+                        </button>
+                      </div>
+                      <button
+                        type="button"
+                        className="youtube-action-pill"
+                        onClick={() => copyShareLink(selectedVideo.id)}
+                        title="Copy video link"
+                      >
+                        {copied ? <Check size={15} /> : <Share2 size={15} />}
+                        <span>{copied ? "Copied" : "Share"}</span>
                       </button>
-                      <button onClick={() => copyShareLink(selectedVideo.id)} title="Copy video link">
-                        {copied ? <Check size={16} /> : <Copy size={16} />}
-                        {copied ? "Copied!" : "Share"}
+                      <button
+                        type="button"
+                        className={`youtube-action-pill ${isFavorite ? "active" : ""}`}
+                        onClick={() => onToggleMyList(selectedVideo)}
+                        title="Save to Library"
+                      >
+                        <Bookmark size={15} fill={isFavorite ? "currentColor" : "none"} />
+                        <span>{isFavorite ? "Saved" : "Save"}</span>
                       </button>
                     </div>
                   </div>
@@ -6646,7 +6624,7 @@ function AdminPage({ currentUser, onBack }: { currentUser: SessionUser; onBack: 
     <motion.section className="admin-page" initial={{ opacity: 0, y: 18 }} animate={{ opacity: 1, y: 0 }} exit={{ opacity: 0, y: -12 }}>
       <header className="admin-header">
         <IconButton label="Back" onClick={onBack}><ArrowLeft size={21} /></IconButton>
-        <div><p className="eyebrow">Administrator</p><h1>People & Library Access</h1><p>Manage family viewer accounts, review requests, and approve shared storage films.</p></div>
+        <div><p className="eyebrow">Administrator</p><h1>People & Library Access</h1><p>Manage viewer accounts, review requests, and approve shared storage films.</p></div>
         <div className="admin-current-user"><ShieldCheck size={17} /><span>{currentUser.username}</span><small>Administrator</small></div>
       </header>
 
@@ -7845,6 +7823,19 @@ function VideoPlayer({
     const pos = Math.floor(video.currentTime || 0);
     const dur = Math.floor(Number.isFinite(video.duration) ? video.duration : 0);
 
+    if (context.anime.provider === "Invidious" || context.anime.provider === "YouTube") {
+      saveCachedYouTubeMetadata({
+        id: context.anime.id,
+        provider: context.anime.provider,
+        title: context.anime.title,
+        coverUrl: context.anime.coverUrl,
+        bannerUrl: context.anime.bannerUrl,
+        duration: dur,
+        lastPosition: pos,
+        lastWatchedAt: now,
+      });
+    }
+
     await api.saveProgress({
       animeId: animeKey(context.anime.provider, context.anime.id),
       catalogId: context.anime.catalogId ?? null,
@@ -8022,21 +8013,23 @@ function VideoPlayer({
         </div>
       </div>
 
-      <div className="player-volume-dock">
-        <button onClick={toggleMute} aria-label={muted ? "Unmute" : "Mute"}>
-          {muted || volume === 0 ? <VolumeX size={20} /> : <Volume2 size={20} />}
-        </button>
-        <input
-          className="volume-slider"
-          type="range"
-          min={0}
-          max={1}
-          step={0.05}
-          value={muted ? 0 : volume}
-          onChange={(event) => setVideoVolume(Number(event.target.value))}
-          aria-label="Volume"
-        />
-      </div>
+      {displayMode !== "inline" && (
+        <div className="player-volume-dock overlay-volume-dock">
+          <button onClick={toggleMute} aria-label={muted ? "Unmute" : "Mute"}>
+            {muted || volume === 0 ? <VolumeX size={20} /> : <Volume2 size={20} />}
+          </button>
+          <input
+            className="volume-slider"
+            type="range"
+            min={0}
+            max={1}
+            step={0.05}
+            value={muted ? 0 : volume}
+            onChange={(event) => setVideoVolume(Number(event.target.value))}
+            aria-label="Volume"
+          />
+        </div>
+      )}
 
       <div className="player-center" role="group" aria-label="Playback controls">
         <button
@@ -8111,74 +8104,8 @@ function VideoPlayer({
             )}
           </div>
         )}
-        <div className="player-control-row">
-          <div className="player-now-playing">
-            <span>{context.anime.provider}</span>
-            <strong>{context.anime.title}</strong>
-            <small>{episodeLabel(context.episode.number, context.episode.title)}</small>
-          </div>
-          <div className="player-utility-pill">
-            <button onClick={() => void toggleFullscreen()} aria-label="Toggle fullscreen" title="Toggle fullscreen (F)">
-              <Maximize2 size={18} />
-            </button>
-            {onToggleTheater && (
-              <button
-                type="button"
-                onClick={onToggleTheater}
-                aria-label="Toggle theater mode"
-                title="Theater mode (T)"
-                className={theaterMode ? "active" : ""}
-              >
-                <Tv size={18} />
-              </button>
-            )}
-            {(displayMode === "inline" || context.anime.provider === "Invidious") && (
-              <label title="Playback speed">
-                <span>Speed</span>
-                <select value={playbackSpeed} onChange={(event) => changePlaybackSpeed(Number(event.target.value))}>
-                  <option value={0.25}>0.25x</option>
-                  <option value={0.5}>0.5x</option>
-                  <option value={0.75}>0.75x</option>
-                  <option value={1}>1x</option>
-                  <option value={1.25}>1.25x</option>
-                  <option value={1.5}>1.5x</option>
-                  <option value={1.75}>1.75x</option>
-                  <option value={2}>2x</option>
-                </select>
-              </label>
-            )}
-            <label title="Video quality">
-              <span>Quality</span>
-              <select value={quality} onChange={(event) => changeQuality(event.target.value)} disabled={(!streamIsHls && !streamIsDash) || !levels.length}>
-                <option value="auto">Auto</option>
-                {levels.map((level) => <option value={String(level.index)} key={level.index}>{level.label}</option>)}
-              </select>
-            </label>
-            <button
-              className="player-auto-skip-toggle"
-              type="button"
-              role="switch"
-              aria-checked={autoSkip}
-              aria-busy={skipTimingStatus === "loading"}
-              data-state={skipTimingStatus === "error" ? "error" : skipTimingStatus === "ready" ? "success" : skipTimingStatus}
-              disabled={skipTimingStatus === "loading"}
-              aria-label="Toggle skip intro"
-              title={skipTimingStatusLabel(skipTimingStatus, skipTimes.length)}
-              onClick={() => onAutoSkipChange(!autoSkip)}
-            >
-              Skip intro <span>{autoSkip ? "On" : "Off"}</span>
-            </button>
-            {subtitleTracks.length > 0 && (
-              <label title="Subtitles">
-                <span>Subtitles</span>
-                <select value={subtitle} onChange={(event) => changeSubtitle(event.target.value)}>
-                  <option value="off">Off</option>
-                  {subtitleTracks.map((track, index) => <option value={String(index)} key={track.url}>{track.language}</option>)}
-                </select>
-              </label>
-            )}
-          </div>
-        </div>
+
+        {/* Scrubber timeline bar above controls, matching YouTube desktop */}
         <div className="player-timeline">
           <span>{formatTime(currentTime)}</span>
           <div className="player-progress-shell">
@@ -8218,6 +8145,128 @@ function VideoPlayer({
             />
           </div>
           <span>-{formatTime(Math.max(0, duration - currentTime))}</span>
+        </div>
+
+        <div className="player-control-row">
+          {displayMode === "inline" ? (
+            <div className="player-left-group">
+              <button className="player-control-btn play-btn" onClick={togglePlay} aria-label={isPlaying ? "Pause" : "Play"} title={isPlaying ? "Pause (k)" : "Play (k)"}>
+                {isPlaying ? <Pause size={19} /> : <Play size={19} />}
+              </button>
+
+              {onPlayNext && (
+                <button
+                  className="player-control-btn next-btn"
+                  onClick={onPlayNext}
+                  aria-label="Next video"
+                  title="Next video (Shift+N)"
+                >
+                  <SkipForward size={18} />
+                </button>
+              )}
+
+              <div className="player-volume-dock">
+                <button onClick={toggleMute} aria-label={muted ? "Unmute" : "Mute"} title={muted ? "Unmute (m)" : "Mute (m)"}>
+                  {muted || volume === 0 ? <VolumeX size={19} /> : <Volume2 size={19} />}
+                </button>
+                <input
+                  className="volume-slider"
+                  type="range"
+                  min={0}
+                  max={1}
+                  step={0.05}
+                  value={muted ? 0 : volume}
+                  onChange={(event) => setVideoVolume(Number(event.target.value))}
+                  aria-label="Volume"
+                />
+              </div>
+
+              <div className="player-time-display">
+                <span>{formatTime(currentTime)}</span>
+                <span className="player-time-sep">/</span>
+                <span>{formatTime(duration)}</span>
+              </div>
+            </div>
+          ) : (
+            <div className="player-now-playing">
+              <span>{context.anime.provider}</span>
+              <strong>{context.anime.title}</strong>
+              <small>{episodeLabel(context.episode.number, context.episode.title)}</small>
+            </div>
+          )}
+
+          {displayMode === "inline" && (
+            <div className="player-now-playing">
+              <span>{context.anime.provider}</span>
+              <strong>{context.anime.title}</strong>
+              <small>{episodeLabel(context.episode.number, context.episode.title)}</small>
+            </div>
+          )}
+
+          <div className="player-utility-pill">
+            <button
+              className="player-auto-skip-toggle"
+              type="button"
+              role="switch"
+              aria-checked={autoSkip}
+              aria-busy={skipTimingStatus === "loading"}
+              data-state={skipTimingStatus === "error" ? "error" : skipTimingStatus === "ready" ? "success" : skipTimingStatus}
+              disabled={skipTimingStatus === "loading"}
+              aria-label="Toggle skip intro"
+              title={skipTimingStatusLabel(skipTimingStatus, skipTimes.length)}
+              onClick={() => onAutoSkipChange(!autoSkip)}
+            >
+              Skip intro <span>{autoSkip ? "On" : "Off"}</span>
+            </button>
+            {subtitleTracks.length > 0 && (
+              <label title="Subtitles">
+                <span>Subtitles</span>
+                <select value={subtitle} onChange={(event) => changeSubtitle(event.target.value)}>
+                  <option value="off">Off</option>
+                  {subtitleTracks.map((track, index) => <option value={String(index)} key={track.url}>{track.language}</option>)}
+                </select>
+              </label>
+            )}
+            {(displayMode === "inline" || context.anime.provider === "Invidious") && (
+              <label title="Playback speed">
+                <span>Speed</span>
+                <select value={playbackSpeed} onChange={(event) => changePlaybackSpeed(Number(event.target.value))}>
+                  <option value={0.25}>0.25x</option>
+                  <option value={0.5}>0.5x</option>
+                  <option value={0.75}>0.75x</option>
+                  <option value={1}>1x</option>
+                  <option value={1.25}>1.25x</option>
+                  <option value={1.5}>1.5x</option>
+                  <option value={1.75}>1.75x</option>
+                  <option value={2}>2x</option>
+                </select>
+              </label>
+            )}
+            <label title="Video quality">
+              <span>Quality</span>
+              <select value={quality} onChange={(event) => changeQuality(event.target.value)} disabled={(!streamIsHls && !streamIsDash) || !levels.length}>
+                <option value="auto">Auto</option>
+                {levels.map((level) => <option value={String(level.index)} key={level.index}>{level.label}</option>)}
+              </select>
+            </label>
+            <button onClick={() => void togglePictureInPicture()} aria-label="Picture in Picture" title="Picture in Picture (i)">
+              <PictureInPicture2 size={18} />
+            </button>
+            {onToggleTheater && (
+              <button
+                type="button"
+                onClick={onToggleTheater}
+                aria-label="Toggle theater mode"
+                title={theaterMode ? "Default view (t)" : "Theater mode (t)"}
+                className={`player-theater-btn ${theaterMode ? "active" : ""}`}
+              >
+                <Tv size={18} />
+              </button>
+            )}
+            <button onClick={() => void toggleFullscreen()} aria-label="Toggle fullscreen" title="Toggle fullscreen (F)">
+              <Maximize2 size={18} />
+            </button>
+          </div>
         </div>
       </div>
     </motion.div>
