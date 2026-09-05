@@ -5795,64 +5795,17 @@ function YouTubePage({
       {sourceReady && watchMode && selectedVideo && (
         <div className={`youtube-watch-room${theaterMode ? " theater-mode" : ""}`}>
           <div className="youtube-theater-pane">
-            <div className="youtube-watch-toolbar">
-              <div className="youtube-toolbar-left">
-                <button
-                  type="button"
-                  className="youtube-toolbar-btn"
-                  onClick={onCloseWatch}
-                  title="Back to feed"
-                >
-                  <ArrowLeft size={16} />
-                  <span>Back</span>
-                </button>
-
-                <div className="youtube-mode-segmented-control">
-                  <button
-                    type="button"
-                    className={`youtube-mode-btn ${embedPlaying ? "active" : ""}`}
-                    onClick={() => onPlay(selectedVideo, false)}
-                    title="Play via YouTube 4K Official Player"
-                  >
-                    <Tv size={14} />
-                    <span>YouTube 4K</span>
-                  </button>
-                  <button
-                    type="button"
-                    className={`youtube-mode-btn ${!embedPlaying && playerContext ? "active" : ""}`}
-                    onClick={() => onPlay(selectedVideo, true)}
-                    title="Play via Direct Native Stream"
-                  >
-                    <Play size={14} />
-                    <span>Direct Stream</span>
-                  </button>
-                </div>
-              </div>
-
-              <div className="youtube-toolbar-actions">
-                <button
-                  type="button"
-                  className={`youtube-toolbar-theater-btn ${theaterMode ? "active" : ""}`}
-                  onClick={() => setTheaterMode(!theaterMode)}
-                  title={theaterMode ? "Default View (T)" : "Theater View (T)"}
-                  aria-label="Toggle theater mode"
-                >
-                  <Tv size={16} />
-                  <span>{theaterMode ? "Default View" : "Theater View"}</span>
-                </button>
-                <button
-                  type="button"
-                  className="youtube-toolbar-icon-btn"
-                  onClick={onCloseWatch}
-                  title="Close watch room"
-                  aria-label="Close watch room"
-                >
-                  <X size={16} />
-                </button>
-              </div>
-            </div>
-
             <div className="youtube-theater-frame">
+              <button
+                type="button"
+                className={`youtube-theater-overlay-btn ${theaterMode ? "active" : ""}`}
+                onClick={() => setTheaterMode(!theaterMode)}
+                title={theaterMode ? "Default view (T)" : "Theater mode (T)"}
+                aria-label="Toggle theater mode"
+              >
+                <Tv size={15} />
+                <span>{theaterMode ? "Default view" : "Theater mode"}</span>
+              </button>
             {playerContext ? (
               <VideoPlayer
                 key={playerContext.playback.sessionId}

@@ -13,6 +13,7 @@ fn test_torrent_search_hub_initialization() {
             "Nyaa",
             "YTS",
             "ThePirateBay",
+            "Bitsearch",
             "EZTV",
             "TokyoToshokan",
             "SolidTorrents"

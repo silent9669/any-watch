@@ -6,6 +6,7 @@ use tokio::time::timeout;
 use tracing::{info, warn};
 
 use super::animetosho::AnimeToshoProvider;
+use super::bitsearch::BitsearchProvider;
 use super::eztv::EztvProvider;
 use super::nyaa::NyaaProvider;
 use super::piratebay::ThePirateBayProvider;
@@ -36,6 +37,7 @@ impl TorrentSearchHub {
             Arc::new(NyaaProvider::new(client.clone())),
             Arc::new(YtsProvider::new(client.clone())),
             Arc::new(ThePirateBayProvider::new(client.clone())),
+            Arc::new(BitsearchProvider::new(client.clone())),
             Arc::new(EztvProvider::new(client.clone())),
             Arc::new(TokyoToshokanProvider::new(client.clone())),
             Arc::new(SolidTorrentsProvider::new(client)),

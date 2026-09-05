@@ -1,4 +1,4 @@
-use anyhow::{Context, Result};
+use anyhow::Result;
 use async_trait::async_trait;
 use reqwest::Client;
 use serde::Deserialize;
@@ -70,32 +70,47 @@ impl TorrentSearchProvider for YtsProvider {
             return Ok(Vec::new());
         }
 
-        let mut url = Url::parse("https://yts.mx/api/v2/list_movies.json")?;
-        url.query_pairs_mut()
-            .append_pair("query_term", query)
-            .append_pair("sort_by", "seeds")
-            .append_pair("order_by", "desc")
-            .append_pair("limit", "50")
-            .append_pair("page", &page.max(1).to_string());
+        const MIRRORS: &[&str] = &[
+            "https://yts.do/api/v2/list_movies.json",
+            "https://yts.bz/api/v2/list_movies.json",
+            "https://yts.mx/api/v2/list_movies.json",
+        ];
 
-        let response = self
-            .client
-            .get(url)
-            .header("User-Agent", "Mozilla/5.0 (Windows NT 10.0; Win64; x64)")
-            .send()
-            .await
-            .context("YTS request failed")?;
+        let mut body: Option<YtsResponse> = None;
+        for base_mirror in MIRRORS {
+            let Ok(mut url) = Url::parse(base_mirror) else {
+                continue;
+            };
+            url.query_pairs_mut()
+                .append_pair("query_term", query)
+                .append_pair("sort_by", "seeds")
+                .append_pair("order_by", "desc")
+                .append_pair("limit", "50")
+                .append_pair("page", &page.max(1).to_string());
 
-        anyhow::ensure!(
-            response.status().is_success(),
-            "YTS returned HTTP {}",
-            response.status()
-        );
+            if let Ok(resp) = self
+                .client
+                .get(url)
+                .header(
+                    "User-Agent",
+                    "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/126.0.0.0 Safari/537.36",
+                )
+                .send()
+                .await
+            {
+                if resp.status().is_success() {
+                    if let Ok(parsed) = resp.json::<YtsResponse>().await {
+                        body = Some(parsed);
+                        break;
+                    }
+                }
+            }
+        }
 
-        let body: YtsResponse = response
-            .json()
-            .await
-            .context("YTS returned invalid movie JSON")?;
+        let body = match body {
+            Some(b) => b,
+            None => return Ok(Vec::new()),
+        };
 
         let mut results = Vec::new();
         let movies = match body.data.and_then(|d| d.movies) {
