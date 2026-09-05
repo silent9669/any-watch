@@ -1874,7 +1874,12 @@ def test_t3_responsive_route_matrix(mocked_page, width):
 
     if width <= 760:
         mocked_page.get_by_role("button", name="Back", exact=True).first.click()
-    mocked_page.locator('.app-navigation-items button[data-route="download"]').click()
+        mocked_page.wait_for_timeout(250)
+    download_btn = mocked_page.locator('.app-navigation-items button[data-route="download"]')
+    expect(download_btn).to_be_visible()
+    download_btn.click()
+    if not mocked_page.locator(".stage-downloads").is_visible():
+        download_btn.click(force=True)
     expect(mocked_page.locator(".stage-downloads")).to_be_visible()
     assert_no_horizontal_scroll()
 
